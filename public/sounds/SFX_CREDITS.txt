@@ -1,0 +1,7 @@
+Nuclear War SFX credits
+launch.wav — mixed from:
+  - Tomahawk Missile Rocket Launch (qubodup / US Government public domain) https://freesound.org/s/162380/
+  - Mixkit Fast rocket whoosh https://mixkit.co/free-sound-effects/rocket/
+explosion.wav — mixed from:
+  - Mixkit Bomb explosion in battle https://mixkit.co/free-sound-effects/explosion/
+  - florianreichelt explosion (CC0) https://freesound.org/s/563010/
