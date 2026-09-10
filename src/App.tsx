@@ -1216,20 +1216,6 @@ function RoundSummary({
             <div className="round-pill">ROUND {state.round} AFTERMATH</div>
           </header>
 
-          <h3 className="board-section-title">Your nations</h3>
-          <div className="board-left__nations">
-            {humanIds.map((id) => (
-              <NationPod
-                key={id}
-                id={id}
-                variant="ally"
-                state={state}
-                highlightCityIds={destroyedCityIds}
-                highlight={state.nations[id].eliminated}
-              />
-            ))}
-          </div>
-
           <div className="board-left__controls">
             <div className="panel panel--shop round-report__panel">
               <h2 className="round-report__panel-title">What happened</h2>
@@ -1252,23 +1238,43 @@ function RoundSummary({
 
               <h2 className="round-report__panel-title">Scores</h2>
               <div className="score-cards score-cards--compact">
-                {state.roundScores.map((row, i) => (
-                  <div
-                    key={row.nationId}
-                    className={`score-card ${row.eliminated ? 'is-out' : ''} ${i === 0 ? 'is-lead' : ''}`}
-                  >
-                    <img src={ART.leaders[row.nationId]} alt="" />
-                    <div>
-                      <strong>
-                        #{i + 1} {nationDef(row.nationId).name}
-                      </strong>
-                      <span>
-                        Cities {row.citiesLeft} · Survived {row.citySurvivalPoints} · 🔍
-                        {row.researchCenters} · 🛡{row.shields}
-                      </span>
+                {state.roundScores.map((row, i) => {
+                  const nation = state.nations[row.nationId];
+                  const isYou = nation.isHuman;
+                  return (
+                    <div
+                      key={row.nationId}
+                      className={`score-card ${row.eliminated ? 'is-out' : ''} ${i === 0 ? 'is-lead' : ''} ${isYou ? 'is-you' : ''}`}
+                    >
+                      <img src={ART.leaders[row.nationId]} alt="" />
+                      <div>
+                        <strong>
+                          #{i + 1} {nationDef(row.nationId).name}
+                          {isYou ? ` (${playerDisplayName(state, row.nationId)})` : ''}
+                        </strong>
+                        <span>
+                          Cities {row.citiesLeft} · Survived {row.citySurvivalPoints} · 🔍
+                          {row.researchCenters} · 🛡{row.shields}
+                          {isYou ? ' · You' : ' · AI'}
+                        </span>
+                      </div>
+                      <em>{row.total}</em>
                     </div>
-                    <em>{row.total}</em>
-                  </div>
+                  );
+                })}
+              </div>
+
+              <h2 className="round-report__panel-title">Your cities</h2>
+              <div className="your-cities">
+                {humanIds.map((id) => (
+                  <NationPod
+                    key={id}
+                    id={id}
+                    variant="ally"
+                    state={state}
+                    highlightCityIds={destroyedCityIds}
+                    highlight={state.nations[id].eliminated}
+                  />
                 ))}
               </div>
 

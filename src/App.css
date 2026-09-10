@@ -1785,8 +1785,9 @@ img { max-width: 100%; display: block; }
 
 .score-cards--compact {
   width: 100%;
-  max-height: 22vh;
-  overflow: auto;
+  max-height: none;
+  overflow: visible;
+  flex: 0 0 auto;
 }
 
 .score-cards--compact .score-card {
@@ -1809,6 +1810,12 @@ img { max-width: 100%; display: block; }
   font-size: 1rem;
 }
 
+.score-card.is-you {
+  border-color: rgba(77, 163, 255, 0.65);
+  background: rgba(20, 50, 90, 0.9);
+  box-shadow: inset 0 0 0 1px rgba(77, 163, 255, 0.25);
+}
+
 /* Round aftermath reuses board-split; keep report panel compact on the left */
 .round-report__panel {
   gap: 0.45rem;
@@ -1819,6 +1826,21 @@ img { max-width: 100%; display: block; }
 .round-report__panel .btn--xl {
   flex-shrink: 0;
   margin-top: auto;
+}
+
+.your-cities {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.your-cities .nation-card {
+  flex: 1 1 auto;
+  min-height: 100px;
+  max-height: 170px;
 }
 
 .round-report__panel-title {
@@ -1895,12 +1917,9 @@ img { max-width: 100%; display: block; }
   grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr);
 }
 
-.screen--round-report .board-left__nations {
-  max-height: 28%;
-}
-
 .screen--round-report .board-left__controls {
   overflow: hidden;
+  flex: 1;
 }
 
 .screen--round-report .round-report__panel {
@@ -1908,20 +1927,20 @@ img { max-width: 100%; display: block; }
   overflow: hidden;
 }
 
-.screen--round-report .round-report__event-list,
 .screen--round-report .score-cards--compact {
   max-height: none;
+  overflow: visible;
+  flex: 0 0 auto;
+}
+
+.screen--round-report .your-cities {
+  max-height: none;
   flex: 1 1 auto;
-  min-height: 0;
+  min-height: 110px;
 }
 
-.screen--round-report .score-cards--compact {
-  overflow: auto;
-}
-
-.screen--round-report .board-right__nations .nation-card__portrait,
-.screen--round-report .board-left__nations .nation-card__portrait {
-  width: min(84px, 26cqi, 18vh);
+.screen--round-report .your-cities .nation-card__portrait {
+  width: min(72px, 24cqi, 16vh);
 }
 
 .city-tile--static {
