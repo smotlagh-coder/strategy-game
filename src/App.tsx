@@ -28,7 +28,7 @@ import {
   citiesLeft,
 } from './game/engine';
 import { runAllAiUntilHumanOrSummary, runAiTurn } from './game/ai';
-import type { GameMode, GameState, NationId } from './types';
+import type { GameMode, GameState, NationId, RoundWorldEvent } from './types';
 
 type FxKind = 'buy' | 'strike-label';
 type WizardStep = 'tech' | 'bombs' | 'shieldAsk' | 'shieldPick' | 'env' | 'strike';
@@ -206,6 +206,61 @@ function StrikeCinema({
   );
 }
 
+function formatRoundEvent(e: RoundWorldEvent): string {
+  const nation = nationDef(e.nationId).name;
+  const attacker = e.attackerId ? nationDef(e.attackerId).name : null;
+  if (e.kind === 'nationEliminated') return `${nation} is out — all cities destroyed.`;
+  if (e.kind === 'shieldDestroyed') {
+    return attacker
+      ? `${attacker} shattered the shield over ${e.cityName} (${nation}).`
+      : `Shield lost over ${e.cityName} (${nation}).`;
+  }
+  return attacker
+    ? `${attacker} destroyed ${e.cityName} (${nation}).`
+    : `${e.cityName} (${nation}) was destroyed.`;
+}
+
+function StrikeRecap({
+  events,
+  onContinue,
+}: {
+  events: RoundWorldEvent[];
+  onContinue: () => void;
+}) {
+  const strikes = events.filter((e) => e.kind !== 'nationEliminated');
+  const eliminated = events.filter((e) => e.kind === 'nationEliminated');
+
+  return (
+    <div className="strike-cinema" role="dialog" aria-modal="true" aria-label="Strike aftermath">
+      <div className="strike-cinema__veil" />
+      <div className="strike-cinema__panel strike-cinema__panel--recap enter-pop">
+        <header className="strike-cinema__title">WHAT HAPPENED</header>
+        {events.length === 0 ? (
+          <p className="strike-recap__empty">No cities were hit this round. The board stands.</p>
+        ) : (
+          <ul className="strike-recap__list">
+            {strikes.map((e) => (
+              <li key={e.id} className={`round-event round-event--${e.kind}`}>
+                {formatRoundEvent(e)}
+              </li>
+            ))}
+            {eliminated.map((e) => (
+              <li key={e.id} className="round-event round-event--nationEliminated">
+                {formatRoundEvent(e)}
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="strike-recap__actions">
+          <button type="button" className="btn btn--xl btn--primary" onClick={onContinue}>
+            Continue
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MapBackdrop() {
   return (
     <div className="map-backdrop" style={{ backgroundImage: `url(${ART.map})` }} aria-hidden />
@@ -237,6 +292,7 @@ function NationPod({
   selectedCityIds,
   targetable,
   blockedCityIds,
+  pendingBombCityIds,
   highlightCityIds,
   highlight,
   onSelectCity,
@@ -247,6 +303,8 @@ function NationPod({
   selectedCityIds?: string[];
   targetable?: boolean;
   blockedCityIds?: string[];
+  /** Cities with locked bombs inbound (pendingStrikes) */
+  pendingBombCityIds?: string[];
   /** Cities to pulse (e.g. destroyed this round) */
   highlightCityIds?: string[];
   highlight?: boolean;
@@ -256,6 +314,7 @@ function NationPod({
   const def = nationDef(id);
   const score = computeScore(state, id).total;
   const blocked = new Set(blockedCityIds ?? []);
+  const bombed = new Set(pendingBombCityIds ?? []);
   const pulsed = new Set(highlightCityIds ?? []);
   const interactive = Boolean(onSelectCity);
   return (
@@ -282,10 +341,15 @@ function NationPod({
         {n.cities.map((c) => {
           const selected = selectedCityIds?.includes(c.id);
           const hitThisRound = blocked.has(c.id);
+          const bombLocked = bombed.has(c.id) && !c.destroyed;
           const justHit = pulsed.has(c.id);
           const canTarget = Boolean(targetable && !c.destroyed && !hitThisRound);
-          const className = `city-tile ${c.destroyed ? 'is-destroyed' : ''} ${c.hasShield ? 'has-shield' : ''} ${c.hasResearch ? 'has-research' : ''} ${selected ? 'is-selected' : ''} ${canTarget ? 'is-targetable' : ''} ${hitThisRound && !c.destroyed ? 'is-hit-this-round' : ''} ${justHit ? 'is-just-hit' : ''}`;
-          const title = `${c.name} — ${cityStatusLabel(c)}`;
+          const className = `city-tile ${c.destroyed ? 'is-destroyed' : ''} ${c.hasShield ? 'has-shield' : ''} ${c.hasResearch ? 'has-research' : ''} ${selected ? 'is-selected' : ''} ${canTarget ? 'is-targetable' : ''} ${hitThisRound && !c.destroyed && !bombLocked ? 'is-hit-this-round' : ''} ${bombLocked ? 'is-bomb-locked' : ''} ${justHit ? 'is-just-hit' : ''}`;
+          const title = bombLocked
+            ? `${c.name} — targeted for bombing`
+            : selected
+              ? `${c.name} — selected for bombing`
+              : `${c.name} — ${cityStatusLabel(c)}`;
           const body = (
             <>
               <img
@@ -300,6 +364,15 @@ function NationPod({
               {c.hasResearch && !c.destroyed && (
                 <span className="city-tile__research" title="Research" aria-label="Research">
                   🔍
+                </span>
+              )}
+              {(selected || bombLocked) && (
+                <span
+                  className={`city-tile__bomb-lock ${selected && !bombLocked ? 'is-pending' : ''}`}
+                  title={bombLocked ? 'Targeted for bombing' : 'Selected for bombing'}
+                  aria-label={bombLocked ? 'Targeted for bombing' : 'Selected for bombing'}
+                >
+                  <img src={ART.missile} alt="" draggable={false} />
                 </span>
               )}
               {c.destroyed && (
@@ -327,7 +400,7 @@ function NationPod({
               className={className}
               title={
                 hitThisRound && !c.destroyed
-                  ? `${c.name} — already struck this round`
+                  ? `${c.name} — already targeted this round`
                   : title
               }
               disabled={c.destroyed || (Boolean(targetable) && hitThisRound)}
@@ -683,10 +756,12 @@ function GameBoard({
   const [fx, setFx] = useState<FxEvent[]>([]);
   const [busy, setBusy] = useState(false);
   const [cinema, setCinema] = useState<StrikeShow | null>(null);
+  const [strikeRecap, setStrikeRecap] = useState<RoundWorldEvent[] | null>(null);
   const fxId = useRef(0);
   const stateRef = useRef(state);
   stateRef.current = state;
   const cinemaResolveRef = useRef<(() => void) | null>(null);
+  const recapResolveRef = useRef<(() => void) | null>(null);
   const aiRunningRef = useRef(false);
 
   const isResolving = state.phase === 'resolveStrikes';
@@ -719,6 +794,20 @@ function GameBoard({
     setCinema(null);
     const resolve = cinemaResolveRef.current;
     cinemaResolveRef.current = null;
+    resolve?.();
+  }, []);
+
+  const playStrikeRecap = useCallback((events: RoundWorldEvent[]) => {
+    return new Promise<void>((resolve) => {
+      recapResolveRef.current = resolve;
+      setStrikeRecap(events);
+    });
+  }, []);
+
+  const onRecapContinue = useCallback(() => {
+    setStrikeRecap(null);
+    const resolve = recapResolveRef.current;
+    recapResolveRef.current = null;
     resolve?.();
   }, []);
 
@@ -805,14 +894,21 @@ function GameBoard({
           if (cancelled) break;
           await playStrikeCinema(strike.attackerId, strike.targetNationId, strike.cityId);
         }
-        if (!cancelled) {
-          setState((s) => {
-            if (s.phase !== 'resolveStrikes') return s;
-            let next = s;
-            for (const strike of strikes) next = applyQueuedStrike(next, strike);
-            return finishStrikeResolution(next);
-          });
+        if (cancelled) {
+          setBusy(false);
+          return;
         }
+
+        let resolved = stateRef.current;
+        if (resolved.phase !== 'resolveStrikes') {
+          setBusy(false);
+          return;
+        }
+        for (const strike of strikes) resolved = applyQueuedStrike(resolved, strike);
+        resolved = finishStrikeResolution(resolved);
+
+        await playStrikeRecap(resolved.roundEvents);
+        if (!cancelled) setState(resolved);
         setBusy(false);
       })();
     }, 50);
@@ -820,8 +916,12 @@ function GameBoard({
     return () => {
       cancelled = true;
       window.clearTimeout(t);
+      setStrikeRecap(null);
+      const resolveRecap = recapResolveRef.current;
+      recapResolveRef.current = null;
+      resolveRecap?.();
     };
-  }, [state.phase, state.round, setState, playStrikeCinema]);
+  }, [state.phase, state.round, setState, playStrikeCinema, playStrikeRecap]);
 
   const onSelectCity = (nationId: NationId, cityId: string) => {
     if (!strikeSelectMode || busy) return;
@@ -839,6 +939,7 @@ function GameBoard({
   const unshieldedCities = turn.cities.filter((c) => !c.destroyed && !c.hasShield);
   const bombMax = maxBombsPurchasable(state);
   const selectedCityIds = targets.map((t) => t.cityId);
+  const pendingBombCityIds = state.pendingStrikes.map((s) => s.cityId);
 
   const allyIds = isHumanTurn
     ? [turnId]
@@ -850,6 +951,7 @@ function GameBoard({
       <MapBackdrop />
       <FxLayer events={fx} />
       {cinema && <StrikeCinema strike={cinema} onComplete={onCinemaComplete} />}
+      {strikeRecap && <StrikeRecap events={strikeRecap} onContinue={onRecapContinue} />}
 
       {isHumanTurn && wizardStep && wizardStep !== 'strike' && (
         <div className="turn-wizard" role="dialog" aria-modal="true">
@@ -1082,6 +1184,7 @@ function GameBoard({
                 variant="ally"
                 state={state}
                 selectedCityIds={selectedCityIds}
+                pendingBombCityIds={pendingBombCityIds}
                 highlight={id === turnId}
               />
             ))}
@@ -1165,6 +1268,7 @@ function GameBoard({
                 selectedCityIds={selectedCityIds}
                 targetable={strikeSelectMode}
                 blockedCityIds={turn.citiesStruckThisRound}
+                pendingBombCityIds={pendingBombCityIds}
                 highlight={id === turnId}
                 onSelectCity={strikeSelectMode ? onSelectCity : undefined}
               />
@@ -1174,20 +1278,6 @@ function GameBoard({
       </div>
     </div>
   );
-}
-
-function formatRoundEvent(e: GameState['roundEvents'][number]): string {
-  const nation = nationDef(e.nationId).name;
-  const attacker = e.attackerId ? nationDef(e.attackerId).name : null;
-  if (e.kind === 'nationEliminated') return `${nation} is out — all cities destroyed.`;
-  if (e.kind === 'shieldDestroyed') {
-    return attacker
-      ? `${attacker} shattered the shield over ${e.cityName} (${nation}).`
-      : `Shield lost over ${e.cityName} (${nation}).`;
-  }
-  return attacker
-    ? `${attacker} destroyed ${e.cityName} (${nation}).`
-    : `${e.cityName} (${nation}) was destroyed.`;
 }
 
 function RoundSummary({
@@ -1201,8 +1291,6 @@ function RoundSummary({
     .filter((e) => e.kind === 'cityDestroyed' || e.kind === 'shieldDestroyed')
     .map((e) => e.cityId)
     .filter((id): id is string => Boolean(id));
-  const eliminated = state.roundEvents.filter((e) => e.kind === 'nationEliminated');
-  const strikes = state.roundEvents.filter((e) => e.kind !== 'nationEliminated');
   const humanIds = state.turnOrder.filter((id) => state.nations[id].isHuman);
   const rivalIds = state.turnOrder.filter((id) => !state.nations[id].isHuman);
 
@@ -1218,24 +1306,6 @@ function RoundSummary({
 
           <div className="board-left__controls">
             <div className="panel panel--shop round-report__panel">
-              <h2 className="round-report__panel-title">What happened</h2>
-              {state.roundEvents.length === 0 ? (
-                <p className="round-report__empty">No cities were hit this round. The board stands.</p>
-              ) : (
-                <ul className="round-report__event-list">
-                  {strikes.map((e) => (
-                    <li key={e.id} className={`round-event round-event--${e.kind}`}>
-                      {formatRoundEvent(e)}
-                    </li>
-                  ))}
-                  {eliminated.map((e) => (
-                    <li key={e.id} className="round-event round-event--nationEliminated">
-                      {formatRoundEvent(e)}
-                    </li>
-                  ))}
-                </ul>
-              )}
-
               <h2 className="round-report__panel-title">Scores</h2>
               <div className="score-cards score-cards--compact">
                 {state.roundScores.map((row, i) => {
