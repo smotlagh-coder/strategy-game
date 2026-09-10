@@ -1,0 +1,17 @@
+.git
+.github
+.gitignore
+node_modules
+dist
+dist-ssr
+*.md
+.DS_Store
+.vscode
+.idea
+*.log
+.oxlintrc.json
+*-original-black.png
+.env
+.env.*
+gcloud-service-key.json
+*.pem

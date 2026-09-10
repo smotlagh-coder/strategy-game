@@ -32,6 +32,26 @@ npm run dev
 
 Open the local URL Vite prints (usually `http://localhost:5173`).
 
+## Deploy (GCP App Engine)
+
+Pushes to `main` (or a manual **Actions → Deploy to GCP App Engine** run) build and deploy via GitHub Actions.
+
+Auth matches the Personal-planner GCP pattern: a base64 service-account key plus project id.
+
+### One-time setup
+
+1. In GCP, create/select a project and enable **App Engine** (`gcloud app create --region=us-central1` if needed).
+2. Create a service account with **App Engine Admin** and **Storage Admin** (for staging uploads), and download a JSON key.
+3. In the GitHub repo → **Settings → Secrets and variables → Actions**, add:
+   - `GCLOUD_PROJECT_ID` — your GCP project id
+   - `GCLOUD_SERVICE_KEY` — the service-account JSON, base64-encoded:
+
+```bash
+base64 -i service-account.json | pbcopy   # macOS
+```
+
+4. Push to `main` (or run the workflow manually). App Engine runs `gcp-build` (`npm run build`) then `npm start` (serves `dist` on `$PORT`).
+
 ## Play flow
 
 1. Choose Single Player or Two Players (hot-seat)
