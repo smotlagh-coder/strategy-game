@@ -194,10 +194,15 @@ function checkWinner(state: GameState): GameState {
   }
   if (state.round > state.maxRounds) {
     const scores = allScores(state);
+    // Eliminated nations keep standings points but can never become superpower
+    const contenders = scores.filter((s) => !s.eliminated);
+    const top = contenders[0]?.total;
+    const tied =
+      top == null ? [] : contenders.filter((s) => s.total === top);
     return {
       ...state,
       phase: 'gameOver',
-      winner: scores[0]?.nationId ?? 'draw',
+      winner: tied.length === 1 ? tied[0].nationId : 'draw',
       roundScores: scores,
     };
   }

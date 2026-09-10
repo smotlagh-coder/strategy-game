@@ -1,13 +1,14 @@
 import './App.css';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ART, SFX } from './data/art';
-import { NATIONS, nationDef, COSTS } from './data/nations';
+import { NATIONS, nationDef, COSTS, RESEARCH_INCOME } from './data/nations';
 import { LEADER_SPEECHES, speechFor } from './data/speeches';
 import {
   applyQueuedStrike,
   buyBombs,
   buyEnvironment,
   buyNuclearTech,
+  buyResearch,
   buyShield,
   createInitialState,
   currentNationId,
@@ -31,12 +32,25 @@ import { runAllAiUntilHumanOrSummary, runAiTurn } from './game/ai';
 import type { GameMode, GameState, NationId, RoundWorldEvent } from './types';
 
 type FxKind = 'buy' | 'strike-label';
-type WizardStep = 'tech' | 'bombs' | 'shieldAsk' | 'shieldPick' | 'env' | 'strike';
+type WizardStep =
+  | 'tech'
+  | 'researchAsk'
+  | 'researchPick'
+  | 'bombs'
+  | 'shieldAsk'
+  | 'shieldPick'
+  | 'env'
+  | 'sanctionAsk'
+  | 'sanctionPick'
+  | 'strike';
 
 function wizardArt(step: WizardStep): string {
   switch (step) {
     case 'tech':
       return ART.nukeTech;
+    case 'researchAsk':
+    case 'researchPick':
+      return ART.map;
     case 'bombs':
     case 'strike':
       return ART.missile;
@@ -45,6 +59,9 @@ function wizardArt(step: WizardStep): string {
       return ART.shield;
     case 'env':
       return ART.map;
+    case 'sanctionAsk':
+    case 'sanctionPick':
+      return ART.nukeTech;
     default:
       return ART.missile;
   }
@@ -700,6 +717,13 @@ function canOfferTech(state: GameState): boolean {
   return !n.hasNuclearTech && n.money >= COSTS.nuclearTech;
 }
 
+function canOfferResearch(state: GameState): boolean {
+  const n = state.nations[currentNationId(state)];
+  return (
+    n.money >= COSTS.research && n.cities.some((c) => !c.destroyed && !c.hasResearch)
+  );
+}
+
 function canOfferBombs(state: GameState): boolean {
   const n = state.nations[currentNationId(state)];
   return n.money >= COSTS.bomb && maxBombsPurchasable(state) > 0;
@@ -719,23 +743,40 @@ function canOfferEnv(state: GameState): boolean {
   );
 }
 
+function canOfferSanction(state: GameState): boolean {
+  const id = currentNationId(state);
+  return state.turnOrder.some((nid) => nid !== id && !state.nations[nid].eliminated);
+}
+
 function canOfferStrike(state: GameState): boolean {
   return state.nations[currentNationId(state)].bombs > 0;
 }
 
 /** Next wizard prompt after `from` (null = start of turn). */
 function nextWizardStep(state: GameState, from: WizardStep | null): WizardStep | null {
-  const sequence: WizardStep[] = ['tech', 'bombs', 'shieldAsk', 'env', 'strike'];
+  const sequence: WizardStep[] = [
+    'tech',
+    'researchAsk',
+    'bombs',
+    'shieldAsk',
+    'env',
+    'sanctionAsk',
+    'strike',
+  ];
   let start = 0;
-  if (from === 'shieldPick') start = sequence.indexOf('shieldAsk') + 1;
+  if (from === 'researchPick') start = sequence.indexOf('researchAsk') + 1;
+  else if (from === 'shieldPick') start = sequence.indexOf('shieldAsk') + 1;
+  else if (from === 'sanctionPick') start = sequence.indexOf('sanctionAsk') + 1;
   else if (from != null) start = sequence.indexOf(from) + 1;
 
   for (let i = start; i < sequence.length; i += 1) {
     const step = sequence[i];
     if (step === 'tech' && canOfferTech(state)) return 'tech';
+    if (step === 'researchAsk' && canOfferResearch(state)) return 'researchAsk';
     if (step === 'bombs' && canOfferBombs(state)) return 'bombs';
     if (step === 'shieldAsk' && canOfferShield(state)) return 'shieldAsk';
     if (step === 'env' && canOfferEnv(state)) return 'env';
+    if (step === 'sanctionAsk' && canOfferSanction(state)) return 'sanctionAsk';
     if (step === 'strike' && canOfferStrike(state)) return 'strike';
   }
   return null;
@@ -937,6 +978,7 @@ function GameBoard({
   };
 
   const unshieldedCities = turn.cities.filter((c) => !c.destroyed && !c.hasShield);
+  const researchCities = turn.cities.filter((c) => !c.destroyed && !c.hasResearch);
   const bombMax = maxBombsPurchasable(state);
   const selectedCityIds = targets.map((t) => t.cityId);
   const pendingBombCityIds = state.pendingStrikes.map((s) => s.cityId);
@@ -995,6 +1037,61 @@ function GameBoard({
                     onClick={() => advanceAfter(stateRef.current, 'tech')}
                   >
                     No
+                  </button>
+                </div>
+              </>
+            )}
+
+            {wizardStep === 'researchAsk' && (
+              <>
+                <h3 className="turn-wizard__q">Do you want to build a Research Center?</h3>
+                <p className="turn-wizard__hint">
+                  {COSTS.research}M · that city earns +${RESEARCH_INCOME}M each round
+                </p>
+                <div className="turn-wizard__actions">
+                  <button
+                    className="btn btn--xl btn--primary"
+                    onClick={() => setWizardStep('researchPick')}
+                  >
+                    Yes
+                  </button>
+                  <button
+                    className="btn btn--xl"
+                    onClick={() => advanceAfter(stateRef.current, 'researchAsk')}
+                  >
+                    No
+                  </button>
+                </div>
+              </>
+            )}
+
+            {wizardStep === 'researchPick' && (
+              <>
+                <h3 className="turn-wizard__q">Select the city for your Research Center</h3>
+                <p className="turn-wizard__hint">Cities that already have research are hidden</p>
+                <div className="turn-wizard__city-grid">
+                  {researchCities.map((c) => (
+                    <button
+                      key={c.id}
+                      className="turn-wizard__city-card"
+                      onClick={() => {
+                        pushFx({ kind: 'buy', label: `Research in ${c.name}` }, 700);
+                        const next = buyResearch(stateRef.current, c.id);
+                        setState(next);
+                        advanceAfter(next, 'researchPick');
+                      }}
+                    >
+                      <img src={ART.cities[c.id]} alt="" draggable={false} />
+                      <span>{c.name}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="turn-wizard__actions">
+                  <button
+                    className="btn btn--xl"
+                    onClick={() => advanceAfter(stateRef.current, 'researchPick')}
+                  >
+                    Cancel
                   </button>
                 </div>
               </>
@@ -1110,6 +1207,67 @@ function GameBoard({
                 </div>
               </>
             )}
+
+            {wizardStep === 'sanctionAsk' && (
+              <>
+                <h3 className="turn-wizard__q">Do you want to impose sanctions?</h3>
+                <p className="turn-wizard__hint">
+                  Free · each sanctioned rival loses 20% of their income
+                </p>
+                <div className="turn-wizard__actions">
+                  <button
+                    className="btn btn--xl btn--primary"
+                    onClick={() => setWizardStep('sanctionPick')}
+                  >
+                    Yes
+                  </button>
+                  <button
+                    className="btn btn--xl"
+                    onClick={() => advanceAfter(stateRef.current, 'sanctionAsk')}
+                  >
+                    No
+                  </button>
+                </div>
+              </>
+            )}
+
+            {wizardStep === 'sanctionPick' && (
+              <>
+                <h3 className="turn-wizard__q">Choose rivals to sanction</h3>
+                <p className="turn-wizard__hint">
+                  Tap to toggle · −20% income each · currently sanctioning{' '}
+                  {turn.sanctions.filter((nid) => !state.nations[nid]?.eliminated).length}
+                </p>
+                <div className="turn-wizard__sanction-grid">
+                  {enemyIds.map((nid) => {
+                    const n = nationDef(nid);
+                    const alive = !state.nations[nid].eliminated;
+                    const active = turn.sanctions.includes(nid);
+                    return (
+                      <button
+                        key={nid}
+                        type="button"
+                        className={`turn-wizard__sanction-card ${active ? 'is-on' : ''}`}
+                        disabled={!alive}
+                        onClick={() => setState((s) => toggleSanction(s, nid))}
+                      >
+                        <img src={ART.leaders[nid]} alt="" draggable={false} />
+                        <strong>{n.name}</strong>
+                        <span>{active ? 'Sanctioning' : alive ? 'Tap to sanction' : 'Out'}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="turn-wizard__actions">
+                  <button
+                    className="btn btn--xl btn--primary"
+                    onClick={() => advanceAfter(stateRef.current, 'sanctionPick')}
+                  >
+                    Done
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -1208,24 +1366,6 @@ function GameBoard({
                 <p className="upgrade-hint">
                   Answer each prompt · strikes resolve together when the round ends
                 </p>
-                <div className="sanction-row">
-                  {enemyIds.map((nid) => {
-                    const n = nationDef(nid);
-                    const alive = !state.nations[nid].eliminated;
-                    const active = turn.sanctions.includes(nid);
-                    return (
-                      <button
-                        key={nid}
-                        className={`sanction-chip ${active ? 'is-on' : ''}`}
-                        disabled={!alive}
-                        onClick={() => setState((s) => toggleSanction(s, nid))}
-                      >
-                        <img src={ART.leaders[nid]} alt="" />
-                        {active ? 'Sanctioning' : 'Sanction'} {n.shortName}
-                      </button>
-                    );
-                  })}
-                </div>
               </div>
             )}
 

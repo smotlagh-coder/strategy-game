@@ -19,7 +19,7 @@ Repo: [smotlagh-coder/strategy-game](https://github.com/smotlagh-coder/strategy-
 | Sanction | −**20%** total revenue for the target |
 | Nuke hit | World environment **−5%** |
 
-Each nation has **3 cities**. Unshielded hit = city destroyed. Lose all 3 cities = eliminated.
+Each nation has **3 cities**. Unshielded hit = city destroyed. Lose all 3 cities = eliminated — eliminated nations keep their score on the board but **cannot become the superpower**.
 
 Strikes are queued during turns and resolve together at round end. Survival score awards **10 pts × cities still standing** each round.
 

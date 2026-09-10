@@ -1515,6 +1515,78 @@ img { max-width: 100%; display: block; }
   font-size: 0.9rem;
 }
 
+.turn-wizard__sanction-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 0.65rem;
+  margin: 0 0 1rem;
+}
+
+.turn-wizard__sanction-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.65rem 0.5rem;
+  border-radius: 16px;
+  border: 2px solid rgba(120, 190, 255, 0.35);
+  background: rgba(10, 22, 42, 0.9);
+  color: #eef5ff;
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.turn-wizard__sanction-card img {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 12px;
+}
+
+.turn-wizard__sanction-card strong {
+  font-size: 0.82rem;
+}
+
+.turn-wizard__sanction-card span {
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+
+.turn-wizard__sanction-card:hover:not(:disabled) {
+  transform: translateY(-2px);
+  border-color: #d2b0ff;
+}
+
+.turn-wizard__sanction-card.is-on {
+  border-color: #d2b0ff;
+  box-shadow: 0 0 0 2px rgba(210, 176, 255, 0.35);
+  background: rgba(48, 24, 72, 0.9);
+}
+
+.turn-wizard__sanction-card.is-on span {
+  color: #e4c8ff;
+  font-weight: 700;
+}
+
+.turn-wizard__sanction-card:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.turn-wizard__hero--researchAsk,
+.turn-wizard__hero--researchPick {
+  background:
+    radial-gradient(ellipse at 50% 45%, rgba(80, 190, 255, 0.22), transparent 60%),
+    rgba(6, 14, 28, 0.9);
+}
+
+.turn-wizard__hero--sanctionAsk,
+.turn-wizard__hero--sanctionPick {
+  background:
+    radial-gradient(ellipse at 50% 45%, rgba(180, 120, 255, 0.22), transparent 60%),
+    rgba(18, 10, 28, 0.9);
+}
+
 @media (max-width: 640px) {
   .turn-wizard__panel--strike {
     grid-template-columns: 1fr;
