@@ -116,7 +116,13 @@ export function computeScore(state: GameState, id: NationId): RoundScore {
 }
 
 export function allScores(state: GameState): RoundScore[] {
-  return state.turnOrder.map((id) => computeScore(state, id)).sort((a, b) => b.total - a.total);
+  return state.turnOrder
+    .map((id) => computeScore(state, id))
+    .sort((a, b) => {
+      // Living nations always rank above eliminated — OUT cannot lead / win
+      if (a.eliminated !== b.eliminated) return a.eliminated ? 1 : -1;
+      return b.total - a.total;
+    });
 }
 
 /** Remember each nation's best live score so wipeout can freeze it later */

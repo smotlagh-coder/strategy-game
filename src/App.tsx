@@ -1451,15 +1451,16 @@ function RoundSummary({
                 {state.roundScores.map((row, i) => {
                   const nation = state.nations[row.nationId];
                   const isYou = nation.isHuman;
+                  const isLead = !row.eliminated && state.roundScores.findIndex((s) => !s.eliminated) === i;
                   return (
                     <div
                       key={row.nationId}
-                      className={`score-card ${row.eliminated ? 'is-out' : ''} ${i === 0 ? 'is-lead' : ''} ${isYou ? 'is-you' : ''}`}
+                      className={`score-card ${row.eliminated ? 'is-out' : ''} ${isLead ? 'is-lead' : ''} ${isYou ? 'is-you' : ''}`}
                     >
                       <img src={ART.leaders[row.nationId]} alt="" />
                       <div>
                         <strong>
-                          #{i + 1} {nationDef(row.nationId).name}
+                          {row.eliminated ? 'OUT' : `#${i + 1}`} {nationDef(row.nationId).name}
                           {isYou ? ` (${playerDisplayName(state, row.nationId)})` : ''}
                         </strong>
                         <span>
