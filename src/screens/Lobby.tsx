@@ -127,15 +127,12 @@ export function LobbyScreen({
   const others = useMemo(() => {
     const now = Date.now();
     return players
-      .filter((p) => p.uid !== uid)
+      .filter((p) => p.uid !== uid && isPlayerOnline(p.data, now))
       .map((p) => ({
         ...p,
-        online: isPlayerOnline(p.data, now),
+        online: true as const,
       }))
-      .sort((a, b) => {
-        if (a.online !== b.online) return a.online ? -1 : 1;
-        return a.data.displayName.localeCompare(b.data.displayName);
-      });
+      .sort((a, b) => a.data.displayName.localeCompare(b.data.displayName));
   }, [players, uid]);
 
   const pendingInviteUids = useMemo(() => {
