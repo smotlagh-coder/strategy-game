@@ -63,6 +63,8 @@ export function createInitialState(): GameState {
     lastIncomeLedger: [],
     uidToNation: {},
     onlineGameId: null,
+    onlineLobbyId: null,
+    onlineHostUid: null,
     humanReady: {},
     humanPlanningStartedAt: null,
     humanLastActive: {},

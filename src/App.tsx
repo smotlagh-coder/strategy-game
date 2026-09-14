@@ -45,12 +45,14 @@ import {
   setPlayerStatus,
 } from './lib/session';
 import {
+  fetchGame,
   finishOnlineGame,
   incrementSuperpowerWin,
   kickIdleHumanFromGame,
   listenGame,
   enqueueHumanPlanningPush,
   pushGameState,
+  rematchOnlineGame,
   tryAcquireAiLock,
 } from './lib/multiplayer';
 import { applyRemoteGameSnapshot } from './lib/onlineSync';
@@ -914,7 +916,6 @@ function GameBoard({
   /** Online: every human plans at once as their own nation; offline stays turn-based. */
   const actorId = isOnline && myNationId ? myNationId : turnId;
   const turn = state.nations[actorId];
-  const def = nationDef(actorId);
   const [targets, setTargets] = useState<{ nationId: NationId; cityId: string }[]>([]);
   const [wizardStep, setWizardStep] = useState<WizardStep | null>(null);
   const [fx, setFx] = useState<FxEvent[]>([]);
@@ -2072,15 +2073,19 @@ function RoundSummary({
               </div>
 
               <div className="round-report__actions">
-                <button className="btn btn--xl btn--primary" onClick={onContinue}>
-                  {state.round >= state.maxRounds
-                    ? 'Final Results'
-                    : `Start Round ${state.round + 1}`}
-                </button>
-                {isOnline && state.round < state.maxRounds && (
-                  <p className="round-report__auto-hint">
-                    Next round starts automatically for everyone…
-                  </p>
+                {state.round >= state.maxRounds ? (
+                  <p className="round-report__auto-hint">Showing final results…</p>
+                ) : (
+                  <>
+                    <button className="btn btn--xl btn--primary" onClick={onContinue}>
+                      {`Start Round ${state.round + 1}`}
+                    </button>
+                    {isOnline && (
+                      <p className="round-report__auto-hint">
+                        Next round starts automatically for everyone…
+                      </p>
+                    )}
+                  </>
                 )}
               </div>
             </div>
@@ -2117,18 +2122,32 @@ function GameOver({
   sessionUid,
   displayName,
   onRestart,
+  onRematch,
+  rematchBusy,
+  rematchError,
   onLeaderboard,
 }: {
   state: GameState;
   sessionUid?: string | null;
   displayName?: string;
   onRestart: () => void;
+  onRematch?: () => void;
+  rematchBusy?: boolean;
+  rematchError?: string | null;
   onLeaderboard?: () => void;
 }) {
   const winnerName =
     state.winner && state.winner !== 'draw' ? nationDef(state.winner).name : 'No one';
   const isMutual = state.winner === 'draw';
   const creditedRef = useRef(false);
+  const isOnline = state.mode === 'online';
+  const isHost = Boolean(sessionUid && state.onlineHostUid === sessionUid);
+  /** Older matches may lack onlineHostUid — allow attempt; server enforces host. */
+  const canStartRematch = isOnline && Boolean(sessionUid) && (isHost || !state.onlineHostUid);
+  const winnerPlayer =
+    state.winner && state.winner !== 'draw' && state.nations[state.winner]?.isHuman
+      ? playerDisplayName(state, state.winner)
+      : null;
 
   useEffect(() => {
     if (creditedRef.current) return;
@@ -2147,30 +2166,97 @@ function GameOver({
   }, [state, sessionUid, displayName]);
 
   return (
-    <div className="screen screen--splash">
+    <div className="screen screen--board screen--round-report screen--game-over">
       <MapBackdrop />
       <div className="splash-veil splash-veil--fire" />
-      <div className="splash-content">
-        {state.winner && state.winner !== 'draw' && (
-          <img className="winner-art enter-pop" src={ART.leaders[state.winner]} alt="" />
-        )}
-        <h1 className="stencil-title">{isMutual ? 'MUTUAL DESTRUCTION' : 'SUPERPOWER'}</h1>
-        <p className="tagline">
-          {isMutual
-            ? 'The environment hit 0%. The world burns. Nobody wins.'
-            : `${winnerName} dominates the board.`}
-        </p>
-        <EnvMeter value={state.environment} />
-        <div className="mode-row">
-          <button className="btn btn--xl btn--primary" onClick={onRestart}>
-            Play Again
-          </button>
+      <div className="game-over-layout">
+        <header className="game-over-hero enter-pop">
+          {state.winner && state.winner !== 'draw' && (
+            <img className="winner-art" src={ART.leaders[state.winner]} alt="" />
+          )}
+          <div>
+            <h1 className="stencil-title">{isMutual ? 'MUTUAL DESTRUCTION' : 'SUPERPOWER'}</h1>
+            <p className="tagline">
+              {isMutual
+                ? 'The environment hit 0%. The world burns. Nobody wins.'
+                : winnerPlayer
+                  ? `${winnerName} — ${winnerPlayer} dominates the board.`
+                  : `${winnerName} dominates the board.`}
+            </p>
+            <EnvMeter value={state.environment} />
+          </div>
+        </header>
+
+        <section className="panel panel--shop game-over-scores">
+          <h2 className="round-report__panel-title">Final scores</h2>
+          <div className="score-cards score-cards--compact">
+            {(state.roundScores.length > 0
+              ? state.roundScores
+              : state.turnOrder.map((id) => computeScore(state, id))
+            ).map((row, i) => {
+              const nation = state.nations[row.nationId];
+              const isYou =
+                Boolean(sessionUid && nation.ownerUid === sessionUid) ||
+                (!isOnline && nation.isHuman && nation.playerSlot === 1);
+              const isWinner = state.winner === row.nationId;
+              return (
+                <div
+                  key={row.nationId}
+                  className={`score-card ${row.eliminated ? 'is-out' : ''} ${isWinner ? 'is-lead' : ''} ${isYou ? 'is-you' : ''}`}
+                >
+                  <img src={ART.leaders[row.nationId]} alt="" />
+                  <div>
+                    <strong>
+                      #{i + 1} {nationDef(row.nationId).name}
+                      {nation.isHuman ? ` (${playerDisplayName(state, row.nationId)})` : ''}
+                      {isWinner ? ' ★' : ''}
+                    </strong>
+                    <span>
+                      Cities {row.citiesLeft} · Survived {row.citySurvivalPoints} · 🔍
+                      {row.researchCenters} · 🛡{row.shields}
+                      {isYou ? ' · You' : nation.isHuman ? ' · Player' : ' · AI'}
+                    </span>
+                  </div>
+                  <em>{row.total}</em>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        <div className="mode-row game-over-actions">
+          {isOnline ? (
+            <>
+              {canStartRematch ? (
+                <button
+                  className="btn btn--xl btn--primary"
+                  type="button"
+                  disabled={rematchBusy}
+                  onClick={() => onRematch?.()}
+                >
+                  {rematchBusy ? 'Starting…' : 'Play Again'}
+                </button>
+              ) : (
+                <p className="round-report__auto-hint">
+                  Waiting for host to start Play Again…
+                </p>
+              )}
+              <button className="btn btn--xl" type="button" onClick={onRestart}>
+                Leave
+              </button>
+            </>
+          ) : (
+            <button className="btn btn--xl btn--primary" type="button" onClick={onRestart}>
+              Play Again
+            </button>
+          )}
           {onLeaderboard && (
-            <button className="btn btn--xl" onClick={onLeaderboard}>
+            <button className="btn btn--xl" type="button" onClick={onLeaderboard}>
               Leaderboard
             </button>
           )}
         </div>
+        {rematchError && <p className="session-error">{rematchError}</p>}
       </div>
     </div>
   );
@@ -2185,6 +2271,8 @@ export default function App() {
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const advancePastAi = useCallback((s: GameState) => runAllAiUntilHumanOrSummary(s), []);
   const advancingRoundRef = useRef(false);
+  const [rematchBusy, setRematchBusy] = useState(false);
+  const [rematchError, setRematchError] = useState<string | null>(null);
 
   const advanceFromRoundSummary = useCallback(() => {
     setState((s) => {
@@ -2204,39 +2292,48 @@ export default function App() {
     });
   }, [advancePastAi, sessionUid]);
 
-  // Online: one client advances everyone past the aftermath — guests follow via listenGame
+  // Auto-advance aftermath: next round, or final results → game over
   useEffect(() => {
     if (state.phase !== 'roundSummary') {
       advancingRoundRef.current = false;
       return;
     }
-    if (state.mode !== 'online' || !state.onlineGameId || !sessionUid) return;
-    if (advancingRoundRef.current) return;
+    const isFinal = state.round >= state.maxRounds;
+    if (state.mode === 'online') {
+      if (!state.onlineGameId || !sessionUid) return;
+      if (advancingRoundRef.current) return;
 
-    let cancelled = false;
-    const t = window.setTimeout(() => {
-      void (async () => {
-        if (cancelled || advancingRoundRef.current) return;
-        const got = await tryAcquireAiLock(
-          state.onlineGameId!,
-          sessionUid,
-          `next-${state.round}`,
-        );
-        if (!got || cancelled) return;
-        advancingRoundRef.current = true;
-        advanceFromRoundSummary();
-      })();
-    }, 900);
+      let cancelled = false;
+      const t = window.setTimeout(() => {
+        void (async () => {
+          if (cancelled || advancingRoundRef.current) return;
+          const got = await tryAcquireAiLock(
+            state.onlineGameId!,
+            sessionUid,
+            `next-${state.round}`,
+          );
+          if (!got || cancelled) return;
+          advancingRoundRef.current = true;
+          advanceFromRoundSummary();
+        })();
+      }, isFinal ? 1200 : 900);
 
-    return () => {
-      cancelled = true;
-      window.clearTimeout(t);
-    };
+      return () => {
+        cancelled = true;
+        window.clearTimeout(t);
+      };
+    }
+
+    // Offline: still auto-show final results; mid-rounds need the Continue button
+    if (!isFinal) return;
+    const t = window.setTimeout(() => advanceFromRoundSummary(), 1200);
+    return () => window.clearTimeout(t);
   }, [
     state.phase,
     state.mode,
     state.onlineGameId,
     state.round,
+    state.maxRounds,
     sessionUid,
     advanceFromRoundSummary,
   ]);
@@ -2249,9 +2346,41 @@ export default function App() {
       sessionUid && state.uidToNation?.[sessionUid]
         ? state.uidToNation[sessionUid]
         : null;
+    let joiningRematch = false;
     return listenGame(gameId, (game) => {
-      if (!game?.state) return;
-      setState((prev) => applyRemoteGameSnapshot(prev, game.state, myId));
+      if (!game) return;
+      if (game.rematchGameId && game.rematchGameId !== gameId && !joiningRematch) {
+        joiningRematch = true;
+        const nextId = game.rematchGameId;
+        void (async () => {
+          try {
+            const next = await fetchGame(nextId);
+            if (!next?.state) {
+              joiningRematch = false;
+              return;
+            }
+            if (sessionUid) await setPlayerStatus(sessionUid, 'in_game', nextId);
+            setState({
+              ...next.state,
+              onlineGameId: nextId,
+              onlineLobbyId: next.lobbyId ?? next.state.onlineLobbyId ?? null,
+              onlineHostUid: next.hostUid,
+            });
+          } catch {
+            joiningRematch = false;
+          }
+        })();
+        return;
+      }
+      if (!game.state) return;
+      setState((prev) => {
+        const merged = applyRemoteGameSnapshot(prev, game.state, myId);
+        return {
+          ...merged,
+          onlineHostUid: game.hostUid ?? merged.onlineHostUid ?? null,
+          onlineLobbyId: game.lobbyId ?? merged.onlineLobbyId ?? null,
+        };
+      });
     });
   }, [state.onlineGameId, state.mode, sessionUid, state.uidToNation]);
 
@@ -2405,8 +2534,30 @@ export default function App() {
           state={state}
           sessionUid={sessionUid}
           displayName={displayName}
+          rematchBusy={rematchBusy}
+          rematchError={rematchError}
+          onRematch={() => {
+            if (!state.onlineGameId || !sessionUid) return;
+            setRematchBusy(true);
+            setRematchError(null);
+            void rematchOnlineGame(state.onlineGameId, sessionUid)
+              .then(async ({ gameId, state: next }) => {
+                await setPlayerStatus(sessionUid, 'in_game', gameId);
+                setState({
+                  ...next,
+                  onlineGameId: gameId,
+                  onlineLobbyId: next.onlineLobbyId ?? state.onlineLobbyId ?? null,
+                  onlineHostUid: next.onlineHostUid ?? sessionUid,
+                });
+              })
+              .catch((e) => {
+                setRematchError(e instanceof Error ? e.message : 'Could not start rematch');
+              })
+              .finally(() => setRematchBusy(false));
+          }}
           onRestart={() => {
             if (sessionUid) void setPlayerStatus(sessionUid, 'available', null);
+            setRematchError(null);
             setState(createInitialState());
           }}
           onLeaderboard={() => setShowLeaderboard(true)}

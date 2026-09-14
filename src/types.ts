@@ -122,6 +122,10 @@ export interface GameState {
   /** Online: uid → nation */
   uidToNation?: Partial<Record<string, NationId>>;
   onlineGameId?: string | null;
+  /** Online: lobby this match was started from (for rematch) */
+  onlineLobbyId?: string | null;
+  /** Online: host uid for rematch permissions */
+  onlineHostUid?: string | null;
   roundScores: RoundScore[];
   scoreHistory: RoundScore[][];
   log: LogEntry[];
@@ -187,4 +191,7 @@ export interface OnlineGameDoc {
   state: GameState;
   aiLock: string | null;
   updatedAt: number;
+  /** When host starts Play Again — peers join this new game */
+  rematchGameId?: string | null;
+  lobbyId?: string | null;
 }

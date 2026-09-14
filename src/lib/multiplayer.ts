@@ -189,6 +189,7 @@ export function buildOnlineGameState(
   assignments: Record<string, NationId>,
   playerNames: Record<string, string>,
   gameId: string,
+  opts?: { lobbyId?: string; hostUid?: string },
 ): GameState {
   let state = createInitialState();
   const nations = { ...state.nations };
@@ -233,6 +234,8 @@ export function buildOnlineGameState(
       playerNames: slotNames,
       uidToNation,
       onlineGameId: gameId,
+      onlineLobbyId: opts?.lobbyId ?? null,
+      onlineHostUid: opts?.hostUid ?? null,
       turnOrder: [...humans, ...ai],
       currentTurnIndex: 0,
       log: [
@@ -254,7 +257,10 @@ export async function startOnlineGameFromLobby(
 
   const assignments = assignNations(lobby.memberUids);
   const gameRef = doc(collection(getDb(), 'games'));
-  const state = buildOnlineGameState(assignments, lobby.memberNames, gameRef.id);
+  const state = buildOnlineGameState(assignments, lobby.memberNames, gameRef.id, {
+    lobbyId: lobby.id,
+    hostUid: lobby.hostUid,
+  });
 
   const game: OnlineGameDoc = {
     hostUid: lobby.hostUid,
@@ -265,6 +271,8 @@ export async function startOnlineGameFromLobby(
     state,
     aiLock: null,
     updatedAt: Date.now(),
+    lobbyId: lobby.id,
+    rematchGameId: null,
   };
   await setDoc(gameRef, stripUndefined(game));
   // Each client updates only their own player doc (rules enforce uid match)
@@ -274,6 +282,73 @@ export async function startOnlineGameFromLobby(
   });
 
   return { gameId: gameRef.id, state };
+}
+
+/**
+ * Host starts another match with the same players. Peers pick up rematchGameId
+ * from the finished game document.
+ */
+export async function rematchOnlineGame(
+  finishedGameId: string,
+  hostUid: string,
+): Promise<{ gameId: string; state: GameState }> {
+  const finished = await fetchGame(finishedGameId);
+  if (!finished) throw new Error('Finished game not found');
+  if (finished.hostUid !== hostUid) throw new Error('Only the host can start a rematch');
+
+  const lobbyId = finished.lobbyId ?? finished.state.onlineLobbyId ?? null;
+  let lobby: OnlineLobby;
+  if (lobbyId) {
+    const lobbySnap = await getDoc(doc(getDb(), 'lobbies', lobbyId));
+    if (lobbySnap.exists()) {
+      lobby = {
+        ...(lobbySnap.data() as OnlineLobby),
+        id: lobbyId,
+        hostUid: finished.hostUid,
+        memberUids: finished.playerUids,
+        memberNames: finished.playerNames,
+        status: 'open',
+        gameId: null,
+      };
+      await updateDoc(doc(getDb(), 'lobbies', lobbyId), {
+        status: 'open',
+        gameId: null,
+        memberUids: finished.playerUids,
+        memberNames: finished.playerNames,
+        hostUid: finished.hostUid,
+      });
+    } else {
+      lobby = {
+        id: lobbyId,
+        hostUid: finished.hostUid,
+        memberUids: finished.playerUids,
+        memberNames: finished.playerNames,
+        status: 'open',
+        createdAt: Date.now(),
+      };
+      await setDoc(doc(getDb(), 'lobbies', lobbyId), lobby);
+    }
+  } else {
+    const lobbyRef = doc(collection(getDb(), 'lobbies'));
+    lobby = {
+      id: lobbyRef.id,
+      hostUid: finished.hostUid,
+      memberUids: finished.playerUids,
+      memberNames: finished.playerNames,
+      status: 'open',
+      createdAt: Date.now(),
+    };
+    await setDoc(lobbyRef, lobby);
+  }
+
+  const { gameId, state } = await startOnlineGameFromLobby(lobby);
+  await updateDoc(doc(getDb(), 'games', finishedGameId), {
+    rematchGameId: gameId,
+    updatedAt: Date.now(),
+  });
+
+  // Mark everyone in-game on the new match (each client also does this on enter)
+  return { gameId, state };
 }
 
 export async function fetchGame(gameId: string): Promise<OnlineGameDoc | null> {
@@ -428,8 +503,8 @@ export async function tryAcquireAiLock(
 
 export async function finishOnlineGame(gameId: string, state: GameState, selfUid?: string) {
   await pushGameState(gameId, state, true);
-  if (selfUid) await setPlayerStatus(selfUid, 'available', null);
-  // Leaderboard wins are credited on the GameOver screen by the winner's client
+  // Keep players "in_game" so rematch can start without everyone re-lobbying
+  if (selfUid) await setPlayerStatus(selfUid, 'in_game', gameId);
 }
 
 export async function incrementSuperpowerWin(uid: string, displayName: string) {
