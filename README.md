@@ -43,7 +43,12 @@ Used for sessions, presence, invites, live games, and the superpower leaderboard
 
 1. Create a Firebase project (or use GCP project `personal-planner-api`).
 2. Enable **Anonymous Authentication** and **Cloud Firestore**.
-3. Deploy rules: `firebase deploy --only firestore:rules` (see [`firestore.rules`](firestore.rules)).
+3. Deploy rules from the repo root:
+
+```bash
+firebase deploy --only firestore:rules
+```
+
 4. Copy the web app config into `.env` (`VITE_FIREBASE_*` — see `.env.example`).
 5. Enable **Blaze** (pay-as-you-go) so Auth/Firestore work in production; set GCP **budget alerts** at $5 and $20. Light family usage should stay near **$0**/mo inside free quotas.
 
