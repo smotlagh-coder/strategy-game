@@ -9,12 +9,14 @@ import {
   listenInvitesFor,
   listenLobby,
   listenMyActiveGames,
+  listenOutgoingInvites,
   listenPlayers,
   respondInvite,
   sendInvite,
   startOnlineGameFromLobby,
 } from '../lib/multiplayer';
-import { heartbeat, formatPlayerLabel, setPlayerStatus, shortPlayerId } from '../lib/session';
+import { heartbeat, formatPlayerLabel, setPlayerStatus } from '../lib/session';
+import { inviteButtonState, isAlreadyInvited } from '../lib/lobbyInvite';
 import type { GameState, InviteDoc, OnlineLobby, PlayerDoc } from '../types';
 
 export function LobbyScreen({
@@ -32,6 +34,7 @@ export function LobbyScreen({
 }) {
   const [players, setPlayers] = useState<{ uid: string; data: PlayerDoc }[]>([]);
   const [invites, setInvites] = useState<{ id: string; data: InviteDoc }[]>([]);
+  const [outgoingInvites, setOutgoingInvites] = useState<{ id: string; data: InviteDoc }[]>([]);
   const [lobbyId, setLobbyId] = useState<string | null>(null);
   const [lobby, setLobby] = useState<OnlineLobby | null>(null);
   const [busy, setBusy] = useState(false);
@@ -70,6 +73,11 @@ export function LobbyScreen({
 
   useEffect(() => {
     const unsub = listenInvitesFor(uid, setInvites);
+    return unsub;
+  }, [uid]);
+
+  useEffect(() => {
+    const unsub = listenOutgoingInvites(uid, setOutgoingInvites);
     return unsub;
   }, [uid]);
 
@@ -130,6 +138,19 @@ export function LobbyScreen({
       });
   }, [players, uid]);
 
+  const pendingInviteUids = useMemo(() => {
+    const set = new Set<string>();
+    for (const inv of outgoingInvites) {
+      if (!lobbyId || inv.data.lobbyId === lobbyId) set.add(inv.data.toUid);
+    }
+    return set;
+  }, [outgoingInvites, lobbyId]);
+
+  const lobbyMemberUids = useMemo(
+    () => new Set(lobby?.memberUids ?? []),
+    [lobby?.memberUids],
+  );
+
   const startHostLobby = async () => {
     setBusy(true);
     setError(null);
@@ -146,6 +167,10 @@ export function LobbyScreen({
   const invite = async (toUid: string) => {
     if (!lobbyId) {
       setError('Create a lobby first, then invite players');
+      return;
+    }
+    if (isAlreadyInvited(toUid, pendingInviteUids, lobbyMemberUids)) {
+      setError('That player is already invited');
       return;
     }
     setBusy(true);
@@ -211,11 +236,20 @@ export function LobbyScreen({
           <section className="lobby-panel">
             <h2>Players</h2>
             <ul className="lobby-list">
-              {others.map((p) => (
+              {others.map((p) => {
+                const { disabled, label } = inviteButtonState({
+                  toUid: p.uid,
+                  lobbyId,
+                  online: p.online,
+                  inGame: p.data.status === 'in_game',
+                  busy,
+                  pendingInviteUids,
+                  lobbyMemberUids,
+                });
+                return (
                 <li key={p.uid} className="lobby-row">
                   <span>
                     <strong>{formatPlayerLabel(p.data.displayName, p.uid)}</strong>
-                    <small className="player-id-tag">{shortPlayerId(p.uid)}</small>
                     <small
                       className={
                         p.data.status === 'in_game'
@@ -235,13 +269,14 @@ export function LobbyScreen({
                   <button
                     className="btn"
                     type="button"
-                    disabled={busy || !p.online || p.data.status === 'in_game' || !lobbyId}
+                    disabled={disabled}
                     onClick={() => void invite(p.uid)}
                   >
-                    Invite
+                    {label}
                   </button>
                 </li>
-              ))}
+                );
+              })}
               {others.length === 0 && <li className="lobby-empty">No other players yet</li>}
             </ul>
           </section>
@@ -258,7 +293,9 @@ export function LobbyScreen({
                   {(lobby?.memberUids ?? []).map((id) => (
                     <li key={id} className="lobby-row">
                       <strong>
-                        {lobby?.memberNames[id] ?? formatPlayerLabel('Commander', id)}
+                        {lobby?.memberNames[id]
+                          ? formatPlayerLabel(lobby.memberNames[id])
+                          : formatPlayerLabel('Commander', id)}
                         {id === lobby?.hostUid ? ' (host)' : ''}
                         {id === uid ? ' · you' : ''}
                       </strong>

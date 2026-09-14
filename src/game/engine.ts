@@ -12,6 +12,7 @@ import {
   initialNation,
   nationDef,
 } from '../data/nations';
+import { displayNameOnly } from '../lib/session';
 import type {
   GameMode,
   GameState,
@@ -66,6 +67,7 @@ export function createInitialState(): GameState {
     humanPlanningStartedAt: null,
     humanLastActive: {},
     planningComplete: false,
+    aiPlanningComplete: false,
   };
 }
 
@@ -112,6 +114,7 @@ export function beginHumanPlanning(state: GameState, at = Date.now()): GameState
     humanPlanningStartedAt: at,
     humanLastActive,
     planningComplete: false,
+    aiPlanningComplete: false,
   };
 }
 
@@ -399,7 +402,7 @@ export function playerDisplayName(state: GameState, nationId: NationId): string 
   const n = state.nations[nationId];
   if (!n.isHuman) return 'AI';
   const slot = n.playerSlot;
-  if (slot && state.playerNames[slot]) return state.playerNames[slot]!;
+  if (slot && state.playerNames[slot]) return displayNameOnly(state.playerNames[slot]!);
   return slot ? `Player ${slot}` : 'Player';
 }
 

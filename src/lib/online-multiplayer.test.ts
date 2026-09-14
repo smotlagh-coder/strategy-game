@@ -5,6 +5,8 @@ import {
   markHumanReady,
   allAliveHumansReady,
   touchHumanActivity,
+  finishStrikeResolution,
+  nextRound,
 } from '../game/engine';
 import { finishOnlineHumanPlanning } from '../game/ai';
 import { assignNations, buildOnlineGameState } from './multiplayer';
@@ -121,6 +123,12 @@ describe('3-player online simulation', () => {
     expect(state.phase).toBe('buy');
     expect(state.humanNations).toHaveLength(3);
     expect(state.planningComplete).toBe(false);
+    expect(state.aiPlanningComplete).toBe(true);
+    const aiIds = state.turnOrder.filter((id) => !state.nations[id].isHuman);
+    for (const id of aiIds) {
+      expect(state.nations[id].hasNuclearTech).toBe(true);
+      expect(state.nations[id].money).toBeLessThan(10);
+    }
   });
 
   it('merges research and shields without wiping them', () => {
@@ -176,6 +184,16 @@ describe('3-player online simulation', () => {
       const n = room.shared.nations[nid];
       const upgraded = n.cities.some((c) => c.hasResearch || c.hasShield);
       expect(upgraded).toBe(true);
+    }
+
+    // AI must also have spent and upgraded (not sit on starting cash)
+    const aiIds = room.shared.turnOrder.filter((id) => !room.shared.nations[id].isHuman);
+    expect(aiIds.length).toBeGreaterThan(0);
+    for (const id of aiIds) {
+      const n = room.shared.nations[id];
+      expect(n.hasNuclearTech).toBe(true);
+      expect(n.money).toBeLessThan(10);
+      expect(n.cities.some((c) => c.hasResearch || c.hasShield)).toBe(true);
     }
   });
 
@@ -259,5 +277,161 @@ describe('3-player online simulation', () => {
 
     expect(shared.humanReady?.[shared.uidToNation![a] as NationId]).toBe(true);
     expect(shared.humanReady?.[shared.uidToNation![b] as NationId]).toBe(true);
+  });
+
+  it('stale resolveStrikes cannot overwrite roundSummary', () => {
+    const { state, uids } = makeThreePlayerGame();
+    const room = new SimRoom(state, uids);
+    for (const uid of uids) {
+      const local = completeSelections(room.clients[uid], room.nationFor(uid));
+      room.clients[uid] = local;
+      room.push(uid, local);
+    }
+
+    // Force shared into summary (as the resolve lock holder would)
+    let summary = room.shared;
+    if (summary.phase === 'resolveStrikes') {
+      summary = finishStrikeResolution(summary);
+    }
+    expect(summary.phase === 'roundSummary' || summary.phase === 'gameOver').toBe(true);
+    room.shared = summary;
+    for (const uid of uids) {
+      room.clients[uid] = applyRemoteGameSnapshot(
+        room.clients[uid],
+        room.shared,
+        room.nationFor(uid),
+      );
+    }
+
+    // Stale client still on resolveStrikes pushes
+    const staleUid = uids[0];
+    const stale: GameState = {
+      ...room.clients[staleUid],
+      phase: 'resolveStrikes',
+      planningComplete: true,
+    };
+    room.push(staleUid, stale);
+
+    expect(room.shared.phase).not.toBe('resolveStrikes');
+    expect(
+      room.shared.phase === 'roundSummary' || room.shared.phase === 'gameOver',
+    ).toBe(true);
+    for (const uid of uids) {
+      expect(room.clients[uid].phase).not.toBe('resolveStrikes');
+    }
+  });
+
+  it('nextRound from host syncs every client into round 2 buy', () => {
+    const { state, uids } = makeThreePlayerGame();
+    const room = new SimRoom(state, uids);
+    for (const uid of uids) {
+      const local = completeSelections(room.clients[uid], room.nationFor(uid));
+      room.clients[uid] = local;
+      room.push(uid, local);
+    }
+
+    let summary = room.shared;
+    if (summary.phase === 'resolveStrikes') {
+      summary = finishStrikeResolution(summary);
+    }
+    room.shared = summary;
+    for (const uid of uids) {
+      room.clients[uid] = applyRemoteGameSnapshot(
+        { ...room.clients[uid], phase: 'resolveStrikes', planningComplete: true },
+        room.shared,
+        room.nationFor(uid),
+      );
+    }
+
+    // Host advances
+    const host = uids[0];
+    const advanced = nextRound(room.shared);
+    room.shared = advanced;
+    for (const uid of uids) {
+      room.clients[uid] = applyRemoteGameSnapshot(
+        room.clients[uid],
+        room.shared,
+        room.nationFor(uid),
+      );
+    }
+
+    expect(advanced.round).toBe(2);
+    expect(advanced.phase).toBe('buy');
+    expect(advanced.planningComplete).toBe(false);
+    for (const uid of uids) {
+      expect(room.clients[uid].round).toBe(2);
+      expect(room.clients[uid].phase).toBe('buy');
+      expect(room.clients[uid].planningComplete).toBe(false);
+      // Snapshot apply runs AI planning for the new round
+      expect(room.clients[uid].aiPlanningComplete).toBe(true);
+    }
+
+    // Stale round-1 summary write cannot pull the room backwards
+    room.push(host, { ...summary, phase: 'roundSummary' });
+    expect(room.shared.round).toBe(2);
+    expect(room.shared.phase).toBe('buy');
+  });
+
+  it('full round loop: plan → resolve → next round → AI plans again', () => {
+    const { state, uids } = makeThreePlayerGame();
+    const room = new SimRoom(state, uids);
+
+    for (const uid of uids) {
+      const local = completeSelections(room.clients[uid], room.nationFor(uid));
+      room.clients[uid] = local;
+      room.push(uid, local);
+    }
+    expect(room.shared.planningComplete).toBe(true);
+
+    let summary = room.shared;
+    if (summary.phase === 'resolveStrikes') {
+      summary = finishStrikeResolution(summary);
+    }
+    expect(summary.phase === 'roundSummary' || summary.phase === 'gameOver').toBe(true);
+    if (summary.phase === 'gameOver') return;
+
+    const r2 = nextRound(summary);
+    room.shared = r2;
+    for (const uid of uids) {
+      room.clients[uid] = applyRemoteGameSnapshot(room.clients[uid], room.shared, room.nationFor(uid));
+    }
+
+    expect(room.shared.round).toBe(2);
+    expect(room.clients[uids[0]].aiPlanningComplete).toBe(true);
+
+    for (const uid of uids) {
+      const local = completeSelections(room.clients[uid], room.nationFor(uid));
+      room.clients[uid] = local;
+      room.push(uid, local);
+    }
+
+    expect(allAliveHumansReady(room.shared)).toBe(true);
+    expect(room.shared.planningComplete).toBe(true);
+    expect(
+      room.shared.phase === 'resolveStrikes' ||
+        room.shared.phase === 'roundSummary' ||
+        room.shared.phase === 'gameOver',
+    ).toBe(true);
+  });
+
+  it('applyRemote keeps local in-progress buys while merging peer ready flags', () => {
+    const { state, uids } = makeThreePlayerGame();
+    const [a, b] = uids;
+    const nationA = state.uidToNation![a] as NationId;
+    const nationB = state.uidToNation![b] as NationId;
+
+    let remote = markHumanReady(touchHumanActivity(state, nationB), nationB);
+    remote = mergeHumanPlanningWrite(state, remote, nationB);
+
+    const localCity = state.nations[nationA].cities.find((c) => !c.hasResearch)!;
+    const local = buyResearch(state, localCity.id, nationA);
+
+    const applied = applyRemoteGameSnapshot(local, remote, nationA);
+    expect(applied.nations[nationA].cities.find((c) => c.id === localCity.id)?.hasResearch).toBe(
+      true,
+    );
+    expect(applied.humanReady?.[nationB]).toBe(true);
+    expect(applied.humanReady?.[nationA]).toBeFalsy();
+    expect(applied.aiPlanningComplete).toBe(true);
   });
 });

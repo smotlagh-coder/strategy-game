@@ -40,16 +40,22 @@ export function getOrCreateClientId(): string {
   }
 }
 
-/** Short tag from Firebase uid — unique even when display names match. */
+/** Short tag from Firebase uid — for diagnostics only; do not show in game UI. */
 export function shortPlayerId(uid: string): string {
   const cleaned = uid.replace(/[^a-zA-Z0-9]/g, '');
   return (cleaned.slice(-6) || uid.slice(0, 6)).toUpperCase();
 }
 
-/** UI / lobby label: "Kian · A1B2C3" */
-export function formatPlayerLabel(displayName: string, uid: string): string {
-  const base = displayName.trim() || 'Commander';
-  return `${base} · ${shortPlayerId(uid)}`;
+/** Strip legacy "Name · A1B2C3" suffixes from stored labels. */
+export function displayNameOnly(label: string): string {
+  const trimmed = label.trim();
+  const stripped = trimmed.replace(/\s·\s[A-Z0-9]{4,8}$/i, '').trim();
+  return stripped || trimmed || 'Commander';
+}
+
+/** Lobby / in-game player label — display name only (no uid fragment). */
+export function formatPlayerLabel(displayName: string, _uid?: string): string {
+  return displayNameOnly(displayName) || 'Commander';
 }
 
 export function getStoredDisplayName(): string | null {

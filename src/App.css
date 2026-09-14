@@ -441,15 +441,39 @@ img { max-width: 100%; display: block; }
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
-  flex-shrink: 1;
-  min-height: 0;
+  flex: 1 1 42%;
+  min-height: 8.5rem;
   overflow: hidden;
 }
 
 .board-left__nations .nation-card {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-height: 0;
-  max-height: 100%;
+  height: 100%;
+  max-height: none;
+}
+
+.board-left__your-cities {
+  flex: 1 1 auto;
+  min-height: 7.5rem;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.board-left__your-cities .nation-card {
+  flex: 1 1 auto;
+  min-height: 7rem;
+  height: 100%;
+}
+
+/* Hide duplicate portrait/meta — shop panel already shows who you are */
+.board-left__your-cities .nation-card__portrait {
+  display: none;
+}
+
+.board-left__your-cities .nation-card {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .board-right__nations {
@@ -471,7 +495,7 @@ img { max-width: 100%; display: block; }
 
 .board-left__controls {
   margin-top: 0.1rem;
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
   display: flex;
@@ -489,10 +513,16 @@ img { max-width: 100%; display: block; }
 .panel--shop {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
+}
+
+.panel--shop .upgrade-hint,
+.panel--shop .sanctioned-by,
+.panel--shop .modal__head {
+  flex-shrink: 0;
 }
 
 .round-report__panel.panel--shop {
@@ -977,6 +1007,67 @@ img { max-width: 100%; display: block; }
   border-radius: 12px;
   object-fit: cover;
   border: 2px solid rgba(255, 255, 255, 0.3);
+}
+
+.nation-flag {
+  display: inline-block;
+  width: 1.6rem;
+  height: 1.05rem;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  flex-shrink: 0;
+  background-size: 100% 100%;
+}
+
+.wizard-nation-head__emblem {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.wizard-nation-head__flag {
+  position: absolute;
+  left: -0.2rem;
+  bottom: -0.15rem;
+  z-index: 1;
+  width: 1.85rem;
+  height: 1.2rem;
+  border-width: 1.5px;
+}
+
+.wizard-nation-head__country {
+  margin: 0 !important;
+  font-family: var(--stencil);
+  letter-spacing: 0.08em;
+  font-size: 1.05rem !important;
+  color: #f3f7ff !important;
+  line-height: 1.15;
+}
+
+.wizard-nation-head h2 {
+  text-transform: none;
+  font-size: 0.82rem !important;
+  letter-spacing: 0.02em;
+  color: #c5d6ef;
+  font-weight: 600;
+}
+
+.wizard-nation-head--compact {
+  margin-bottom: 0.35rem;
+}
+
+.wizard-nation-head--compact .modal__leader {
+  width: 40px;
+  height: 40px;
+}
+
+.wizard-nation-head--compact .wizard-nation-head__country {
+  font-size: 0.92rem !important;
+}
+
+.wizard-nation-head--compact .wizard-nation-head__flag {
+  width: 1.55rem;
+  height: 1rem;
 }
 
 .modal__head h2 {
@@ -1994,6 +2085,13 @@ img { max-width: 100%; display: block; }
   margin-top: auto;
 }
 
+.round-report__auto-hint {
+  margin: 0.35rem 0 0;
+  font-size: 0.85rem;
+  opacity: 0.75;
+  text-align: center;
+}
+
 .your-cities {
   display: flex;
   flex-direction: column;
@@ -2007,6 +2105,14 @@ img { max-width: 100%; display: block; }
   flex: 1 1 auto;
   min-height: 100px;
   max-height: 170px;
+}
+
+.round-report__world-list .nation-card,
+.screen--round-report .your-cities .nation-card {
+  /* Explicit height so city tiles (cqh-based) don't collapse */
+  height: 6.25rem;
+  min-height: 6.25rem;
+  max-height: 6.25rem;
 }
 
 .round-report__panel-title {
@@ -2094,15 +2200,40 @@ img { max-width: 100%; display: block; }
 }
 
 .screen--round-report .score-cards--compact {
-  max-height: none;
-  overflow: visible;
-  flex: 0 0 auto;
+  max-height: min(28vh, 220px);
+  overflow-y: auto;
+  flex: 0 1 auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .screen--round-report .your-cities {
   max-height: none;
   flex: 1 1 auto;
   min-height: 110px;
+}
+
+.round-report__world-mobile {
+  display: none;
+}
+
+.round-report__actions {
+  flex-shrink: 0;
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.round-report__world-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.round-report__world-list .nation-card {
+  flex: 0 0 auto;
+  min-height: 5.75rem;
+  height: auto;
 }
 
 .screen--round-report .your-cities .nation-card__portrait {
@@ -2209,9 +2340,79 @@ img { max-width: 100%; display: block; }
     font-size: 0.55rem;
   }
 
+  /* Aftermath: one scrollable column so cities aren't trapped in a half-screen pane */
   .screen--round-report .board-split {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 0.95fr) minmax(0, 1.05fr);
+    grid-template-rows: 1fr;
+    overflow: hidden;
+  }
+
+  .screen--round-report .round-report__world-desktop {
+    display: none;
+  }
+
+  .screen--round-report .round-report__world-mobile {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    flex: 0 0 auto;
+  }
+
+  .screen--round-report .board-left {
+    border-bottom: none;
+    overflow: hidden;
+  }
+
+  .screen--round-report .board-left__controls {
+    overflow: hidden;
+  }
+
+  .screen--round-report .round-report__panel {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  .screen--round-report .score-cards--compact {
+    max-height: none;
+    overflow: visible;
+    flex: 0 0 auto;
+  }
+
+  .screen--round-report .score-cards--compact .score-card {
+    grid-template-columns: 32px 1fr auto;
+    padding: 0.28rem 0.4rem;
+  }
+
+  .screen--round-report .score-cards--compact .score-card img {
+    width: 32px;
+    height: 32px;
+  }
+
+  .screen--round-report .your-cities {
+    flex: 0 0 auto;
+    overflow: visible;
+    min-height: 0;
+  }
+
+  .screen--round-report .your-cities .nation-card {
+    flex: 0 0 auto;
+    height: 6.25rem;
+    min-height: 6.25rem;
+    max-height: 6.25rem;
+  }
+
+  .screen--round-report .round-report__actions {
+    position: sticky;
+    bottom: 0;
+    margin-top: 0.75rem;
+    padding-top: 0.5rem;
+    background: linear-gradient(180deg, transparent, rgba(8, 16, 28, 0.95) 28%);
+    z-index: 2;
+  }
+
+  .screen--round-report .round-report__panel .btn--xl {
+    margin-top: 0;
   }
 
   .feature-card {

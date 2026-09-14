@@ -33,7 +33,7 @@ import {
   citiesLeft,
   whoIsSanctioning,
 } from './game/engine';
-import { runAllAiUntilHumanOrSummary, runAiTurn, finishOnlineHumanPlanning } from './game/ai';
+import { runAllAiUntilHumanOrSummary, runAiTurn, finishOnlineHumanPlanning, runOnlineAiPlanning } from './game/ai';
 import type { GameMode, GameState, NationId, RoundWorldEvent } from './types';
 import { isFirebaseConfigured } from './lib/firebase';
 import {
@@ -54,6 +54,8 @@ import {
   tryAcquireAiLock,
 } from './lib/multiplayer';
 import { applyRemoteGameSnapshot } from './lib/onlineSync';
+import { SELECTION_IDLE_MS } from './lib/onlineConstants';
+import { aftermathMyCityIds, aftermathWorldIds } from './lib/lobbyInvite';
 import { NameGate } from './screens/NameGate';
 import { LobbyScreen } from './screens/Lobby';
 import { LeaderboardScreen } from './screens/Leaderboard';
@@ -88,7 +90,7 @@ function wizardArt(step: WizardStep): string {
       return ART.map;
     case 'sanctionAsk':
     case 'sanctionPick':
-      return ART.nukeTech;
+      return ART.sanction;
     default:
       return ART.missile;
   }
@@ -327,6 +329,74 @@ function cityStatusLabel(c: { destroyed: boolean; hasShield: boolean; hasResearc
   if (c.hasResearch) bits.push('Research');
   if (c.hasShield) bits.push('Shield');
   return bits.length ? bits.join(' · ') : 'Open';
+}
+
+function NationFlag({
+  nationId,
+  className = '',
+}: {
+  nationId: NationId;
+  className?: string;
+}) {
+  const colors = nationDef(nationId).flagColors;
+  return (
+    <span
+      className={`nation-flag ${className}`.trim()}
+      role="img"
+      aria-label={`${nationDef(nationId).name} flag`}
+      style={{
+        backgroundImage: `linear-gradient(90deg, ${colors
+          .map((c, i) => {
+            const start = (i / colors.length) * 100;
+            const end = ((i + 1) / colors.length) * 100;
+            return `${c} ${start}%, ${c} ${end}%`;
+          })
+          .join(', ')})`,
+      }}
+    />
+  );
+}
+
+function WizardNationHeader({
+  state,
+  nationId,
+  money,
+  bombs,
+  environment,
+  idleSecondsLeft,
+  compact = false,
+}: {
+  state: GameState;
+  nationId: NationId;
+  money: number;
+  bombs: number;
+  environment: number;
+  idleSecondsLeft?: number | null;
+  compact?: boolean;
+}) {
+  const def = nationDef(nationId);
+  return (
+    <div className={`modal__head wizard-nation-head ${compact ? 'wizard-nation-head--compact' : ''}`}>
+      <div className="wizard-nation-head__emblem">
+        <NationFlag nationId={nationId} className="wizard-nation-head__flag" />
+        <img className="modal__leader" src={ART.leaders[nationId]} alt="" />
+      </div>
+      <div>
+        <p className="wizard-nation-head__country">{def.name}</p>
+        <h2>
+          {playerDisplayName(state, nationId)}
+        </h2>
+        <p>
+          ${formatMoney(money)} · Bombs {bombs} · Env {environment}%
+        </p>
+        {idleSecondsLeft != null && (
+          <p className={`idle-timer ${idleSecondsLeft <= 10 ? 'is-urgent' : ''}`}>
+            Select within {idleSecondsLeft}s or you leave the game
+          </p>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function NationPod({
@@ -824,8 +894,6 @@ function nextWizardStep(
   return null;
 }
 
-const SELECTION_IDLE_MS = 30_000;
-
 function GameBoard({
   state,
   setState,
@@ -861,10 +929,16 @@ function GameBoard({
   const recapResolveRef = useRef<(() => void) | null>(null);
   const aiRunningRef = useRef(false);
   const wizardStartedRoundRef = useRef<number | null>(null);
+  const resolvedRoundRef = useRef<number | null>(null);
   const lastActivityRef = useRef(Date.now());
   const kickingRef = useRef(false);
   const onKickedRef = useRef(onKicked);
   onKickedRef.current = onKicked;
+
+  // Allow a fresh resolve pass when a new round begins
+  useEffect(() => {
+    resolvedRoundRef.current = null;
+  }, [state.round]);
 
   const isResolving = state.phase === 'resolveStrikes';
   const humansPlanning =
@@ -937,6 +1011,12 @@ function GameBoard({
 
   const playStrikeRecap = useCallback((events: RoundWorldEvent[]) => {
     return new Promise<void>((resolve) => {
+      // Empty aftermath — don't trap players in a "nothing happened" Continue loop
+      if (events.length === 0) {
+        setStrikeRecap(null);
+        window.setTimeout(() => resolve(), 350);
+        return;
+      }
       recapResolveRef.current = resolve;
       setStrikeRecap(events);
     });
@@ -1042,7 +1122,7 @@ function GameBoard({
     setWizardStep(first);
   }, [isMyHumanTurn, actorId, state.round, closeHumanTurn]);
 
-  // 30s idle kick — only while this client must make selections
+  // 60s idle kick — only while this client must make selections
   useEffect(() => {
     if (!isOnline || !isMyHumanTurn || !myNationId || !state.onlineGameId) {
       setIdleSecondsLeft(null);
@@ -1064,7 +1144,7 @@ function GameBoard({
           }
         } finally {
           onKickedRef.current?.(
-            'You were removed for not making a selection within 30 seconds.',
+            'You were removed for not making a selection within 60 seconds.',
           );
         }
       })();
@@ -1129,8 +1209,42 @@ function GameBoard({
     }
     if (kickingRef.current) return;
     kickingRef.current = true;
-    onKicked('You were removed for not making a selection within 30 seconds.');
+    onKicked('You were removed for not making a selection within 60 seconds.');
   }, [isOnline, sessionUid, state.uidToNation, state.phase, onKicked]);
+
+  // Online: AI buys/queues at round start so their board updates while humans select
+  useEffect(() => {
+    if (!isOnline) return;
+    if (state.phase !== 'buy' && state.phase !== 'action') return;
+    if (state.planningComplete || state.aiPlanningComplete) return;
+
+    let cancelled = false;
+    const t = window.setTimeout(() => {
+      if (cancelled) return;
+      setState((s) => {
+        if (s.phase !== 'buy' && s.phase !== 'action') return s;
+        if (s.planningComplete || s.aiPlanningComplete) return s;
+        const next = runOnlineAiPlanning(s);
+        if (next.mode === 'online' && next.onlineGameId && next.aiPlanningComplete) {
+          void pushGameState(next.onlineGameId, next, true);
+        }
+        return next;
+      });
+    }, 50);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [
+    isOnline,
+    state.phase,
+    state.round,
+    state.planningComplete,
+    state.aiPlanningComplete,
+    state.onlineGameId,
+    setState,
+  ]);
 
   // Online: when all humans finished selections → run AI + advance to strikes/summary
   // Offline: run one AI turn at a time when it's an AI nation
@@ -1215,9 +1329,10 @@ function GameBoard({
     setState,
   ]);
 
-  // Fair simultaneous strike resolution at round end
+  // Fair simultaneous strike resolution at round end (one lock holder; peers follow sync)
   useEffect(() => {
     if (state.phase !== 'resolveStrikes') return;
+    if (resolvedRoundRef.current === state.round) return;
 
     let cancelled = false;
     const t = window.setTimeout(() => {
@@ -1229,8 +1344,10 @@ function GameBoard({
             sessionUid,
             `resolve-${state.round}`,
           );
+          // Losers wait for the lock holder's push (roundSummary / next round)
           if (!got || cancelled) return;
         }
+        if (resolvedRoundRef.current === state.round) return;
         setBusy(true);
         const strikes = [...stateRef.current.pendingStrikes];
         for (const strike of strikes) {
@@ -1249,6 +1366,7 @@ function GameBoard({
         }
         for (const strike of strikes) resolved = applyQueuedStrike(resolved, strike);
         resolved = finishStrikeResolution(resolved);
+        resolvedRoundRef.current = state.round;
 
         await playStrikeRecap(resolved.roundEvents);
         if (!cancelled) {
@@ -1321,22 +1439,14 @@ function GameBoard({
       {isMyHumanTurn && wizardStep && wizardStep !== 'strike' && (
         <div className="turn-wizard" role="dialog" aria-modal="true">
           <div className="turn-wizard__panel enter-pop">
-            <div className="modal__head">
-              <img className="modal__leader" src={ART.leaders[actorId]} alt="" />
-              <div>
-                <h2>
-                  {playerDisplayName(state, actorId).toUpperCase()} — {def.shortName}
-                </h2>
-                <p>
-                  ${formatMoney(turn.money)} · Bombs {turn.bombs} · Env {state.environment}%
-                </p>
-                {isOnline && idleSecondsLeft != null && (
-                  <p className={`idle-timer ${idleSecondsLeft <= 10 ? 'is-urgent' : ''}`}>
-                    Select within {idleSecondsLeft}s or you leave the game
-                  </p>
-                )}
-              </div>
-            </div>
+            <WizardNationHeader
+              state={state}
+              nationId={actorId}
+              money={turn.money}
+              bombs={turn.bombs}
+              environment={state.environment}
+              idleSecondsLeft={isOnline ? idleSecondsLeft : null}
+            />
 
             <div className={`turn-wizard__hero turn-wizard__hero--${wizardStep}`}>
               <img src={wizardArt(wizardStep)} alt="" draggable={false} />
@@ -1623,6 +1733,15 @@ function GameBoard({
       {isMyHumanTurn && wizardStep === 'strike' && (
         <div className="turn-wizard turn-wizard--dock" role="dialog" aria-modal="true">
           <div className="turn-wizard__panel turn-wizard__panel--strike enter-pop">
+            <WizardNationHeader
+              state={state}
+              nationId={actorId}
+              money={turn.money}
+              bombs={turn.bombs}
+              environment={state.environment}
+              idleSecondsLeft={isOnline ? idleSecondsLeft : null}
+              compact
+            />
             <div className="turn-wizard__hero turn-wizard__hero--strike">
               <img src={ART.missile} alt="" draggable={false} />
             </div>
@@ -1634,11 +1753,6 @@ function GameBoard({
                 : ''}
               . Strikes launch with everyone else at round end.
             </p>
-            {isOnline && idleSecondsLeft != null && (
-              <p className={`idle-timer ${idleSecondsLeft <= 10 ? 'is-urgent' : ''}`}>
-                Select within {idleSecondsLeft}s or you leave the game
-              </p>
-            )}
             {targets.length > 0 && (
               <p className="target-label">
                 {targets
@@ -1646,7 +1760,7 @@ function GameBoard({
                     const name =
                       state.nations[t.nationId]?.cities.find((c) => c.id === t.cityId)?.name ??
                       t.cityId;
-                    return `${nationDef(t.nationId).shortName} · ${name}`;
+                    return name;
                   })
                   .join(' · ')}
               </p>
@@ -1691,19 +1805,6 @@ function GameBoard({
                 ? `${playerDisplayName(state, actorId)}`
                 : 'Players'}
           </h3>
-          <div className="board-left__nations">
-            {allyIds.map((id) => (
-              <NationPod
-                key={id}
-                id={id}
-                variant="ally"
-                state={state}
-                selectedCityIds={selectedCityIds}
-                pendingBombCityIds={pendingBombCityIds}
-                highlight={id === actorId}
-              />
-            ))}
-          </div>
 
           <div className="board-left__controls">
             {isHumanTurn && (
@@ -1712,11 +1813,12 @@ function GameBoard({
                   <img className="modal__leader" src={ART.leaders[actorId]} alt="" />
                   <div>
                     <h2>
-                      {playerDisplayName(state, actorId).toUpperCase()} — {def.shortName}
+                      {playerDisplayName(state, actorId).toUpperCase()}
                     </h2>
                     <p>
                       ${formatMoney(turn.money)} · Bombs {turn.bombs} · 🔍
                       {turn.cities.filter((c) => !c.destroyed && c.hasResearch).length}
+                      {turn.hasNuclearTech ? ' · ☢' : ''}
                     </p>
                     {inboundSanctions.length > 0 && (
                       <p className="sanctioned-by">
@@ -1726,10 +1828,27 @@ function GameBoard({
                     )}
                   </div>
                 </div>
+
+                <div className="board-left__your-cities" aria-label="Your cities">
+                  {allyIds.map((id) => (
+                    <NationPod
+                      key={id}
+                      id={id}
+                      variant="ally"
+                      state={state}
+                      selectedCityIds={selectedCityIds}
+                      pendingBombCityIds={pendingBombCityIds}
+                      highlight={id === actorId}
+                    />
+                  ))}
+                </div>
+
                 {isOnline && !isMyHumanTurn && waitingHumans.length > 0 && (
                   <p className="upgrade-hint">
                     Waiting for{' '}
-                    {waitingHumans.map((id) => playerDisplayName(state, id)).join(', ')}…
+                    {waitingHumans.map((id) => playerDisplayName(state, id)).join(', ')}
+                    …
+                    {state.aiPlanningComplete ? ' AI orders are locked in.' : ''}
                   </p>
                 )}
                 {isOnline && isMyHumanTurn && (
@@ -1742,6 +1861,22 @@ function GameBoard({
                     Answer each prompt · strikes resolve together when the round ends
                   </p>
                 )}
+              </div>
+            )}
+
+            {!isHumanTurn && (
+              <div className="board-left__nations">
+                {allyIds.map((id) => (
+                  <NationPod
+                    key={id}
+                    id={id}
+                    variant="ally"
+                    state={state}
+                    selectedCityIds={selectedCityIds}
+                    pendingBombCityIds={pendingBombCityIds}
+                    highlight={id === actorId}
+                  />
+                ))}
               </div>
             )}
 
@@ -1802,22 +1937,35 @@ function GameBoard({
 function RoundSummary({
   state,
   onContinue,
+  sessionUid,
 }: {
   state: GameState;
   onContinue: () => void;
+  sessionUid?: string | null;
 }) {
   const destroyedCityIds = state.roundEvents
     .filter((e) => e.kind === 'cityDestroyed' || e.kind === 'shieldDestroyed')
     .map((e) => e.cityId)
     .filter((id): id is string => Boolean(id));
-  const humanIds = state.turnOrder.filter((id) => state.nations[id].isHuman);
-  const rivalIds = state.turnOrder.filter((id) => !state.nations[id].isHuman);
+  const isOnline = state.mode === 'online';
+  const myNationId =
+    isOnline && sessionUid && state.uidToNation?.[sessionUid]
+      ? state.uidToNation[sessionUid]
+      : null;
+  const myCityIds = aftermathMyCityIds(
+    state.turnOrder,
+    (id) => Boolean(state.nations[id as NationId]?.isHuman),
+    myNationId,
+  ) as NationId[];
+  const worldIds = aftermathWorldIds(state.turnOrder, myCityIds) as NationId[];
+  const isYouNation = (id: NationId) =>
+    myNationId ? id === myNationId : Boolean(state.nations[id].isHuman);
 
   return (
     <div className="screen screen--board screen--round-report">
       <MapBackdrop />
-      <div className="board-split">
-        <section className="board-left">
+      <div className="board-split round-report__split">
+        <section className="board-left round-report__main">
           <header className="board-left__hud">
             <EnvMeter value={state.environment} />
             <div className="round-pill">ROUND {state.round} AFTERMATH</div>
@@ -1829,8 +1977,9 @@ function RoundSummary({
               <div className="score-cards score-cards--compact">
                 {state.roundScores.map((row, i) => {
                   const nation = state.nations[row.nationId];
-                  const isYou = nation.isHuman;
-                  const isLead = !row.eliminated && state.roundScores.findIndex((s) => !s.eliminated) === i;
+                  const isYou = isYouNation(row.nationId);
+                  const isLead =
+                    !row.eliminated && state.roundScores.findIndex((s) => !s.eliminated) === i;
                   return (
                     <div
                       key={row.nationId}
@@ -1840,12 +1989,14 @@ function RoundSummary({
                       <div>
                         <strong>
                           {row.eliminated ? 'OUT' : `#${i + 1}`} {nationDef(row.nationId).name}
-                          {isYou ? ` (${playerDisplayName(state, row.nationId)})` : ''}
+                          {nation.isHuman
+                            ? ` (${playerDisplayName(state, row.nationId)})`
+                            : ''}
                         </strong>
                         <span>
                           Cities {row.citiesLeft} · Survived {row.citySurvivalPoints} · 🔍
                           {row.researchCenters} · 🛡{row.shields}
-                          {isYou ? ' · You' : ' · AI'}
+                          {isYou ? ' · You' : nation.isHuman ? ' · Player' : ' · AI'}
                         </span>
                       </div>
                       <em>{row.total}</em>
@@ -1859,13 +2010,18 @@ function RoundSummary({
                   <h2 className="round-report__panel-title">Treasury</h2>
                   <div className="income-ledger">
                     {state.lastIncomeLedger
-                      .filter((e) => state.nations[e.nationId].isHuman)
+                      .filter((e) =>
+                        myNationId
+                          ? e.nationId === myNationId
+                          : state.nations[e.nationId].isHuman,
+                      )
                       .map((e) => (
                         <div key={e.nationId} className="income-ledger__row">
                           <strong>{nationDef(e.nationId).name}</strong>
                           <span>
                             Prev ${formatMoney(e.previousBalance)} → Revenue +$
-                            {formatMoney(e.revenue)} → Now ${formatMoney(state.nations[e.nationId].money)}
+                            {formatMoney(e.revenue)} → Now $
+                            {formatMoney(state.nations[e.nationId].money)}
                           </span>
                           {e.sanctioners.length > 0 && (
                             <small>
@@ -1882,7 +2038,7 @@ function RoundSummary({
 
               <h2 className="round-report__panel-title">Your cities</h2>
               <div className="your-cities">
-                {humanIds.map((id) => (
+                {myCityIds.map((id) => (
                   <NationPod
                     key={id}
                     id={id}
@@ -1894,14 +2050,44 @@ function RoundSummary({
                 ))}
               </div>
 
-              <button className="btn btn--xl btn--primary" onClick={onContinue}>
-                {state.round >= state.maxRounds ? 'Final Results' : `Start Round ${state.round + 1}`}
-              </button>
+              <div className="round-report__world-mobile">
+                <h2 className="round-report__panel-title">World — shields, research, ruins</h2>
+                <p className="round-report__legend">
+                  <span>🛡 Shield</span>
+                  <span>🔍 Research</span>
+                  <span className="round-report__legend-burnt">Burnt = destroyed</span>
+                </p>
+                <div className="round-report__world-list">
+                  {worldIds.map((id) => (
+                    <NationPod
+                      key={id}
+                      id={id}
+                      variant="enemy"
+                      state={state}
+                      highlightCityIds={destroyedCityIds}
+                      highlight={state.nations[id].eliminated}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              <div className="round-report__actions">
+                <button className="btn btn--xl btn--primary" onClick={onContinue}>
+                  {state.round >= state.maxRounds
+                    ? 'Final Results'
+                    : `Start Round ${state.round + 1}`}
+                </button>
+                {isOnline && state.round < state.maxRounds && (
+                  <p className="round-report__auto-hint">
+                    Next round starts automatically for everyone…
+                  </p>
+                )}
+              </div>
             </div>
           </div>
         </section>
 
-        <section className="board-right">
+        <section className="board-right round-report__world-desktop">
           <h3 className="board-section-title">World — shields, research, ruins</h3>
           <p className="round-report__legend">
             <span>🛡 Shield</span>
@@ -1909,7 +2095,7 @@ function RoundSummary({
             <span className="round-report__legend-burnt">Burnt = destroyed</span>
           </p>
           <div className="board-right__nations">
-            {rivalIds.map((id) => (
+            {worldIds.map((id) => (
               <NationPod
                 key={id}
                 id={id}
@@ -1998,6 +2184,62 @@ export default function App() {
   const [sessionLoading, setSessionLoading] = useState(false);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const advancePastAi = useCallback((s: GameState) => runAllAiUntilHumanOrSummary(s), []);
+  const advancingRoundRef = useRef(false);
+
+  const advanceFromRoundSummary = useCallback(() => {
+    setState((s) => {
+      if (s.phase !== 'roundSummary') return s;
+      const n = nextRound(s);
+      if (n.phase === 'gameOver') {
+        if (n.mode === 'online' && n.onlineGameId) {
+          void finishOnlineGame(n.onlineGameId, n, sessionUid ?? undefined);
+        }
+        return n;
+      }
+      if (n.mode === 'online' && n.onlineGameId) {
+        void pushGameState(n.onlineGameId, n, true);
+        return n;
+      }
+      return advancePastAi(n);
+    });
+  }, [advancePastAi, sessionUid]);
+
+  // Online: one client advances everyone past the aftermath — guests follow via listenGame
+  useEffect(() => {
+    if (state.phase !== 'roundSummary') {
+      advancingRoundRef.current = false;
+      return;
+    }
+    if (state.mode !== 'online' || !state.onlineGameId || !sessionUid) return;
+    if (advancingRoundRef.current) return;
+
+    let cancelled = false;
+    const t = window.setTimeout(() => {
+      void (async () => {
+        if (cancelled || advancingRoundRef.current) return;
+        const got = await tryAcquireAiLock(
+          state.onlineGameId!,
+          sessionUid,
+          `next-${state.round}`,
+        );
+        if (!got || cancelled) return;
+        advancingRoundRef.current = true;
+        advanceFromRoundSummary();
+      })();
+    }, 900);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [
+    state.phase,
+    state.mode,
+    state.onlineGameId,
+    state.round,
+    sessionUid,
+    advanceFromRoundSummary,
+  ]);
 
   // Online game listener — preserve local nation while still planning
   useEffect(() => {
@@ -2154,22 +2396,8 @@ export default function App() {
       {state.phase === 'roundSummary' && (
         <RoundSummary
           state={state}
-          onContinue={() =>
-            setState((s) => {
-              const n = nextRound(s);
-              if (n.phase === 'gameOver') {
-                if (n.mode === 'online' && n.onlineGameId) {
-                  void finishOnlineGame(n.onlineGameId, n, sessionUid ?? undefined);
-                }
-                return n;
-              }
-              if (n.mode === 'online' && n.onlineGameId) {
-                void pushGameState(n.onlineGameId, n);
-                return n;
-              }
-              return advancePastAi(n);
-            })
-          }
+          sessionUid={sessionUid}
+          onContinue={advanceFromRoundSummary}
         />
       )}
       {state.phase === 'gameOver' && (

@@ -15,7 +15,8 @@ import {
 } from 'firebase/firestore';
 import { getDb, isFirebaseConfigured } from './firebase';
 import { setPlayerStatus } from './session';
-import { createInitialState, beginHumanPlanning, convertHumanToAi } from '../game/engine';
+import { createInitialState, beginHumanPlanning, convertHumanToAi, allAliveHumansReady } from '../game/engine';
+import { finishOnlineHumanPlanning, runAiNationTurn, runOnlineAiPlanning } from '../game/ai';
 import { NATIONS, nationDef } from '../data/nations';
 import {
   mergeHumanPlanningWrite,
@@ -73,7 +74,34 @@ export function listenInvitesFor(
   });
 }
 
+/** Pending invites this player has sent (host side). */
+export function listenOutgoingInvites(
+  fromUid: string,
+  cb: (invites: { id: string; data: InviteDoc }[]) => void,
+): Unsubscribe {
+  const q = query(
+    collection(getDb(), 'invites'),
+    where('fromUid', '==', fromUid),
+    where('status', '==', 'pending'),
+  );
+  return onSnapshot(q, (snap) => {
+    cb(snap.docs.map((d) => ({ id: d.id, data: d.data() as InviteDoc })));
+  });
+}
+
 export async function sendInvite(fromUid: string, fromName: string, toUid: string, lobbyId: string) {
+  const existing = await getDocs(
+    query(
+      collection(getDb(), 'invites'),
+      where('lobbyId', '==', lobbyId),
+      where('toUid', '==', toUid),
+      where('status', '==', 'pending'),
+    ),
+  );
+  if (!existing.empty) {
+    throw new Error('That player already has a pending invite');
+  }
+
   const payload: InviteDoc = {
     fromUid,
     toUid,
@@ -194,26 +222,28 @@ export function buildOnlineGameState(
   const humans = state.turnOrder.filter((id) => nations[id].isHuman);
   const ai = state.turnOrder.filter((id) => !nations[id].isHuman);
 
-  return beginHumanPlanning({
-    ...state,
-    mode: 'online',
-    phase: 'buy',
-    round: 1,
-    nations,
-    humanNations,
-    playerNames: slotNames,
-    uidToNation,
-    onlineGameId: gameId,
-    turnOrder: [...humans, ...ai],
-    currentTurnIndex: 0,
-    log: [
-      {
-        id: 'log-online-start',
-        text: `Online match begins — ${humanNations.map((id) => nationDef(id).name).join(', ')} vs AI.`,
-        tone: 'neutral',
-      },
-    ],
-  });
+  return runOnlineAiPlanning(
+    beginHumanPlanning({
+      ...state,
+      mode: 'online',
+      phase: 'buy',
+      round: 1,
+      nations,
+      humanNations,
+      playerNames: slotNames,
+      uidToNation,
+      onlineGameId: gameId,
+      turnOrder: [...humans, ...ai],
+      currentTurnIndex: 0,
+      log: [
+        {
+          id: 'log-online-start',
+          text: `Online match begins — ${humanNations.map((id) => nationDef(id).name).join(', ')} vs AI.`,
+          tone: 'neutral',
+        },
+      ],
+    }),
+  );
 }
 
 export async function startOnlineGameFromLobby(
@@ -344,7 +374,20 @@ export async function kickIdleHumanFromGame(
     if (!game.state.nations[nationId]?.isHuman) return game.state;
 
     const ownerUid = game.state.nations[nationId]?.ownerUid;
-    const mergedState = convertHumanToAi(game.state, nationId);
+    let mergedState = convertHumanToAi(game.state, nationId);
+    // Converted nation needs its own AI turn (other AIs may already have planned)
+    if (
+      (mergedState.phase === 'buy' || mergedState.phase === 'action') &&
+      !mergedState.planningComplete
+    ) {
+      mergedState = runAiNationTurn(mergedState, nationId);
+      if (!mergedState.aiPlanningComplete) {
+        mergedState = runOnlineAiPlanning(mergedState);
+      }
+      if (allAliveHumansReady(mergedState)) {
+        mergedState = finishOnlineHumanPlanning(mergedState);
+      }
+    }
     const playerUids = ownerUid
       ? game.playerUids.filter((u) => u !== ownerUid)
       : game.playerUids;

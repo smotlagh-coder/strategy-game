@@ -141,6 +141,8 @@ export interface GameState {
   humanLastActive?: Partial<Record<NationId, number>>;
   /** Online: human planning finished and AI/strikes advanced — blocks re-entry loops */
   planningComplete?: boolean;
+  /** Online: AI nations already bought/queued strikes for this round (runs at round start) */
+  aiPlanningComplete?: boolean;
 }
 
 /** Firestore player presence doc */

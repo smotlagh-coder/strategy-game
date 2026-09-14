@@ -9,13 +9,13 @@ import {
   buyShield,
   citiesLeft,
   computeScore,
+  concludeRoundTurns,
   currentNationId,
   endTurn,
   finishBuyPhase,
   maxBombsPurchasable,
   queueStrike,
   researchCount,
-  startAiPhaseAfterHumans,
   toggleSanction,
 } from './engine';
 import type { GameState, NationId } from '../types';
@@ -120,6 +120,49 @@ export function runAiDiplomacy(state: GameState): GameState {
   return s;
 }
 
+/** Run buy / diplomacy / strike queue for one AI nation. */
+export function runAiNationTurn(state: GameState, nationId: NationId): GameState {
+  const n = state.nations[nationId];
+  if (!n || n.eliminated || n.isHuman) return state;
+
+  const idx = state.turnOrder.indexOf(nationId);
+  if (idx < 0) return state;
+
+  let s: GameState = { ...state, currentTurnIndex: idx, phase: 'buy' };
+  s = runAiBuyPhase(s);
+  s = runAiDiplomacy(s);
+
+  while (s.nations[nationId].bombs > 0) {
+    const target = pickBombTarget(s, nationId);
+    if (!target) break;
+    s = queueStrike(s, target.nationId, target.cityId, nationId);
+  }
+  return s;
+}
+
+/**
+ * Online: AI selects at round start (same window as humans), so the board shows
+ * their research/shields/tech while players are still choosing.
+ */
+export function runOnlineAiPlanning(state: GameState): GameState {
+  if (state.mode !== 'online') return state;
+  if (state.aiPlanningComplete) return state;
+  if (state.phase !== 'buy' && state.phase !== 'action') return state;
+
+  const savedIndex = state.currentTurnIndex;
+  let s = state;
+  for (const id of s.turnOrder) {
+    s = runAiNationTurn(s, id);
+  }
+
+  return {
+    ...s,
+    phase: 'buy',
+    currentTurnIndex: savedIndex,
+    aiPlanningComplete: true,
+  };
+}
+
 /** Queue AI strikes for fair end-of-round resolution, then end turn */
 export function runAiTurn(state: GameState): GameState {
   let s = state;
@@ -128,15 +171,7 @@ export function runAiTurn(state: GameState): GameState {
     return endTurn(s);
   }
 
-  s = runAiBuyPhase(s);
-  s = runAiDiplomacy(s);
-
-  while (s.nations[id].bombs > 0) {
-    const target = pickBombTarget(s, id);
-    if (!target) break;
-    s = queueStrike(s, target.nationId, target.cityId, id);
-  }
-
+  s = runAiNationTurn(s, id);
   return endTurn(s);
 }
 
@@ -162,50 +197,22 @@ export function runAllAiUntilHumanOrSummary(state: GameState): GameState {
 }
 
 /**
- * Online: after every human finished selections, run all AI turns and move to
- * strike resolution / round summary.
+ * Online: after every human finished selections, ensure AI planned then
+ * move to strike resolution / round summary.
  */
 export function finishOnlineHumanPlanning(state: GameState): GameState {
   if (state.mode !== 'online') return state;
-  if (state.planningComplete) return state;
   if (!allAliveHumansReady(state)) return state;
   if (state.phase !== 'buy' && state.phase !== 'action') {
     return { ...state, planningComplete: true };
   }
 
-  let s = state;
-  const cur = s.nations[currentNationId(s)];
-  if (cur?.isHuman || cur?.eliminated) {
-    s = startAiPhaseAfterHumans(s);
-  }
+  // Already advanced past planning — don't rewind
+  if (state.planningComplete) return state;
 
-  let guard = 0;
-  while (guard++ < 20 && (s.phase === 'buy' || s.phase === 'action')) {
-    const n = s.nations[currentNationId(s)];
-    if (!n) {
-      s = { ...s, planningComplete: true };
-      break;
-    }
-    if (n.isHuman) {
-      const advanced = startAiPhaseAfterHumans(s);
-      // No progress → stop to avoid infinite loop
-      if (
-        advanced.currentTurnIndex === s.currentTurnIndex &&
-        advanced.phase === s.phase
-      ) {
-        s = { ...advanced, planningComplete: true };
-        break;
-      }
-      s = advanced;
-      continue;
-    }
-    if (n.eliminated) {
-      s = endTurn(s);
-      continue;
-    }
-    s = runAiTurn(s);
-  }
-  return { ...s, planningComplete: true };
+  let s = runOnlineAiPlanning(state);
+  s = concludeRoundTurns(s);
+  return { ...s, planningComplete: true, aiPlanningComplete: true };
 }
 
 export function describeAiMood(state: GameState, id: NationId): string {

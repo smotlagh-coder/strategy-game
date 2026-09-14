@@ -1,17 +1,15 @@
 import { useState } from 'react';
 import { ART } from '../data/art';
-import { formatPlayerLabel, shortPlayerId } from '../lib/session';
 
 export function NameGate({
   initialName,
-  playerUid,
   onSubmit,
   onResetIdentity,
   error,
   loading,
 }: {
   initialName: string;
-  /** Firebase auth uid — shown so two browsers aren't confused */
+  /** Kept for call-site compatibility; not shown in UI */
   playerUid?: string | null;
   onSubmit: (name: string) => void;
   onResetIdentity?: () => void;
@@ -19,12 +17,6 @@ export function NameGate({
   loading?: boolean;
 }) {
   const [name, setName] = useState(initialName);
-  const preview =
-    playerUid && name.trim()
-      ? formatPlayerLabel(name.trim(), playerUid)
-      : playerUid
-        ? `Commander · ${shortPlayerId(playerUid)}`
-        : null;
 
   return (
     <div className="screen screen--splash">
@@ -56,13 +48,6 @@ export function NameGate({
               disabled={loading}
             />
           </label>
-          {preview && (
-            <p className="session-id-hint">
-              Player ID: <code>{shortPlayerId(playerUid!)}</code>
-              <br />
-              Others see you as <strong>{preview}</strong>
-            </p>
-          )}
           {error && <p className="session-error">{error}</p>}
           <button className="btn btn--xl btn--primary" type="submit" disabled={loading || !name.trim()}>
             {loading ? 'Connecting…' : 'Continue'}
@@ -74,7 +59,7 @@ export function NameGate({
               disabled={loading}
               onClick={onResetIdentity}
             >
-              New player ID
+              Start fresh
             </button>
           )}
         </form>

@@ -1,6 +1,41 @@
-import type { GameState, NationId, NationState } from '../types';
+import type { GameState, NationId, NationState, Phase } from '../types';
 import { allAliveHumansReady } from '../game/engine';
-import { finishOnlineHumanPlanning } from '../game/ai';
+import { finishOnlineHumanPlanning, runOnlineAiPlanning } from '../game/ai';
+
+/** Later phases win merges so stale resolveStrikes cannot clobber roundSummary. */
+export function phaseRank(phase: Phase | null | undefined): number {
+  switch (phase) {
+    case 'gameOver':
+      return 100;
+    case 'roundSummary':
+      return 80;
+    case 'resolveStrikes':
+      return 60;
+    case 'action':
+      return 40;
+    case 'buy':
+      return 30;
+    case 'income':
+      return 20;
+    default:
+      return 0;
+  }
+}
+
+/** Prefer higher round, then further phase, then AI/planning progress. */
+export function pickFurtherState(a: GameState, b: GameState): GameState {
+  if (a.round !== b.round) return a.round >= b.round ? a : b;
+  if (phaseRank(a.phase) !== phaseRank(b.phase)) {
+    return phaseRank(a.phase) >= phaseRank(b.phase) ? a : b;
+  }
+  if (Boolean(a.planningComplete) !== Boolean(b.planningComplete)) {
+    return a.planningComplete ? a : b;
+  }
+  if (Boolean(a.aiPlanningComplete) !== Boolean(b.aiPlanningComplete)) {
+    return a.aiPlanningComplete ? a : b;
+  }
+  return a;
+}
 
 /** Once ready in a round, stay ready — stale pushes must not clear it. */
 export function mergeHumanReadyFlags(
@@ -71,6 +106,16 @@ export function mergeNationPlanning(
   };
 }
 
+function mergeNationMaps(base: GameState, other: GameState): GameState['nations'] {
+  const nations = { ...base.nations };
+  for (const id of base.turnOrder) {
+    if (other.nations[id] && base.nations[id]) {
+      nations[id] = mergeNationPlanning(base.nations[id], other.nations[id]);
+    }
+  }
+  return nations;
+}
+
 /**
  * How a client applies a remote Firestore game snapshot while optionally
  * still mid-selection for `myNationId`.
@@ -81,61 +126,48 @@ export function applyRemoteGameSnapshot(
   myNationId: NationId | null,
 ): GameState {
   if (prev.round !== remote.round) {
-    // Prefer the higher round; never merge across rounds
-    return remote.round >= prev.round ? remote : prev;
-  }
-
-  const ready = mergeHumanReadyFlags(remote.humanReady, prev.humanReady);
-
-  // Prefer terminal phases from either side
-  const remoteTerminal =
-    remote.phase === 'resolveStrikes' ||
-    remote.phase === 'roundSummary' ||
-    remote.phase === 'gameOver';
-  const prevTerminal =
-    prev.phase === 'resolveStrikes' ||
-    prev.phase === 'roundSummary' ||
-    prev.phase === 'gameOver';
-
-  if (remote.planningComplete || prev.planningComplete || remoteTerminal || prevTerminal) {
-    const base = remoteTerminal || (remote.planningComplete && !prevTerminal) ? remote : prev;
-    const other = base === remote ? prev : remote;
-    const nations = { ...base.nations };
-    for (const id of base.turnOrder) {
-      if (other.nations[id] && base.nations[id]) {
-        nations[id] = mergeNationPlanning(base.nations[id], other.nations[id]);
-      }
-    }
-    let next: GameState = {
-      ...base,
-      nations,
-      humanReady: ready,
-      planningComplete: Boolean(remote.planningComplete || prev.planningComplete || remoteTerminal),
-      pendingStrikes:
-        (remote.pendingStrikes?.length ?? 0) >= (prev.pendingStrikes?.length ?? 0)
-          ? remote.pendingStrikes
-          : prev.pendingStrikes,
-    };
-    // If everyone is ready but we never left planning, finish now (once)
+    let next = remote.round >= prev.round ? remote : prev;
     if (
-      !next.planningComplete &&
+      next === remote &&
       (next.phase === 'buy' || next.phase === 'action') &&
-      allAliveHumansReady(next)
+      !next.planningComplete &&
+      !next.aiPlanningComplete
     ) {
-      next = finishOnlineHumanPlanning(next);
+      next = runOnlineAiPlanning(next);
     }
     return next;
+  }
+
+  // Same round: never go backwards in phase (stops resolveStrikes ↔ summary loops)
+  const further = pickFurtherState(prev, remote);
+  const other = further === prev ? remote : prev;
+  const ready =
+    further.phase === 'buy' || further.phase === 'action'
+      ? mergeHumanReadyFlags(remote.humanReady, prev.humanReady)
+      : further.humanReady;
+
+  // Past planning: follow the furthest phase, union nation upgrades
+  if (
+    further.planningComplete ||
+    phaseRank(further.phase) >= phaseRank('resolveStrikes')
+  ) {
+    return {
+      ...further,
+      nations: mergeNationMaps(further, other),
+      humanReady: ready ?? further.humanReady,
+      planningComplete: true,
+    };
   }
 
   // Still selecting locally: keep my in-progress nation, take everyone else from remote
   if (
     myNationId &&
     (prev.phase === 'buy' || prev.phase === 'action') &&
-    !ready[myNationId]
+    !ready?.[myNationId]
   ) {
     const myStrikes = prev.pendingStrikes.filter((s) => s.attackerId === myNationId);
     const otherStrikes = remote.pendingStrikes.filter((s) => s.attackerId !== myNationId);
-    return {
+    let next: GameState = {
       ...remote,
       nations: {
         ...remote.nations,
@@ -154,7 +186,13 @@ export function applyRemoteGameSnapshot(
       environment: prev.nations[myNationId]?.envBoughtThisRound
         ? Math.max(prev.environment, remote.environment)
         : remote.environment,
+      aiPlanningComplete: Boolean(remote.aiPlanningComplete || prev.aiPlanningComplete),
     };
+    if (!next.aiPlanningComplete) next = runOnlineAiPlanning(next);
+    if (allAliveHumansReady(next) && !next.planningComplete) {
+      next = finishOnlineHumanPlanning(next);
+    }
+    return next;
   }
 
   const nations = { ...remote.nations };
@@ -165,7 +203,11 @@ export function applyRemoteGameSnapshot(
     ...remote,
     nations,
     humanReady: ready,
+    aiPlanningComplete: Boolean(remote.aiPlanningComplete || prev.aiPlanningComplete),
   };
+  if (!next.aiPlanningComplete && (next.phase === 'buy' || next.phase === 'action')) {
+    next = runOnlineAiPlanning(next);
+  }
   if (
     (next.phase === 'buy' || next.phase === 'action') &&
     allAliveHumansReady(next) &&
@@ -185,22 +227,32 @@ export function mergeHumanPlanningWrite(
   if (remote.round > local.round) return remote;
   if (local.round > remote.round) return local;
 
-  if (remote.planningComplete) {
+  // Never let a stale writer pull the shared doc backwards
+  const further = pickFurtherState(remote, local);
+  if (phaseRank(further.phase) >= phaseRank('resolveStrikes') || further.planningComplete) {
+    const other = further === remote ? local : remote;
     return {
-      ...remote,
-      humanReady: mergeHumanReadyFlags(remote.humanReady, local.humanReady),
+      ...further,
       nations: {
-        ...remote.nations,
-        [nationId]: mergeNationPlanning(remote.nations[nationId], local.nations[nationId]),
+        ...mergeNationMaps(further, other),
+        [nationId]: mergeNationPlanning(further.nations[nationId], local.nations[nationId]),
       },
+      humanReady:
+        further.phase === 'buy' || further.phase === 'action'
+          ? mergeHumanReadyFlags(remote.humanReady, local.humanReady)
+          : further.humanReady,
+      planningComplete: true,
     };
   }
 
   const strikeKey = (s: { attackerId: string; targetNationId: string; cityId: string }) =>
     `${s.attackerId}:${s.targetNationId}:${s.cityId}`;
-  const remoteOtherStrikes = (remote.pendingStrikes ?? []).filter((s) => s.attackerId !== nationId);
+
+  // Prefer the snapshot that already ran AI so buys/strikes aren't wiped by a stale peer
+  const preferred = pickFurtherState(remote, local);
+  const nonWriterStrikes = (preferred.pendingStrikes ?? []).filter((s) => s.attackerId !== nationId);
   const localMyStrikes = (local.pendingStrikes ?? []).filter((s) => s.attackerId === nationId);
-  const pendingStrikes = [...remoteOtherStrikes, ...localMyStrikes];
+  const pendingStrikes = [...nonWriterStrikes, ...localMyStrikes];
   const seen = new Set<string>();
   const deduped = pendingStrikes.filter((s) => {
     const k = strikeKey(s);
@@ -212,9 +264,9 @@ export function mergeHumanPlanningWrite(
   const mergedReady = mergeHumanReadyFlags(remote.humanReady, local.humanReady);
   const localEnvBuy = local.nations[nationId]?.envBoughtThisRound ? 1 : 0;
   const remoteHadMine = remote.nations[nationId]?.envBoughtThisRound ? 1 : 0;
-  let environment = remote.environment;
+  let environment = preferred.environment;
   if (localEnvBuy && !remoteHadMine) {
-    environment = Math.min(100, remote.environment + 10);
+    environment = Math.min(100, preferred.environment + 10);
   }
 
   const mergedLastActive: Partial<Record<NationId, number>> = {
@@ -232,27 +284,18 @@ export function mergeHumanPlanningWrite(
     );
   }
 
-  const mergedNations = { ...remote.nations };
-  mergedNations[nationId] = mergeNationPlanning(remote.nations[nationId], local.nations[nationId]);
-
-  const remoteTerminal =
-    remote.phase === 'resolveStrikes' ||
-    remote.phase === 'roundSummary' ||
-    remote.phase === 'gameOver';
-  const localTerminal =
-    local.phase === 'resolveStrikes' ||
-    local.phase === 'roundSummary' ||
-    local.phase === 'gameOver';
+  const mergedNations = { ...preferred.nations };
+  for (const id of preferred.turnOrder) {
+    if (!preferred.nations[id] || !remote.nations[id] || !local.nations[id]) continue;
+    if (preferred.nations[id].isHuman || remote.nations[id].isHuman || local.nations[id].isHuman) {
+      mergedNations[id] = mergeNationPlanning(remote.nations[id], local.nations[id]);
+    }
+  }
+  mergedNations[nationId] = mergeNationPlanning(preferred.nations[nationId], local.nations[nationId]);
 
   let merged: GameState = {
-    ...remote,
-    phase: remoteTerminal
-      ? remote.phase
-      : localTerminal
-        ? local.phase
-        : local.phase === 'action' || remote.phase === 'action'
-          ? 'action'
-          : remote.phase,
+    ...preferred,
+    phase: preferred.phase === 'action' ? 'action' : 'buy',
     currentTurnIndex: Math.max(remote.currentTurnIndex, local.currentTurnIndex),
     environment,
     nations: mergedNations,
@@ -261,10 +304,11 @@ export function mergeHumanPlanningWrite(
     humanPlanningStartedAt:
       remote.humanPlanningStartedAt ?? local.humanPlanningStartedAt ?? null,
     pendingStrikes: deduped,
-    round: remote.round,
+    round: preferred.round,
     uidToNation: { ...remote.uidToNation, ...local.uidToNation },
-    humanNations: remote.turnOrder.filter((id) => mergedNations[id]?.isHuman),
-    planningComplete: Boolean(remote.planningComplete || local.planningComplete),
+    humanNations: preferred.turnOrder.filter((id) => mergedNations[id]?.isHuman),
+    planningComplete: false,
+    aiPlanningComplete: Boolean(remote.aiPlanningComplete || local.aiPlanningComplete),
   };
 
   const uidMap = { ...(merged.uidToNation ?? {}) };
@@ -273,8 +317,11 @@ export function mergeHumanPlanningWrite(
   }
   merged.uidToNation = uidMap;
 
+  if (!merged.aiPlanningComplete) {
+    merged = runOnlineAiPlanning(merged);
+  }
+
   if (
-    !merged.planningComplete &&
     (merged.phase === 'buy' || merged.phase === 'action') &&
     allAliveHumansReady(merged)
   ) {
