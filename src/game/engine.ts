@@ -65,6 +65,7 @@ export function createInitialState(): GameState {
     humanReady: {},
     humanPlanningStartedAt: null,
     humanLastActive: {},
+    planningComplete: false,
   };
 }
 
@@ -110,6 +111,7 @@ export function beginHumanPlanning(state: GameState, at = Date.now()): GameState
     humanReady: {},
     humanPlanningStartedAt: at,
     humanLastActive,
+    planningComplete: false,
   };
 }
 

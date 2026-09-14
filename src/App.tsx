@@ -49,12 +49,11 @@ import {
   incrementSuperpowerWin,
   kickIdleHumanFromGame,
   listenGame,
-  mergeHumanReadyFlags,
-  mergeNationPlanning,
   enqueueHumanPlanningPush,
   pushGameState,
   tryAcquireAiLock,
 } from './lib/multiplayer';
+import { applyRemoteGameSnapshot } from './lib/onlineSync';
 import { NameGate } from './screens/NameGate';
 import { LobbyScreen } from './screens/Lobby';
 import { LeaderboardScreen } from './screens/Leaderboard';
@@ -978,7 +977,8 @@ function GameBoard({
               // If merge still has all humans ready but stuck in planning, finish now
               if (
                 (merged.phase === 'buy' || merged.phase === 'action') &&
-                allAliveHumansReady(merged)
+                allAliveHumansReady(merged) &&
+                !merged.planningComplete
               ) {
                 const done = finishOnlineHumanPlanning(merged);
                 if (done !== merged) {
@@ -1140,11 +1140,13 @@ function GameBoard({
 
     if (isOnline) {
       if (!allAliveHumansReady(state)) return;
+      if (state.planningComplete) return;
 
       let cancelled = false;
       const t = window.setTimeout(() => {
         void (async () => {
           if (cancelled || aiRunningRef.current) return;
+          if (stateRef.current.planningComplete) return;
           if (state.onlineGameId && sessionUid) {
             const got = await tryAcquireAiLock(
               state.onlineGameId,
@@ -1158,7 +1160,7 @@ function GameBoard({
           try {
             setState((s) => {
               if (s.phase !== 'buy' && s.phase !== 'action') return s;
-              if (!allAliveHumansReady(s)) return s;
+              if (!allAliveHumansReady(s) || s.planningComplete) return s;
               const next = finishOnlineHumanPlanning(s);
               if (next.mode === 'online' && next.onlineGameId) {
                 void pushGameState(next.onlineGameId, next, true);
@@ -1207,6 +1209,7 @@ function GameBoard({
     state.round,
     state.onlineGameId,
     state.humanReady,
+    state.planningComplete,
     isOnline,
     sessionUid,
     setState,
@@ -2006,53 +2009,7 @@ export default function App() {
         : null;
     return listenGame(gameId, (game) => {
       if (!game?.state) return;
-      setState((prev) => {
-        const remote = game.state;
-        if (JSON.stringify(prev) === JSON.stringify(remote)) return prev;
-
-        const ready = mergeHumanReadyFlags(remote.humanReady, prev.humanReady);
-
-        // Still selecting locally: keep my in-progress nation, take everyone else from remote
-        if (
-          myId &&
-          (prev.phase === 'buy' || prev.phase === 'action') &&
-          !ready[myId]
-        ) {
-          const myStrikes = prev.pendingStrikes.filter((s) => s.attackerId === myId);
-          const otherStrikes = remote.pendingStrikes.filter((s) => s.attackerId !== myId);
-          return {
-            ...remote,
-            nations: {
-              ...remote.nations,
-              [myId]: mergeNationPlanning(remote.nations[myId], prev.nations[myId]),
-            },
-            pendingStrikes: [...otherStrikes, ...myStrikes],
-            humanReady: ready,
-            humanLastActive: {
-              ...remote.humanLastActive,
-              ...prev.humanLastActive,
-              [myId]: Math.max(
-                remote.humanLastActive?.[myId] ?? 0,
-                prev.humanLastActive?.[myId] ?? 0,
-              ),
-            },
-            environment: prev.nations[myId]?.envBoughtThisRound
-              ? Math.max(prev.environment, remote.environment)
-              : remote.environment,
-          };
-        }
-
-        // Finished selecting (or spectator): trust remote, but never lose ready flags / upgrades
-        const nations = { ...remote.nations };
-        if (myId && prev.nations[myId] && remote.nations[myId]) {
-          nations[myId] = mergeNationPlanning(remote.nations[myId], prev.nations[myId]);
-        }
-        return {
-          ...remote,
-          nations,
-          humanReady: ready,
-        };
-      });
+      setState((prev) => applyRemoteGameSnapshot(prev, game.state, myId));
     });
   }, [state.onlineGameId, state.mode, sessionUid, state.uidToNation]);
 
@@ -2103,12 +2060,7 @@ export default function App() {
         const user = await ensureAuthSession();
         if (cancelled || !user) return;
         setSessionUid(user.uid);
-        const stored = getStoredDisplayName();
-        if (stored) {
-          await loadOrCreatePlayer(user.uid, stored);
-          setDisplayName(stored);
-          setState((s) => (s.phase === 'session' ? { ...s, phase: 'mode' } : s));
-        }
+        // Always stay on the name gate so the player can confirm or change their name
       } catch {
         /* stay on name gate */
       }

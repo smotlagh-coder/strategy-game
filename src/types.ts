@@ -139,6 +139,8 @@ export interface GameState {
   humanPlanningStartedAt?: number | null;
   /** Online: last selection activity per human nation (idle kick) */
   humanLastActive?: Partial<Record<NationId, number>>;
+  /** Online: human planning finished and AI/strikes advanced — blocks re-entry loops */
+  planningComplete?: boolean;
 }
 
 /** Firestore player presence doc */

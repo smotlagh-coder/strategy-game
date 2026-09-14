@@ -167,8 +167,11 @@ export function runAllAiUntilHumanOrSummary(state: GameState): GameState {
  */
 export function finishOnlineHumanPlanning(state: GameState): GameState {
   if (state.mode !== 'online') return state;
+  if (state.planningComplete) return state;
   if (!allAliveHumansReady(state)) return state;
-  if (state.phase !== 'buy' && state.phase !== 'action') return state;
+  if (state.phase !== 'buy' && state.phase !== 'action') {
+    return { ...state, planningComplete: true };
+  }
 
   let s = state;
   const cur = s.nations[currentNationId(s)];
@@ -179,8 +182,21 @@ export function finishOnlineHumanPlanning(state: GameState): GameState {
   let guard = 0;
   while (guard++ < 20 && (s.phase === 'buy' || s.phase === 'action')) {
     const n = s.nations[currentNationId(s)];
+    if (!n) {
+      s = { ...s, planningComplete: true };
+      break;
+    }
     if (n.isHuman) {
-      s = startAiPhaseAfterHumans(s);
+      const advanced = startAiPhaseAfterHumans(s);
+      // No progress → stop to avoid infinite loop
+      if (
+        advanced.currentTurnIndex === s.currentTurnIndex &&
+        advanced.phase === s.phase
+      ) {
+        s = { ...advanced, planningComplete: true };
+        break;
+      }
+      s = advanced;
       continue;
     }
     if (n.eliminated) {
@@ -189,7 +205,7 @@ export function finishOnlineHumanPlanning(state: GameState): GameState {
     }
     s = runAiTurn(s);
   }
-  return s;
+  return { ...s, planningComplete: true };
 }
 
 export function describeAiMood(state: GameState, id: NationId): string {

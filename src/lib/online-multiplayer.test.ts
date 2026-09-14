@@ -1,0 +1,263 @@
+import { describe, expect, it } from 'vitest';
+import {
+  buyResearch,
+  buyShield,
+  markHumanReady,
+  allAliveHumansReady,
+  touchHumanActivity,
+} from '../game/engine';
+import { finishOnlineHumanPlanning } from '../game/ai';
+import { assignNations, buildOnlineGameState } from './multiplayer';
+import {
+  applyRemoteGameSnapshot,
+  mergeHumanPlanningWrite,
+  mergeNationPlanning,
+} from './onlineSync';
+import type { GameState, NationId } from '../types';
+
+function makeThreePlayerGame() {
+  const uids = ['uid-a', 'uid-b', 'uid-c'];
+  const names = {
+    'uid-a': 'Alice · AAAAAA',
+    'uid-b': 'Bob · BBBBBB',
+    'uid-c': 'Cara · CCCCCC',
+  };
+  const assignments = assignNations(uids);
+  const state = buildOnlineGameState(assignments, names, 'game-test-1');
+  return { uids, names, assignments, state };
+}
+
+function completeSelections(state: GameState, nationId: NationId): GameState {
+  let s = state;
+  const city = s.nations[nationId].cities.find((c) => !c.destroyed && !c.hasResearch);
+  if (city) s = buyResearch(s, city.id, nationId);
+  const shieldCity = s.nations[nationId].cities.find(
+    (c) => !c.destroyed && !c.hasShield && !c.hasResearch,
+  );
+  if (shieldCity) s = buyShield(s, shieldCity.id, nationId);
+  s = touchHumanActivity(s, nationId);
+  s = markHumanReady(s, nationId);
+  return s;
+}
+
+/** In-memory 3-client room that mirrors Firestore merge + snapshot apply. */
+class SimRoom {
+  shared: GameState;
+  clients: Record<string, GameState>;
+
+  constructor(initial: GameState, uids: string[]) {
+    this.shared = initial;
+    this.clients = Object.fromEntries(uids.map((u) => [u, structuredClone(initial)]));
+  }
+
+  nationFor(uid: string): NationId {
+    return this.clients[uid].uidToNation![uid] as NationId;
+  }
+
+  push(uid: string, local: GameState) {
+    const nationId = this.nationFor(uid);
+    this.shared = mergeHumanPlanningWrite(this.shared, local, nationId);
+    // Broadcast to all clients
+    for (const other of Object.keys(this.clients)) {
+      const myNation = this.nationFor(other);
+      this.clients[other] = applyRemoteGameSnapshot(
+        this.clients[other],
+        this.shared,
+        myNation,
+      );
+    }
+  }
+
+  /** Detect phase oscillation / blank-state loops. */
+  pump(max = 50): { phases: string[]; looped: boolean } {
+    const phases: string[] = [];
+    for (let i = 0; i < max; i += 1) {
+      const before = this.shared.phase;
+      phases.push(`${before}:${this.shared.planningComplete ? 1 : 0}`);
+      // Each client re-applies shared (as if snapshot fired again)
+      for (const uid of Object.keys(this.clients)) {
+        this.clients[uid] = applyRemoteGameSnapshot(
+          this.clients[uid],
+          this.shared,
+          this.nationFor(uid),
+        );
+      }
+      // Re-merge from each client (stale concurrent writers)
+      for (const uid of Object.keys(this.clients)) {
+        this.shared = mergeHumanPlanningWrite(
+          this.shared,
+          this.clients[uid],
+          this.nationFor(uid),
+        );
+      }
+      const key = `${this.shared.phase}:${this.shared.planningComplete ? 1 : 0}`;
+      if (phases.filter((p) => p === key).length > 8) {
+        return { phases, looped: true };
+      }
+      if (
+        this.shared.phase === 'resolveStrikes' ||
+        this.shared.phase === 'roundSummary' ||
+        this.shared.phase === 'gameOver'
+      ) {
+        // Stable terminal?
+        const stable = phases.slice(-3).every((p) => p.startsWith(this.shared.phase));
+        if (stable && phases.length > 3) return { phases, looped: false };
+      }
+    }
+    return { phases, looped: false };
+  }
+}
+
+describe('3-player online simulation', () => {
+  it('assigns three distinct nations', () => {
+    const { assignments, uids } = makeThreePlayerGame();
+    const nations = uids.map((u) => assignments[u]);
+    expect(new Set(nations).size).toBe(3);
+  });
+
+  it('buildOnlineGameState starts in buy with three humans', () => {
+    const { state } = makeThreePlayerGame();
+    expect(state.mode).toBe('online');
+    expect(state.phase).toBe('buy');
+    expect(state.humanNations).toHaveLength(3);
+    expect(state.planningComplete).toBe(false);
+  });
+
+  it('merges research and shields without wiping them', () => {
+    const { state, uids } = makeThreePlayerGame();
+    const nationId = state.uidToNation![uids[0]] as NationId;
+    const withResearch = buyResearch(
+      state,
+      state.nations[nationId].cities[0].id,
+      nationId,
+    );
+    const withShield = buyShield(
+      state,
+      state.nations[nationId].cities[1].id,
+      nationId,
+    );
+    const merged = mergeNationPlanning(
+      withResearch.nations[nationId],
+      withShield.nations[nationId],
+    );
+    expect(merged.cities[0].hasResearch).toBe(true);
+    expect(merged.cities[1].hasShield).toBe(true);
+  });
+
+  it('does not crash mergeNationPlanning with undefined (blank-screen guard)', () => {
+    const { state, uids } = makeThreePlayerGame();
+    const nationId = state.uidToNation![uids[0]] as NationId;
+    expect(() => mergeNationPlanning(undefined, state.nations[nationId])).not.toThrow();
+    expect(() => mergeNationPlanning(state.nations[nationId], undefined)).not.toThrow();
+  });
+
+  it('advances to strikes/summary after all three finish selections', () => {
+    const { state, uids } = makeThreePlayerGame();
+    const room = new SimRoom(state, uids);
+
+    for (const uid of uids) {
+      const nationId = room.nationFor(uid);
+      const local = completeSelections(room.clients[uid], nationId);
+      room.clients[uid] = local;
+      room.push(uid, local);
+    }
+
+    expect(allAliveHumansReady(room.shared)).toBe(true);
+    expect(
+      room.shared.phase === 'resolveStrikes' ||
+        room.shared.phase === 'roundSummary' ||
+        room.shared.phase === 'gameOver',
+    ).toBe(true);
+    expect(room.shared.planningComplete).toBe(true);
+
+    // Research/shields from each human still present
+    for (const uid of uids) {
+      const nid = room.nationFor(uid);
+      const n = room.shared.nations[nid];
+      const upgraded = n.cities.some((c) => c.hasResearch || c.hasShield);
+      expect(upgraded).toBe(true);
+    }
+  });
+
+  it('finishOnlineHumanPlanning is idempotent (no re-entry loop)', () => {
+    const { state, uids } = makeThreePlayerGame();
+    let s = state;
+    for (const uid of uids) {
+      s = completeSelections(s, s.uidToNation![uid] as NationId);
+    }
+    const once = finishOnlineHumanPlanning(s);
+    const twice = finishOnlineHumanPlanning(once);
+    expect(twice.planningComplete).toBe(true);
+    expect(twice.phase).toBe(once.phase);
+    expect(twice.currentTurnIndex).toBe(once.currentTurnIndex);
+    expect(twice.pendingStrikes.length).toBe(once.pendingStrikes.length);
+  });
+
+  it('does not oscillate when three clients keep syncing after planning', () => {
+    const { state, uids } = makeThreePlayerGame();
+    const room = new SimRoom(state, uids);
+
+    for (const uid of uids) {
+      const local = completeSelections(room.clients[uid], room.nationFor(uid));
+      room.clients[uid] = local;
+      room.push(uid, local);
+    }
+
+    const { looped, phases } = room.pump(40);
+    expect(looped).toBe(false);
+    expect(
+      room.shared.phase === 'resolveStrikes' ||
+        room.shared.phase === 'roundSummary' ||
+        room.shared.phase === 'gameOver',
+    ).toBe(true);
+    // Should not flip back to buy planning
+    const late = phases.slice(-10);
+    expect(late.some((p) => p.startsWith('buy:0'))).toBe(false);
+  });
+
+  it('keeps each client renderable (valid phase + own nation)', () => {
+    const { state, uids } = makeThreePlayerGame();
+    const room = new SimRoom(state, uids);
+    for (const uid of uids) {
+      const local = completeSelections(room.clients[uid], room.nationFor(uid));
+      room.clients[uid] = local;
+      room.push(uid, local);
+    }
+    room.pump(20);
+
+    const renderable = new Set([
+      'buy',
+      'action',
+      'resolveStrikes',
+      'roundSummary',
+      'gameOver',
+      'income',
+    ]);
+    for (const uid of uids) {
+      const c = room.clients[uid];
+      expect(renderable.has(c.phase)).toBe(true);
+      const myNation = c.uidToNation?.[uid];
+      expect(myNation).toBeTruthy();
+      expect(c.nations[myNation!]).toBeTruthy();
+    }
+  });
+
+  it('stale mid-selection write cannot clear another player ready flag', () => {
+    const { state, uids } = makeThreePlayerGame();
+    const [a, b, c] = uids;
+    let shared = state;
+
+    const aDone = completeSelections(state, state.uidToNation![a] as NationId);
+    shared = mergeHumanPlanningWrite(shared, aDone, state.uidToNation![a] as NationId);
+
+    const bDone = completeSelections(shared, shared.uidToNation![b] as NationId);
+    shared = mergeHumanPlanningWrite(shared, bDone, shared.uidToNation![b] as NationId);
+
+    // Stale write from C before they finished, and without A/B ready flags
+    const cStale = touchHumanActivity(state, state.uidToNation![c] as NationId);
+    shared = mergeHumanPlanningWrite(shared, cStale, state.uidToNation![c] as NationId);
+
+    expect(shared.humanReady?.[shared.uidToNation![a] as NationId]).toBe(true);
+    expect(shared.humanReady?.[shared.uidToNation![b] as NationId]).toBe(true);
+  });
+});
