@@ -80,16 +80,19 @@ export function mergeNationPlanning(
   });
   const researchCenters = cities.filter((c) => !c.destroyed && c.hasResearch).length;
 
+  const eliminated =
+    Boolean(remote.eliminated || local.eliminated) || cities.every((c) => c.destroyed);
+
   return {
     ...remote,
     ...local,
     cities,
-    researchCenters,
+    researchCenters: eliminated ? 0 : researchCenters,
     hasNuclearTech: remote.hasNuclearTech || local.hasNuclearTech,
     nuclearTechUnlockedRound:
       local.nuclearTechUnlockedRound ?? remote.nuclearTechUnlockedRound,
     money: Math.min(remote.money, local.money),
-    bombs: Math.max(remote.bombs, local.bombs),
+    bombs: eliminated ? 0 : Math.max(remote.bombs, local.bombs),
     bombsBoughtThisRound: Math.max(remote.bombsBoughtThisRound, local.bombsBoughtThisRound),
     bombsUsed: Math.max(remote.bombsUsed, local.bombsUsed),
     envBoughtThisRound: remote.envBoughtThisRound || local.envBoughtThisRound,
@@ -100,9 +103,12 @@ export function mergeNationPlanning(
     ),
     sanctions:
       local.sanctions.length >= remote.sanctions.length ? local.sanctions : remote.sanctions,
-    isHuman: remote.isHuman && local.isHuman,
-    playerSlot: local.playerSlot ?? remote.playerSlot,
-    ownerUid: local.ownerUid ?? remote.ownerUid,
+    eliminated,
+    lockedScore: Math.max(remote.lockedScore ?? 0, local.lockedScore ?? 0),
+    // Forfeit / kick sticks — never revive a dead or AI-converted nation as human
+    isHuman: !eliminated && remote.isHuman && local.isHuman,
+    playerSlot: eliminated ? undefined : (local.playerSlot ?? remote.playerSlot),
+    ownerUid: eliminated ? undefined : (local.ownerUid ?? remote.ownerUid),
   };
 }
 

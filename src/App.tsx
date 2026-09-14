@@ -268,6 +268,17 @@ function formatRoundEvent(e: RoundWorldEvent): string {
     : `${e.cityName} (${nation}) was destroyed.`;
 }
 
+function RoundBanner({ round }: { round: number }) {
+  return (
+    <div className="round-banner" role="status" aria-live="polite" aria-label={`Round ${round}`}>
+      <div className="round-banner__veil" />
+      <div className="round-banner__panel enter-pop">
+        <p className="round-banner__label">Round {round}</p>
+      </div>
+    </div>
+  );
+}
+
 function StrikeRecap({
   events,
   onContinue,
@@ -974,9 +985,11 @@ function GameBoard({
       if (next.mode !== 'online' || !next.onlineGameId) return;
       const gameId = next.onlineGameId;
       void enqueueHumanPlanningPush(gameId, actor, () => stateRef.current).then((merged) => {
-        setState((cur) =>
-          cur.onlineGameId === gameId && cur.round === merged.round ? merged : cur,
-        );
+        setState((cur) => {
+          if (cur.onlineGameId !== gameId) return cur;
+          // Always adopt server merge — including when the room already advanced rounds
+          return applyRemoteGameSnapshot(cur, merged, actor);
+        });
       });
     },
     [setState],
@@ -1054,20 +1067,21 @@ function GameBoard({
           stateRef.current = next;
           void enqueueHumanPlanningPush(gameId, actor, () => stateRef.current).then((merged) => {
             setState((cur) => {
-              if (cur.onlineGameId !== gameId || cur.round !== merged.round) return cur;
+              if (cur.onlineGameId !== gameId) return cur;
+              let adopted = applyRemoteGameSnapshot(cur, merged, actor);
               // If merge still has all humans ready but stuck in planning, finish now
               if (
-                (merged.phase === 'buy' || merged.phase === 'action') &&
-                allAliveHumansReady(merged) &&
-                !merged.planningComplete
+                (adopted.phase === 'buy' || adopted.phase === 'action') &&
+                allAliveHumansReady(adopted) &&
+                !adopted.planningComplete
               ) {
-                const done = finishOnlineHumanPlanning(merged);
-                if (done !== merged) {
+                const done = finishOnlineHumanPlanning(adopted);
+                if (done !== adopted) {
                   void pushGameState(gameId, done, true);
                   return done;
                 }
               }
-              return merged;
+              return adopted;
             });
           });
           return next;
@@ -1145,7 +1159,7 @@ function GameBoard({
           }
         } finally {
           onKickedRef.current?.(
-            'You were removed for not making a selection within 60 seconds.',
+            'You left the game — your cities were destroyed.',
           );
         }
       })();
@@ -1210,7 +1224,7 @@ function GameBoard({
     }
     if (kickingRef.current) return;
     kickingRef.current = true;
-    onKicked('You were removed for not making a selection within 60 seconds.');
+    onKicked('You left the game — your cities were destroyed.');
   }, [isOnline, sessionUid, state.uidToNation, state.phase, onKicked]);
 
   // Online: AI buys/queues at round start so their board updates while humans select
@@ -1431,7 +1445,7 @@ function GameBoard({
   const enemyIds = state.turnOrder.filter((id) => !allyIds.includes(id));
 
   return (
-    <div className="screen screen--board">
+    <div className={`screen screen--board${strikeSelectMode ? ' is-striking' : ''}`}>
       <MapBackdrop />
       <FxLayer events={fx} />
       {cinema && <StrikeCinema strike={cinema} onComplete={onCinemaComplete} />}
@@ -1748,7 +1762,7 @@ function GameBoard({
             </div>
             <h3 className="turn-wizard__q">Hit enemy cities with your bombs?</h3>
             <p className="turn-wizard__hint">
-              Tap up to {turn.bombs} cities on the right
+              Tap up to {turn.bombs} enemy cit{turn.bombs === 1 ? 'y' : 'ies'}
               {targets.length > 0
                 ? ` · selected ${targets.length}/${turn.bombs}`
                 : ''}
@@ -2271,6 +2285,8 @@ export default function App() {
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const advancePastAi = useCallback((s: GameState) => runAllAiUntilHumanOrSummary(s), []);
   const advancingRoundRef = useRef(false);
+  const lastRoundBannerRef = useRef(0);
+  const [roundBanner, setRoundBanner] = useState<number | null>(null);
   const [rematchBusy, setRematchBusy] = useState(false);
   const [rematchError, setRematchError] = useState<string | null>(null);
 
@@ -2291,6 +2307,34 @@ export default function App() {
       return advancePastAi(n);
     });
   }, [advancePastAi, sessionUid]);
+
+  // Brief "Round X" overlay whenever a new round of play begins
+  useEffect(() => {
+    const preGame =
+      state.phase === 'session' ||
+      state.phase === 'mode' ||
+      state.phase === 'names' ||
+      state.phase === 'lobby' ||
+      state.phase === 'country' ||
+      state.phase === 'leaders' ||
+      state.phase === 'gameOver';
+    if (preGame) {
+      if (state.phase === 'gameOver' || state.phase === 'mode' || state.phase === 'lobby') {
+        lastRoundBannerRef.current = 0;
+      }
+      return;
+    }
+    if (state.phase !== 'buy' && state.phase !== 'action' && state.phase !== 'income') return;
+    if (lastRoundBannerRef.current === state.round) return;
+    lastRoundBannerRef.current = state.round;
+    setRoundBanner(state.round);
+  }, [state.round, state.phase]);
+
+  useEffect(() => {
+    if (roundBanner == null) return;
+    const t = window.setTimeout(() => setRoundBanner(null), 3000);
+    return () => window.clearTimeout(t);
+  }, [roundBanner]);
 
   // Auto-advance aftermath: next round, or final results → game over
   useEffect(() => {
@@ -2342,10 +2386,6 @@ export default function App() {
   useEffect(() => {
     if (!state.onlineGameId || state.mode !== 'online') return;
     const gameId = state.onlineGameId;
-    const myId =
-      sessionUid && state.uidToNation?.[sessionUid]
-        ? state.uidToNation[sessionUid]
-        : null;
     let joiningRematch = false;
     return listenGame(gameId, (game) => {
       if (!game) return;
@@ -2374,6 +2414,10 @@ export default function App() {
       }
       if (!game.state) return;
       setState((prev) => {
+        const myId =
+          sessionUid && prev.uidToNation?.[sessionUid]
+            ? prev.uidToNation[sessionUid]
+            : null;
         const merged = applyRemoteGameSnapshot(prev, game.state, myId);
         return {
           ...merged,
@@ -2382,7 +2426,9 @@ export default function App() {
         };
       });
     });
-  }, [state.onlineGameId, state.mode, sessionUid, state.uidToNation]);
+    // Intentionally omit uidToNation — resolve myId from prev inside the callback
+    // so we don't tear down the listener on every nation merge.
+  }, [state.onlineGameId, state.mode, sessionUid]);
 
   const completeSession = async (name: string) => {
     setSessionLoading(true);
@@ -2451,6 +2497,7 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      {roundBanner != null && <RoundBanner round={roundBanner} />}
       {state.phase === 'session' && (
         <NameGate
           initialName={displayName}

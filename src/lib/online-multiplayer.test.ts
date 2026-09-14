@@ -7,6 +7,8 @@ import {
   touchHumanActivity,
   finishStrikeResolution,
   nextRound,
+  forfeitNation,
+  aliveNations,
 } from '../game/engine';
 import { finishOnlineHumanPlanning } from '../game/ai';
 import { assignNations, buildOnlineGameState } from './multiplayer';
@@ -433,5 +435,70 @@ describe('3-player online simulation', () => {
     expect(applied.humanReady?.[nationB]).toBe(true);
     expect(applied.humanReady?.[nationA]).toBeFalsy();
     expect(applied.aiPlanningComplete).toBe(true);
+  });
+
+  it('late guest finish adopts round 2 when host already advanced', () => {
+    const { state, uids } = makeThreePlayerGame();
+    const room = new SimRoom(state, uids);
+    const [host, guest, other] = uids;
+
+    // Host + other finish; advance shared to round 2
+    for (const uid of [host, other]) {
+      const local = completeSelections(room.clients[uid], room.nationFor(uid));
+      room.clients[uid] = local;
+      room.push(uid, local);
+    }
+    // Guest also finishes on round 1 locally (slow network)
+    const guestLocal = completeSelections(room.clients[guest], room.nationFor(guest));
+    room.clients[guest] = guestLocal;
+    room.push(guest, guestLocal);
+
+    let summary = room.shared;
+    if (summary.phase === 'resolveStrikes') summary = finishStrikeResolution(summary);
+    if (summary.phase === 'roundSummary') {
+      room.shared = nextRound(summary);
+    }
+
+    // Guest still on round 1 receives / merges the advanced room
+    const adopted = applyRemoteGameSnapshot(
+      guestLocal,
+      room.shared,
+      room.nationFor(guest),
+    );
+    expect(adopted.round).toBe(2);
+    expect(adopted.phase).toBe('buy');
+    expect(adopted.planningComplete).toBe(false);
+  });
+
+  it('forfeitNation burns all cities and marks the nation OUT', () => {
+    const { state, uids } = makeThreePlayerGame();
+    const leaver = uids[1];
+    const nationId = state.uidToNation![leaver] as NationId;
+
+    const after = forfeitNation(state, nationId);
+    expect(after.nations[nationId].eliminated).toBe(true);
+    expect(after.nations[nationId].isHuman).toBe(false);
+    expect(after.nations[nationId].cities.every((c) => c.destroyed)).toBe(true);
+    expect(after.nations[nationId].bombs).toBe(0);
+    expect(after.uidToNation?.[leaver]).toBeUndefined();
+    expect(after.humanNations).not.toContain(nationId);
+    expect(aliveNations(after)).not.toContain(nationId);
+
+    // Peers adopt forfeit via remote snapshot even with stale local human copy
+    const peer = applyRemoteGameSnapshot(state, after, state.uidToNation![uids[0]] as NationId);
+    expect(peer.nations[nationId].eliminated).toBe(true);
+    expect(peer.nations[nationId].cities.every((c) => c.destroyed)).toBe(true);
+  });
+
+  it('forfeit of the last blocker unblocks remaining humans', () => {
+    const { state, uids } = makeThreePlayerGame();
+    const [a, b, c] = uids;
+    let s = completeSelections(state, state.uidToNation![a] as NationId);
+    s = completeSelections(s, state.uidToNation![b] as NationId);
+    expect(allAliveHumansReady(s)).toBe(false);
+
+    s = forfeitNation(s, state.uidToNation![c] as NationId);
+    expect(allAliveHumansReady(s)).toBe(true);
+    expect(s.nations[state.uidToNation![c] as NationId].eliminated).toBe(true);
   });
 });

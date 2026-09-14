@@ -1691,6 +1691,10 @@ img { max-width: 100%; display: block; }
     margin: 0.4rem auto;
   }
 
+  .turn-wizard--dock .turn-wizard__panel--strike .turn-wizard__hero {
+    display: none;
+  }
+
   .turn-wizard__panel--strike .turn-wizard__q,
   .turn-wizard__panel--strike .turn-wizard__hint,
   .turn-wizard__panel--strike .target-label,
@@ -1707,6 +1711,54 @@ img { max-width: 100%; display: block; }
     width: min(140px, 40vw);
     height: min(140px, 40vw);
   }
+}
+
+/* Round start banner */
+.round-banner {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  pointer-events: auto;
+}
+
+.round-banner__veil {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 50% 45%, rgba(30, 70, 130, 0.45), rgba(2, 6, 14, 0.88) 72%),
+    rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+}
+
+.round-banner__panel {
+  position: relative;
+  z-index: 1;
+  padding: 1.4rem 2.4rem 1.55rem;
+  border-radius: 20px;
+  border: 1px solid rgba(120, 190, 255, 0.4);
+  background: linear-gradient(180deg, rgba(16, 32, 58, 0.96), rgba(6, 12, 26, 0.98));
+  box-shadow: 0 22px 55px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  text-align: center;
+}
+
+.round-banner__label {
+  margin: 0;
+  font-family: var(--stencil);
+  font-size: clamp(2.2rem, 8vw, 4rem);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #e8f3ff;
+  text-shadow: 0 0 24px rgba(77, 163, 255, 0.45);
+  animation: roundBannerPulse 3s ease-in-out both;
+}
+
+@keyframes roundBannerPulse {
+  0% { opacity: 0; transform: scale(0.88); }
+  12% { opacity: 1; transform: scale(1); }
+  82% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.04); }
 }
 
 /* Nuclear launch cinema overlay */
@@ -2345,16 +2397,107 @@ img { max-width: 100%; display: block; }
 
 @media (max-width: 900px) {
   .turn-wizard--dock {
-    place-items: start stretch;
-    align-items: start;
-    padding-top: 0.65rem;
-    background: linear-gradient(180deg, rgba(2, 8, 18, 0.72) 0%, rgba(2, 8, 18, 0.35) 48%, transparent 72%);
+    place-items: end stretch;
+    align-items: end;
+    padding: 0.5rem 0.55rem calc(0.55rem + env(safe-area-inset-bottom, 0px));
+    background: linear-gradient(
+      0deg,
+      rgba(2, 8, 18, 0.94) 0%,
+      rgba(2, 8, 18, 0.72) 42%,
+      transparent 78%
+    );
   }
 
   .turn-wizard--dock .turn-wizard__panel,
   .turn-wizard--dock .turn-wizard__panel--strike {
-    width: min(520px, calc(100vw - 1.5rem));
+    width: 100%;
     max-width: none;
+  }
+
+  .turn-wizard--dock .turn-wizard__panel--strike {
+    grid-template-columns: 1fr;
+    column-gap: 0;
+    padding: 0.55rem 0.7rem 0.6rem;
+    text-align: center;
+  }
+
+  .turn-wizard--dock .turn-wizard__panel--strike .wizard-nation-head,
+  .turn-wizard--dock .turn-wizard__panel--strike .turn-wizard__hero {
+    display: none;
+  }
+
+  .turn-wizard--dock .turn-wizard__panel--strike .turn-wizard__q,
+  .turn-wizard--dock .turn-wizard__panel--strike .turn-wizard__hint,
+  .turn-wizard--dock .turn-wizard__panel--strike .target-label,
+  .turn-wizard--dock .turn-wizard__panel--strike .turn-wizard__actions {
+    grid-column: 1;
+  }
+
+  .turn-wizard--dock .turn-wizard__panel--strike .turn-wizard__q {
+    font-size: 1rem;
+    margin: 0.1rem 0 0;
+  }
+
+  .turn-wizard--dock .turn-wizard__panel--strike .turn-wizard__hint {
+    margin-bottom: 0.35rem;
+    font-size: 0.78rem;
+  }
+
+  .turn-wizard--dock .turn-wizard__panel--strike .target-label {
+    margin: 0 0 0.4rem;
+    font-size: 0.78rem;
+  }
+
+  .turn-wizard--dock .turn-wizard__actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.4rem;
+    justify-content: stretch;
+  }
+
+  .turn-wizard--dock .turn-wizard__actions .btn--xl {
+    width: 100%;
+    min-height: 2.75rem;
+    padding: 0.55rem 0.45rem;
+    font-size: 0.82rem;
+  }
+
+  /* Strike target mode: full-screen enemy list, controls docked at bottom */
+  .screen--board.is-striking .board-split {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr;
+  }
+
+  .screen--board.is-striking .board-left {
+    display: none;
+  }
+
+  .screen--board.is-striking .board-right {
+    border-bottom: none;
+    padding-bottom: calc(8.75rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  .screen--board.is-striking .board-right__nations {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 0.35rem;
+  }
+
+  .screen--board.is-striking .board-right__nations .nation-card {
+    flex: 0 0 auto;
+    min-height: 6.75rem;
+    height: auto;
+    max-height: none;
+  }
+
+  .screen--board.is-striking .board-section-title {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: linear-gradient(180deg, rgba(18, 8, 10, 0.96), rgba(18, 8, 10, 0.88));
+    padding: 0.15rem 0 0.35rem;
   }
 
   .board-split {

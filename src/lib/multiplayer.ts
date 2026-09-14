@@ -15,8 +15,8 @@ import {
 } from 'firebase/firestore';
 import { getDb, isFirebaseConfigured } from './firebase';
 import { setPlayerStatus } from './session';
-import { createInitialState, beginHumanPlanning, convertHumanToAi, allAliveHumansReady } from '../game/engine';
-import { finishOnlineHumanPlanning, runAiNationTurn, runOnlineAiPlanning } from '../game/ai';
+import { createInitialState, beginHumanPlanning, forfeitNation, allAliveHumansReady } from '../game/engine';
+import { finishOnlineHumanPlanning, runOnlineAiPlanning } from '../game/ai';
 import { NATIONS, nationDef } from '../data/nations';
 import {
   mergeHumanPlanningWrite,
@@ -455,7 +455,7 @@ export async function pushHumanPlanningState(
   });
 }
 
-/** Convert an idle human to AI and remove them from game membership. */
+/** Forfeit an idle/leaving human — burn cities, mark OUT, remove from membership. */
 export async function kickIdleHumanFromGame(
   gameId: string,
   nationId: NationId,
@@ -465,16 +465,18 @@ export async function kickIdleHumanFromGame(
     const snap = await tx.get(ref);
     if (!snap.exists()) return null;
     const game = snap.data() as OnlineGameDoc;
-    if (!game.state.nations[nationId]?.isHuman) return game.state;
+    if (!game.state.nations[nationId]?.isHuman || game.state.nations[nationId]?.eliminated) {
+      return game.state;
+    }
 
     const ownerUid = game.state.nations[nationId]?.ownerUid;
-    let mergedState = convertHumanToAi(game.state, nationId);
-    // Converted nation needs its own AI turn (other AIs may already have planned)
+    let mergedState = forfeitNation(game.state, nationId);
+    // Remaining humans may all be ready now — advance planning without AI for the leaver
     if (
+      mergedState.phase !== 'gameOver' &&
       (mergedState.phase === 'buy' || mergedState.phase === 'action') &&
       !mergedState.planningComplete
     ) {
-      mergedState = runAiNationTurn(mergedState, nationId);
       if (!mergedState.aiPlanningComplete) {
         mergedState = runOnlineAiPlanning(mergedState);
       }
@@ -496,6 +498,7 @@ export async function kickIdleHumanFromGame(
       playerNames,
       nationAssignments,
       updatedAt: Date.now(),
+      status: mergedState.phase === 'gameOver' ? 'finished' : game.status,
     });
     return mergedState;
   });

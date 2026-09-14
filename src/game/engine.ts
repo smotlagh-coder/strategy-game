@@ -120,18 +120,31 @@ export function beginHumanPlanning(state: GameState, at = Date.now()): GameState
   };
 }
 
-/** Idle / AFK during selection — nation becomes AI and no longer blocks the round. */
-export function convertHumanToAi(state: GameState, nationId: NationId): GameState {
+/**
+ * Player left / idle kick — burn every city, mark OUT, and strip human ownership
+ * so they no longer block planning.
+ */
+export function forfeitNation(state: GameState, nationId: NationId): GameState {
   const n = state.nations[nationId];
-  if (!n || !n.isHuman || n.eliminated) return state;
+  if (!n || n.eliminated) return state;
 
   const ownerUid = n.ownerUid;
-  const aiNation = { ...n, isHuman: false };
-  delete aiNation.playerSlot;
-  delete aiNation.ownerUid;
+  const cities = n.cities.map((c) => ({
+    ...c,
+    destroyed: true,
+    hasShield: false,
+    hasResearch: false,
+  }));
+
+  const forfeited = { ...n, cities, researchCenters: 0, bombs: 0, isHuman: false };
+  delete forfeited.playerSlot;
+  delete forfeited.ownerUid;
 
   const uidToNation = { ...(state.uidToNation ?? {}) };
   if (ownerUid) delete uidToNation[ownerUid];
+  for (const [uid, nid] of Object.entries(uidToNation)) {
+    if (nid === nationId) delete uidToNation[uid];
+  }
 
   const humanReady = { ...state.humanReady };
   delete humanReady[nationId];
@@ -140,26 +153,24 @@ export function convertHumanToAi(state: GameState, nationId: NationId): GameStat
 
   let next: GameState = {
     ...state,
-    nations: { ...state.nations, [nationId]: aiNation },
+    nations: { ...state.nations, [nationId]: forfeited },
     humanNations: state.humanNations.filter((id) => id !== nationId),
     uidToNation,
     humanReady,
     humanLastActive,
+    // Drop queued attacks from the leaver — they're out of the war
+    pendingStrikes: state.pendingStrikes.filter((s) => s.attackerId !== nationId),
     log: [
       ...state.log,
       log(
-        `${nationDef(nationId).name} timed out (no selection) — AI takes over.`,
-        'neutral',
+        `${nationDef(nationId).name} left the game — all cities destroyed.`,
+        'attack',
       ),
     ],
   };
 
-  if (
-    (next.phase === 'buy' || next.phase === 'action') &&
-    allAliveHumansReady(next)
-  ) {
-    next = startAiPhaseAfterHumans(next);
-  }
+  next = checkEliminations(next);
+  next = checkWinner(next);
   return next;
 }
 
