@@ -1024,7 +1024,7 @@ function GameBoard({
         if (!cancelled) {
           if (resolved.mode === 'online' && resolved.onlineGameId) {
             if (resolved.phase === 'gameOver') {
-              void finishOnlineGame(resolved.onlineGameId, resolved);
+              void finishOnlineGame(resolved.onlineGameId, resolved, sessionUid ?? undefined);
             } else {
               void pushGameState(resolved.onlineGameId, resolved, true);
             }
@@ -1669,7 +1669,6 @@ function GameOver({
   useEffect(() => {
     if (creditedRef.current) return;
     if (!sessionUid || !displayName) return;
-    if (state.mode === 'online') return;
     if (!state.winner || state.winner === 'draw') return;
     const w = state.nations[state.winner];
     if (!w?.isHuman) return;
@@ -1853,7 +1852,7 @@ export default function App() {
               const n = nextRound(s);
               if (n.phase === 'gameOver') {
                 if (n.mode === 'online' && n.onlineGameId) {
-                  void finishOnlineGame(n.onlineGameId, n);
+                  void finishOnlineGame(n.onlineGameId, n, sessionUid ?? undefined);
                 }
                 return n;
               }

@@ -232,13 +232,18 @@ export async function startOnlineGameFromLobby(
     updatedAt: Date.now(),
   };
   await setDoc(gameRef, stripUndefined(game));
-  await updateDoc(doc(getDb(), 'lobbies', lobby.id), { status: 'starting' });
-
-  await Promise.all(
-    lobby.memberUids.map((uid) => setPlayerStatus(uid, 'in_game', gameRef.id)),
-  );
+  // Each client updates only their own player doc (rules enforce uid match)
+  await updateDoc(doc(getDb(), 'lobbies', lobby.id), {
+    status: 'starting',
+    gameId: gameRef.id,
+  });
 
   return { gameId: gameRef.id, state };
+}
+
+export async function fetchGame(gameId: string): Promise<OnlineGameDoc | null> {
+  const snap = await getDoc(doc(getDb(), 'games', gameId));
+  return snap.exists() ? (snap.data() as OnlineGameDoc) : null;
 }
 
 export function listenGame(
@@ -280,20 +285,10 @@ export async function tryAcquireAiLock(
   });
 }
 
-export async function finishOnlineGame(gameId: string, state: GameState) {
+export async function finishOnlineGame(gameId: string, state: GameState, selfUid?: string) {
   await pushGameState(gameId, state, true);
-  const snap = await getDoc(doc(getDb(), 'games', gameId));
-  if (!snap.exists()) return;
-  const game = snap.data() as OnlineGameDoc;
-
-  await Promise.all(game.playerUids.map((uid) => setPlayerStatus(uid, 'available', null)));
-
-  if (state.winner && state.winner !== 'draw') {
-    const winnerUid = Object.entries(game.nationAssignments).find(
-      ([, nid]) => nid === state.winner,
-    )?.[0];
-    if (winnerUid) await incrementSuperpowerWin(winnerUid, game.playerNames[winnerUid] ?? 'Player');
-  }
+  if (selfUid) await setPlayerStatus(selfUid, 'available', null);
+  // Leaderboard wins are credited on the GameOver screen by the winner's client
 }
 
 export async function incrementSuperpowerWin(uid: string, displayName: string) {

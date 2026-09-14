@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ART } from '../data/art';
 import {
   createLobby,
+  fetchGame,
   isPlayerOnline,
   joinLobby,
   leaveLobby,
@@ -12,7 +13,7 @@ import {
   sendInvite,
   startOnlineGameFromLobby,
 } from '../lib/multiplayer';
-import { heartbeat } from '../lib/session';
+import { heartbeat, setPlayerStatus } from '../lib/session';
 import type { GameState, InviteDoc, OnlineLobby, PlayerDoc } from '../types';
 
 export function LobbyScreen({
@@ -34,6 +35,7 @@ export function LobbyScreen({
   const [lobby, setLobby] = useState<OnlineLobby | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const joinedGameRef = useRef<string | null>(null);
 
   useEffect(() => {
     const unsub = listenPlayers(setPlayers);
@@ -61,6 +63,34 @@ export function LobbyScreen({
     const t = window.setInterval(tick, 25_000);
     return () => window.clearInterval(t);
   }, [uid]);
+
+  // Host + guests: when lobby gets a gameId, mark self in-game and enter
+  useEffect(() => {
+    const gameId = lobby?.gameId;
+    if (!gameId || lobby?.status !== 'starting') return;
+    if (joinedGameRef.current === gameId) return;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        await setPlayerStatus(uid, 'in_game', gameId);
+        const game = await fetchGame(gameId);
+        if (cancelled || !game?.state) return;
+        joinedGameRef.current = gameId;
+        onGameReady(gameId, game.state);
+      } catch (e) {
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : 'Could not join game');
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // onGameReady is stable enough via parent; omit to avoid cancel/retry loops
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lobby?.gameId, lobby?.status, uid]);
 
   const others = useMemo(() => {
     const now = Date.now();
@@ -126,8 +156,8 @@ export function LobbyScreen({
     setBusy(true);
     setError(null);
     try {
-      const { gameId, state } = await startOnlineGameFromLobby(lobby);
-      onGameReady(gameId, state);
+      // Members (including host) enter via lobby.gameId listener
+      await startOnlineGameFromLobby(lobby);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not start');
     } finally {
@@ -213,7 +243,7 @@ export function LobbyScreen({
                     <button
                       className="btn btn--xl btn--primary"
                       type="button"
-                      disabled={busy || (lobby?.memberUids.length ?? 0) < 2}
+                      disabled={busy || (lobby?.memberUids.length ?? 0) < 2 || Boolean(lobby?.gameId)}
                       onClick={() => void onStart()}
                     >
                       Start Game ({lobby?.memberUids.length ?? 0}/5)

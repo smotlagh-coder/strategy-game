@@ -162,6 +162,8 @@ export interface OnlineLobby {
   memberNames: Record<string, string>;
   status: 'open' | 'starting' | 'closed';
   createdAt: number;
+  /** Set when host starts — members join this game */
+  gameId?: string | null;
 }
 
 export interface OnlineGameDoc {
