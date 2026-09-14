@@ -27,9 +27,27 @@ import {
   startGame,
   toggleSanction,
   citiesLeft,
+  whoIsSanctioning,
 } from './game/engine';
 import { runAllAiUntilHumanOrSummary, runAiTurn } from './game/ai';
 import type { GameMode, GameState, NationId, RoundWorldEvent } from './types';
+import { isFirebaseConfigured } from './lib/firebase';
+import {
+  ensureAuthSession,
+  getStoredDisplayName,
+  loadOrCreatePlayer,
+  setPlayerStatus,
+} from './lib/session';
+import {
+  finishOnlineGame,
+  incrementSuperpowerWin,
+  listenGame,
+  pushGameState,
+  tryAcquireAiLock,
+} from './lib/multiplayer';
+import { NameGate } from './screens/NameGate';
+import { LobbyScreen } from './screens/Lobby';
+import { LeaderboardScreen } from './screens/Leaderboard';
 
 type FxKind = 'buy' | 'strike-label';
 type WizardStep =
@@ -471,7 +489,19 @@ function ModeSelect({ onSelect }: { onSelect: (m: GameMode) => void }) {
           </button>
           <button className="btn btn--xl btn--primary" onClick={() => onSelect('two')}>
             Two Players
-            <small>Hot-seat · rest are AI</small>
+            <small>Hot-seat · same device</small>
+          </button>
+          <button
+            className="btn btn--xl btn--primary"
+            onClick={() => onSelect('online')}
+            disabled={!isFirebaseConfigured()}
+          >
+            Online Multiplayer
+            <small>
+              {isFirebaseConfigured()
+                ? '2–5 humans · AI fills the rest'
+                : 'Set VITE_FIREBASE_* to enable'}
+            </small>
           </button>
         </div>
       </div>
@@ -785,9 +815,11 @@ function nextWizardStep(state: GameState, from: WizardStep | null): WizardStep |
 function GameBoard({
   state,
   setState,
+  sessionUid,
 }: {
   state: GameState;
   setState: React.Dispatch<React.SetStateAction<GameState>>;
+  sessionUid?: string | null;
 }) {
   const turnId = currentNationId(state);
   const turn = state.nations[turnId];
@@ -808,7 +840,15 @@ function GameBoard({
   const isResolving = state.phase === 'resolveStrikes';
   const isHumanTurn =
     (state.phase === 'buy' || state.phase === 'action') && turn.isHuman && !turn.eliminated;
-  const strikeSelectMode = isHumanTurn && wizardStep === 'strike';
+  const myNationId =
+    sessionUid && state.uidToNation?.[sessionUid]
+      ? state.uidToNation[sessionUid]
+      : null;
+  const isOnline = Boolean(state.mode === 'online' && state.onlineGameId);
+  const isMyHumanTurn =
+    isHumanTurn && (!isOnline || (myNationId != null && turnId === myNationId));
+  const strikeSelectMode = isMyHumanTurn && wizardStep === 'strike';
+  const inboundSanctions = whoIsSanctioning(state, isOnline && myNationId ? myNationId : turnId);
 
   useEffect(() => {
     setTargets((prev) => (prev.length > turn.bombs ? prev.slice(0, turn.bombs) : prev));
@@ -859,7 +899,11 @@ function GameBoard({
       setState((s) => {
         let next = s.phase === 'buy' ? finishBuyPhase(s) : s;
         next = queueStrikes(next, strikeTargets);
-        return endTurn(next);
+        next = endTurn(next);
+        if (next.mode === 'online' && next.onlineGameId) {
+          void pushGameState(next.onlineGameId, next);
+        }
+        return next;
       });
     },
     [setState],
@@ -867,6 +911,9 @@ function GameBoard({
 
   const advanceAfter = useCallback(
     (s: GameState, from: WizardStep) => {
+      if (s.mode === 'online' && s.onlineGameId) {
+        void pushGameState(s.onlineGameId, s);
+      }
       const next = nextWizardStep(s, from);
       if (next == null) closeHumanTurn([]);
       else setWizardStep(next);
@@ -874,10 +921,10 @@ function GameBoard({
     [closeHumanTurn],
   );
 
-  // Start sequential turn prompts when a human's turn begins
+  // Start sequential turn prompts when a human's turn begins (only for local actor)
   useEffect(() => {
-    if (!isHumanTurn) {
-      setWizardStep(null);
+    if (!isMyHumanTurn) {
+      if (!isHumanTurn) setWizardStep(null);
       return;
     }
     setTargets([]);
@@ -887,7 +934,7 @@ function GameBoard({
       return () => window.clearTimeout(t);
     }
     setWizardStep(first);
-  }, [isHumanTurn, turnId, state.round, closeHumanTurn]);
+  }, [isMyHumanTurn, isHumanTurn, turnId, state.round, closeHumanTurn]);
 
   // AI: buy, queue strikes, end turn (strikes resolve together later)
   useEffect(() => {
@@ -897,15 +944,28 @@ function GameBoard({
 
     let cancelled = false;
     const t = window.setTimeout(() => {
-      if (cancelled || aiRunningRef.current) return;
-      aiRunningRef.current = true;
-      setBusy(true);
-      try {
-        setState((s) => runAiTurn(s));
-      } finally {
-        aiRunningRef.current = false;
-        setBusy(false);
-      }
+      void (async () => {
+        if (cancelled || aiRunningRef.current) return;
+        if (isOnline && state.onlineGameId && sessionUid) {
+          const turnKey = `${state.round}-${state.currentTurnIndex}-${turnId}`;
+          const got = await tryAcquireAiLock(state.onlineGameId, sessionUid, turnKey);
+          if (!got || cancelled) return;
+        }
+        aiRunningRef.current = true;
+        setBusy(true);
+        try {
+          setState((s) => {
+            const next = runAiTurn(s);
+            if (next.mode === 'online' && next.onlineGameId) {
+              void pushGameState(next.onlineGameId, next, true);
+            }
+            return next;
+          });
+        } finally {
+          aiRunningRef.current = false;
+          setBusy(false);
+        }
+      })();
     }, 700);
 
     return () => {
@@ -916,8 +976,12 @@ function GameBoard({
     state.phase,
     state.currentTurnIndex,
     state.round,
+    state.onlineGameId,
     turn.isHuman,
     turn.eliminated,
+    turnId,
+    isOnline,
+    sessionUid,
     setState,
   ]);
 
@@ -929,6 +993,14 @@ function GameBoard({
     const t = window.setTimeout(() => {
       void (async () => {
         if (cancelled) return;
+        if (isOnline && state.onlineGameId && sessionUid) {
+          const got = await tryAcquireAiLock(
+            state.onlineGameId,
+            sessionUid,
+            `resolve-${state.round}`,
+          );
+          if (!got || cancelled) return;
+        }
         setBusy(true);
         const strikes = [...stateRef.current.pendingStrikes];
         for (const strike of strikes) {
@@ -949,7 +1021,16 @@ function GameBoard({
         resolved = finishStrikeResolution(resolved);
 
         await playStrikeRecap(resolved.roundEvents);
-        if (!cancelled) setState(resolved);
+        if (!cancelled) {
+          if (resolved.mode === 'online' && resolved.onlineGameId) {
+            if (resolved.phase === 'gameOver') {
+              void finishOnlineGame(resolved.onlineGameId, resolved);
+            } else {
+              void pushGameState(resolved.onlineGameId, resolved, true);
+            }
+          }
+          setState(resolved);
+        }
         setBusy(false);
       })();
     }, 50);
@@ -962,7 +1043,16 @@ function GameBoard({
       recapResolveRef.current = null;
       resolveRecap?.();
     };
-  }, [state.phase, state.round, setState, playStrikeCinema, playStrikeRecap]);
+  }, [
+    state.phase,
+    state.round,
+    state.onlineGameId,
+    isOnline,
+    sessionUid,
+    setState,
+    playStrikeCinema,
+    playStrikeRecap,
+  ]);
 
   const onSelectCity = (nationId: NationId, cityId: string) => {
     if (!strikeSelectMode || busy) return;
@@ -995,7 +1085,7 @@ function GameBoard({
       {cinema && <StrikeCinema strike={cinema} onComplete={onCinemaComplete} />}
       {strikeRecap && <StrikeRecap events={strikeRecap} onContinue={onRecapContinue} />}
 
-      {isHumanTurn && wizardStep && wizardStep !== 'strike' && (
+      {isMyHumanTurn && wizardStep && wizardStep !== 'strike' && (
         <div className="turn-wizard" role="dialog" aria-modal="true">
           <div className="turn-wizard__panel enter-pop">
             <div className="modal__head">
@@ -1272,7 +1362,7 @@ function GameBoard({
         </div>
       )}
 
-      {isHumanTurn && wizardStep === 'strike' && (
+      {isMyHumanTurn && wizardStep === 'strike' && (
         <div className="turn-wizard turn-wizard--dock" role="dialog" aria-modal="true">
           <div className="turn-wizard__panel turn-wizard__panel--strike enter-pop">
             <div className="turn-wizard__hero turn-wizard__hero--strike">
@@ -1361,11 +1451,22 @@ function GameBoard({
                       ${formatMoney(turn.money)} · Bombs {turn.bombs} · 🔍
                       {turn.cities.filter((c) => !c.destroyed && c.hasResearch).length}
                     </p>
+                    {inboundSanctions.length > 0 && (
+                      <p className="sanctioned-by">
+                        Sanctioned by:{' '}
+                        {inboundSanctions.map((id) => nationDef(id).name).join(' · ')}
+                      </p>
+                    )}
                   </div>
                 </div>
-                <p className="upgrade-hint">
-                  Answer each prompt · strikes resolve together when the round ends
-                </p>
+                {!isMyHumanTurn && isOnline && (
+                  <p className="upgrade-hint">Waiting for {playerDisplayName(state, turnId)}…</p>
+                )}
+                {isMyHumanTurn && (
+                  <p className="upgrade-hint">
+                    Answer each prompt · strikes resolve together when the round ends
+                  </p>
+                )}
               </div>
             )}
 
@@ -1475,6 +1576,32 @@ function RoundSummary({
                 })}
               </div>
 
+              {state.lastIncomeLedger.length > 0 && (
+                <>
+                  <h2 className="round-report__panel-title">Treasury</h2>
+                  <div className="income-ledger">
+                    {state.lastIncomeLedger
+                      .filter((e) => state.nations[e.nationId].isHuman)
+                      .map((e) => (
+                        <div key={e.nationId} className="income-ledger__row">
+                          <strong>{nationDef(e.nationId).name}</strong>
+                          <span>
+                            Prev ${formatMoney(e.previousBalance)} → Revenue +$
+                            {formatMoney(e.revenue)} → Now ${formatMoney(state.nations[e.nationId].money)}
+                          </span>
+                          {e.sanctioners.length > 0 && (
+                            <small>
+                              Sanctioned by{' '}
+                              {e.sanctioners.map((id) => nationDef(id).name).join(' · ')} (−
+                              {Math.round(e.sanctionPenalty * 100)}%)
+                            </small>
+                          )}
+                        </div>
+                      ))}
+                  </div>
+                </>
+              )}
+
               <h2 className="round-report__panel-title">Your cities</h2>
               <div className="your-cities">
                 {humanIds.map((id) => (
@@ -1521,9 +1648,41 @@ function RoundSummary({
   );
 }
 
-function GameOver({ state, onRestart }: { state: GameState; onRestart: () => void }) {
+function GameOver({
+  state,
+  sessionUid,
+  displayName,
+  onRestart,
+  onLeaderboard,
+}: {
+  state: GameState;
+  sessionUid?: string | null;
+  displayName?: string;
+  onRestart: () => void;
+  onLeaderboard?: () => void;
+}) {
   const winnerName =
     state.winner && state.winner !== 'draw' ? nationDef(state.winner).name : 'No one';
+  const isMutual = state.winner === 'draw';
+  const creditedRef = useRef(false);
+
+  useEffect(() => {
+    if (creditedRef.current) return;
+    if (!sessionUid || !displayName) return;
+    if (state.mode === 'online') return;
+    if (!state.winner || state.winner === 'draw') return;
+    const w = state.nations[state.winner];
+    if (!w?.isHuman) return;
+    const slotName = w.playerSlot ? state.playerNames[w.playerSlot] : null;
+    const isMe =
+      w.ownerUid === sessionUid ||
+      slotName === displayName ||
+      (state.mode === 'single' && w.playerSlot === 1);
+    if (!isMe) return;
+    creditedRef.current = true;
+    void incrementSuperpowerWin(sessionUid, displayName);
+  }, [state, sessionUid, displayName]);
+
   return (
     <div className="screen screen--splash">
       <MapBackdrop />
@@ -1532,16 +1691,23 @@ function GameOver({ state, onRestart }: { state: GameState; onRestart: () => voi
         {state.winner && state.winner !== 'draw' && (
           <img className="winner-art enter-pop" src={ART.leaders[state.winner]} alt="" />
         )}
-        <h1 className="stencil-title">
-          {state.winner === 'draw' ? 'MUTUAL DESTRUCTION' : 'SUPERPOWER'}
-        </h1>
+        <h1 className="stencil-title">{isMutual ? 'MUTUAL DESTRUCTION' : 'SUPERPOWER'}</h1>
         <p className="tagline">
-          {state.winner === 'draw' ? 'The world burns. Nobody wins.' : `${winnerName} dominates the board.`}
+          {isMutual
+            ? 'The environment hit 0%. The world burns. Nobody wins.'
+            : `${winnerName} dominates the board.`}
         </p>
         <EnvMeter value={state.environment} />
-        <button className="btn btn--xl btn--primary" onClick={onRestart}>
-          Play Again
-        </button>
+        <div className="mode-row">
+          <button className="btn btn--xl btn--primary" onClick={onRestart}>
+            Play Again
+          </button>
+          {onLeaderboard && (
+            <button className="btn btn--xl" onClick={onLeaderboard}>
+              Leaderboard
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -1549,14 +1715,122 @@ function GameOver({ state, onRestart }: { state: GameState; onRestart: () => voi
 
 export default function App() {
   const [state, setState] = useState<GameState>(() => createInitialState());
+  const [sessionUid, setSessionUid] = useState<string | null>(null);
+  const [displayName, setDisplayName] = useState(getStoredDisplayName() ?? '');
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const [sessionLoading, setSessionLoading] = useState(false);
+  const [showLeaderboard, setShowLeaderboard] = useState(false);
   const advancePastAi = useCallback((s: GameState) => runAllAiUntilHumanOrSummary(s), []);
+
+  // Online game listener
+  useEffect(() => {
+    if (!state.onlineGameId || state.mode !== 'online') return;
+    return listenGame(state.onlineGameId, (game) => {
+      if (!game?.state) return;
+      setState((prev) => {
+        // Avoid clobbering if we're mid-local identical
+        if (JSON.stringify(prev) === JSON.stringify(game.state)) return prev;
+        return game.state;
+      });
+    });
+  }, [state.onlineGameId, state.mode]);
+
+  const completeSession = async (name: string) => {
+    setSessionLoading(true);
+    setSessionError(null);
+    try {
+      if (!isFirebaseConfigured()) {
+        setDisplayName(name);
+        setState((s) => ({ ...s, phase: 'mode' }));
+        return;
+      }
+      const user = await ensureAuthSession();
+      if (!user) throw new Error('Could not sign in');
+      await loadOrCreatePlayer(user.uid, name);
+      setSessionUid(user.uid);
+      setDisplayName(name);
+      setState((s) => ({ ...s, phase: 'mode' }));
+    } catch (e) {
+      setSessionError(e instanceof Error ? e.message : 'Session failed');
+    } finally {
+      setSessionLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (state.phase !== 'session') return;
+    if (!isFirebaseConfigured()) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const user = await ensureAuthSession();
+        if (cancelled || !user) return;
+        setSessionUid(user.uid);
+        const stored = getStoredDisplayName();
+        if (stored) {
+          await loadOrCreatePlayer(user.uid, stored);
+          setDisplayName(stored);
+          setState((s) => (s.phase === 'session' ? { ...s, phase: 'mode' } : s));
+        }
+      } catch {
+        /* stay on name gate */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [state.phase]);
+
+  if (showLeaderboard) {
+    return (
+      <div className="app-shell">
+        <LeaderboardScreen onBack={() => setShowLeaderboard(false)} />
+      </div>
+    );
+  }
 
   return (
     <div className="app-shell">
-      {state.phase === 'mode' && <ModeSelect onSelect={(m) => setState((s) => setMode(s, m))} />}
+      {state.phase === 'session' && (
+        <NameGate
+          initialName={displayName}
+          loading={sessionLoading}
+          error={sessionError}
+          onSubmit={(n) => void completeSession(n)}
+        />
+      )}
+      {state.phase === 'mode' && (
+        <ModeSelect
+          onSelect={(m) => {
+            if (m === 'online' && sessionUid) {
+              void setPlayerStatus(sessionUid, 'available', null);
+            }
+            setState((s) => setMode(s, m));
+          }}
+        />
+      )}
       {state.phase === 'names' && (
         <PlayerNames
           onContinue={(n1, n2) => setState((s) => setPlayerNames(s, n1, n2))}
+        />
+      )}
+      {state.phase === 'lobby' && sessionUid && (
+        <LobbyScreen
+          uid={sessionUid}
+          displayName={displayName || 'Commander'}
+          onBack={() => setState(createInitialState())}
+          onOpenLeaderboard={() => setShowLeaderboard(true)}
+          onGameReady={(gameId, gameState) => {
+            setState({ ...gameState, onlineGameId: gameId });
+          }}
+        />
+      )}
+      {state.phase === 'lobby' && !sessionUid && (
+        <NameGate
+          initialName={displayName}
+          loading={sessionLoading}
+          error={sessionError ?? 'Sign in required for online play'}
+          onSubmit={(n) => void completeSession(n)}
         />
       )}
       {state.phase === 'country' && (
@@ -1569,7 +1843,7 @@ export default function App() {
         state.phase === 'action' ||
         state.phase === 'income' ||
         state.phase === 'resolveStrikes') && (
-        <GameBoard state={state} setState={setState} />
+        <GameBoard state={state} setState={setState} sessionUid={sessionUid} />
       )}
       {state.phase === 'roundSummary' && (
         <RoundSummary
@@ -1577,14 +1851,32 @@ export default function App() {
           onContinue={() =>
             setState((s) => {
               const n = nextRound(s);
-              if (n.phase === 'gameOver') return n;
+              if (n.phase === 'gameOver') {
+                if (n.mode === 'online' && n.onlineGameId) {
+                  void finishOnlineGame(n.onlineGameId, n);
+                }
+                return n;
+              }
+              if (n.mode === 'online' && n.onlineGameId) {
+                void pushGameState(n.onlineGameId, n);
+                return n;
+              }
               return advancePastAi(n);
             })
           }
         />
       )}
       {state.phase === 'gameOver' && (
-        <GameOver state={state} onRestart={() => setState(createInitialState())} />
+        <GameOver
+          state={state}
+          sessionUid={sessionUid}
+          displayName={displayName}
+          onRestart={() => {
+            if (sessionUid) void setPlayerStatus(sessionUid, 'available', null);
+            setState(createInitialState());
+          }}
+          onLeaderboard={() => setShowLeaderboard(true)}
+        />
       )}
     </div>
   );

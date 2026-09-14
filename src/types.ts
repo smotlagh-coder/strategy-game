@@ -1,18 +1,21 @@
 export type NationId = 'us' | 'uk' | 'france' | 'russia' | 'china';
 
-export type GameMode = 'single' | 'two';
+export type GameMode = 'single' | 'two' | 'online';
 
 export type Phase =
+  | 'session'
   | 'mode'
   | 'names'
   | 'country'
   | 'leaders'
+  | 'lobby'
   | 'income'
   | 'buy'
   | 'action'
   | 'resolveStrikes'
   | 'roundSummary'
-  | 'gameOver';
+  | 'gameOver'
+  | 'leaderboard';
 
 export interface PendingStrike {
   attackerId: NationId;
@@ -60,7 +63,9 @@ export interface NationState {
   /** Cumulative points from cities still standing at each round end */
   citySurvivalPoints: number;
   isHuman: boolean;
-  playerSlot?: 1 | 2;
+  playerSlot?: number;
+  /** Online multiplayer owner uid (if human) */
+  ownerUid?: string;
 }
 
 export interface RoundScore {
@@ -91,6 +96,16 @@ export interface RoundWorldEvent {
   attackerId?: NationId;
 }
 
+/** Income applied at round start (shown on aftermath) */
+export interface IncomeLedgerEntry {
+  nationId: NationId;
+  previousBalance: number;
+  revenue: number;
+  balanceAfterIncome: number;
+  sanctionPenalty: number;
+  sanctioners: NationId[];
+}
+
 export interface GameState {
   mode: GameMode | null;
   phase: Phase;
@@ -100,10 +115,13 @@ export interface GameState {
   nations: Record<NationId, NationState>;
   turnOrder: NationId[];
   currentTurnIndex: number;
-  selectingFor: 1 | 2;
+  selectingFor: number;
   humanNations: NationId[];
-  /** Display names for hot-seat players */
-  playerNames: Partial<Record<1 | 2, string>>;
+  /** Display names for hot-seat / online players by slot */
+  playerNames: Partial<Record<number, string>>;
+  /** Online: uid → nation */
+  uidToNation?: Partial<Record<string, NationId>>;
+  onlineGameId?: string | null;
   roundScores: RoundScore[];
   scoreHistory: RoundScore[][];
   log: LogEntry[];
@@ -113,4 +131,46 @@ export interface GameState {
   pendingStrikes: PendingStrike[];
   /** World events from the round that just ended */
   roundEvents: RoundWorldEvent[];
+  /** Income applied at the start of the current round */
+  lastIncomeLedger: IncomeLedgerEntry[];
+}
+
+/** Firestore player presence doc */
+export type PlayerStatus = 'available' | 'in_game' | 'offline';
+
+export interface PlayerDoc {
+  displayName: string;
+  status: PlayerStatus;
+  lastSeen: number;
+  currentGameId: string | null;
+  superpowerWins: number;
+}
+
+export interface InviteDoc {
+  fromUid: string;
+  toUid: string;
+  fromName: string;
+  status: 'pending' | 'accepted' | 'declined' | 'cancelled';
+  createdAt: number;
+  lobbyId?: string;
+}
+
+export interface OnlineLobby {
+  id: string;
+  hostUid: string;
+  memberUids: string[];
+  memberNames: Record<string, string>;
+  status: 'open' | 'starting' | 'closed';
+  createdAt: number;
+}
+
+export interface OnlineGameDoc {
+  hostUid: string;
+  playerUids: string[];
+  playerNames: Record<string, string>;
+  nationAssignments: Record<string, NationId>;
+  status: 'lobby' | 'active' | 'finished';
+  state: GameState;
+  aiLock: string | null;
+  updatedAt: number;
 }

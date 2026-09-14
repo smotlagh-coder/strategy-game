@@ -15,6 +15,7 @@ import {
 import type {
   GameMode,
   GameState,
+  IncomeLedgerEntry,
   LogEntry,
   NationId,
   PendingStrike,
@@ -41,7 +42,7 @@ export function createInitialState(): GameState {
 
   return {
     mode: null,
-    phase: 'mode',
+    phase: 'session',
     round: 1,
     maxRounds: MAX_ROUNDS,
     environment: 100,
@@ -58,6 +59,9 @@ export function createInitialState(): GameState {
     pendingCountryPick: null,
     pendingStrikes: [],
     roundEvents: [],
+    lastIncomeLedger: [],
+    uidToNation: {},
+    onlineGameId: null,
   };
 }
 
@@ -188,28 +192,53 @@ function checkEliminations(state: GameState): GameState {
   return { ...state, nations, log: logEntries, roundEvents };
 }
 
+function pickLivingSuperpower(state: GameState): NationId | 'draw' {
+  const scores = allScores(state);
+  const contenders = scores.filter((s) => !s.eliminated);
+  if (contenders.length === 0) {
+    // No living nations — fall back to highest locked score, never mutual destruction
+    return scores[0]?.nationId ?? 'draw';
+  }
+  const top = contenders[0].total;
+  const tied = contenders.filter((s) => s.total === top);
+  if (tied.length === 1) return tied[0].nationId;
+  // Break ties: more cities, then higher survival points, then nation id
+  tied.sort((a, b) => {
+    if (b.citiesLeft !== a.citiesLeft) return b.citiesLeft - a.citiesLeft;
+    if (b.citySurvivalPoints !== a.citySurvivalPoints) {
+      return b.citySurvivalPoints - a.citySurvivalPoints;
+    }
+    return a.nationId.localeCompare(b.nationId);
+  });
+  return tied[0].nationId;
+}
+
 function checkWinner(state: GameState): GameState {
+  // Mutual destruction only when the environment has collapsed
+  if (state.environment <= 0) {
+    return {
+      ...state,
+      phase: 'gameOver',
+      winner: 'draw',
+      roundScores: allScores(state),
+    };
+  }
+
   const alive = aliveNations(state);
   if (alive.length <= 1) {
     return {
       ...state,
       phase: 'gameOver',
-      winner: alive[0] ?? 'draw',
+      winner: alive[0] ?? pickLivingSuperpower(state),
       roundScores: allScores(state),
     };
   }
   if (state.round > state.maxRounds) {
-    const scores = allScores(state);
-    // Eliminated nations keep standings points but can never become superpower
-    const contenders = scores.filter((s) => !s.eliminated);
-    const top = contenders[0]?.total;
-    const tied =
-      top == null ? [] : contenders.filter((s) => s.total === top);
     return {
       ...state,
       phase: 'gameOver',
-      winner: tied.length === 1 ? tied[0].nationId : 'draw',
-      roundScores: scores,
+      winner: pickLivingSuperpower(state),
+      roundScores: allScores(state),
     };
   }
   return state;
@@ -219,7 +248,7 @@ export function setMode(state: GameState, mode: GameMode): GameState {
   return {
     ...state,
     mode,
-    phase: mode === 'two' ? 'names' : 'country',
+    phase: mode === 'two' ? 'names' : mode === 'online' ? 'lobby' : 'country',
     selectingFor: 1,
     humanNations: [],
     playerNames: {},
@@ -315,38 +344,58 @@ export function startGame(state: GameState): GameState {
 /** Apply base + research income (sanctions cut total revenue 20% each) at round start.
  *  Income begins in round 2 (not round 1). */
 export function applyIncome(state: GameState): GameState {
-  if (state.round < 2) return state;
+  if (state.round < 2) return { ...state, lastIncomeLedger: [] };
 
   const nations = { ...state.nations };
   const logEntries = [...state.log];
+  const ledger: IncomeLedgerEntry[] = [];
 
   for (const id of state.turnOrder) {
     const n = nations[id];
     if (n.eliminated) continue;
 
+    const previousBalance = n.money;
     const researchIncome =
       n.cities.filter((c) => !c.destroyed && c.hasResearch).length * RESEARCH_INCOME;
     const gross = BASE_INCOME + researchIncome;
-    // How many others are sanctioning this nation?
-    const sanctionCount = state.turnOrder.filter(
+    const sanctioners = state.turnOrder.filter(
       (other) => other !== id && !nations[other].eliminated && nations[other].sanctions.includes(id),
-    ).length;
-    const penalty = Math.min(0.8, sanctionCount * SANCTION_PENALTY);
-    const income = +(gross * (1 - penalty)).toFixed(2);
+    );
+    const sanctionPenalty = Math.min(0.8, sanctioners.length * SANCTION_PENALTY);
+    const revenue = +(gross * (1 - sanctionPenalty)).toFixed(2);
+    const balanceAfterIncome = +(previousBalance + revenue).toFixed(2);
 
     nations[id] = {
       ...n,
-      money: +(n.money + income).toFixed(2),
+      money: balanceAfterIncome,
       researchCenters: n.cities.filter((c) => !c.destroyed && c.hasResearch).length,
     };
+    ledger.push({
+      nationId: id,
+      previousBalance,
+      revenue,
+      balanceAfterIncome,
+      sanctionPenalty,
+      sanctioners,
+    });
     const note =
-      sanctionCount > 0
-        ? `${nationDef(id).name} receives $${income}M (base $${BASE_INCOME}M + research $${researchIncome}M, −${Math.round(penalty * 100)}% sanctions).`
-        : `${nationDef(id).name} receives $${income}M (base $${BASE_INCOME}M + research $${researchIncome}M).`;
+      sanctioners.length > 0
+        ? `${nationDef(id).name} receives $${revenue}M (base $${BASE_INCOME}M + research $${researchIncome}M, −${Math.round(sanctionPenalty * 100)}% sanctions).`
+        : `${nationDef(id).name} receives $${revenue}M (base $${BASE_INCOME}M + research $${researchIncome}M).`;
     logEntries.push(log(note, 'money'));
   }
 
-  return { ...state, nations, log: logEntries };
+  return { ...state, nations, log: logEntries, lastIncomeLedger: ledger };
+}
+
+/** Nations currently sanctioning `targetId`. */
+export function whoIsSanctioning(state: GameState, targetId: NationId): NationId[] {
+  return state.turnOrder.filter(
+    (id) =>
+      id !== targetId &&
+      !state.nations[id].eliminated &&
+      state.nations[id].sanctions.includes(targetId),
+  );
 }
 
 export function canBuyBombs(state: GameState, nationId?: NationId): boolean {

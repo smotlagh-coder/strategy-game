@@ -11,7 +11,6 @@ dist-ssr
 *.log
 .oxlintrc.json
 *-original-black.png
-.env
-.env.*
+.env.example
 gcloud-service-key.json
 *.pem

@@ -1,6 +1,6 @@
 # Nuclear War
 
-Strategy game for **Kian** — turn-based nuclear strategy for **1 or 2 players**. Five nations — **US, UK, France, Russia, China** — with the rest controlled by AI.
+Strategy game for **Kian** — turn-based nuclear strategy for **1–5 players**. Five nations — **US, UK, France, Russia, China** — with empty seats filled by AI.
 
 Repo: [smotlagh-coder/strategy-game](https://github.com/smotlagh-coder/strategy-game)
 
@@ -21,16 +21,39 @@ Repo: [smotlagh-coder/strategy-game](https://github.com/smotlagh-coder/strategy-
 
 Each nation has **3 cities**. Unshielded hit = city destroyed. Lose all 3 cities = eliminated — eliminated nations keep their score on the board but **cannot become the superpower**.
 
+**Mutual Destruction** only when world environment hits **0%**. Otherwise a living nation always becomes the superpower (ties broken by cities / survival points).
+
 Strikes are queued during turns and resolve together at round end. Survival score awards **10 pts × cities still standing** each round.
 
 ## Run
 
 ```bash
 npm install
+cp .env.example .env   # fill Firebase web config for online play
 npm run dev
 ```
 
 Open the local URL Vite prints (usually `http://localhost:5173`).
+
+Without Firebase env vars, **Single** and **Hot-seat** still work; **Online Multiplayer** stays disabled.
+
+## Firebase (online multiplayer)
+
+Used for sessions, presence, invites, live games, and the superpower leaderboard.
+
+1. Create a Firebase project (or use GCP project `personal-planner-api`).
+2. Enable **Anonymous Authentication** and **Cloud Firestore**.
+3. Deploy rules: `firebase deploy --only firestore:rules` (see [`firestore.rules`](firestore.rules)).
+4. Copy the web app config into `.env` (`VITE_FIREBASE_*` — see `.env.example`).
+5. Enable **Blaze** (pay-as-you-go) so Auth/Firestore work in production; set GCP **budget alerts** at $5 and $20. Light family usage should stay near **$0**/mo inside free quotas.
+
+### Online flow
+
+1. Enter commander name (stored in session / `localStorage`).
+2. Choose **Online Multiplayer** → lobby.
+3. Create a lobby, invite available players (2–5 humans). Players **In game** are marked and not inviteable.
+4. Host starts → nations assigned, AI fills empty seats → shared Firestore game sync.
+5. Wins increment the superpower **Leaderboard**.
 
 ## Deploy (GCP App Engine)
 
@@ -50,11 +73,13 @@ Auth matches the Personal-planner GCP pattern: a base64 service-account key plus
 base64 -i service-account.json | pbcopy   # macOS
 ```
 
-4. Push to `main` (or run the workflow manually). App Engine runs `gcp-build` (`npm run build`) then `npm start` (serves `dist` on `$PORT`).
+4. For production online play, also set the `VITE_FIREBASE_*` values in the GitHub Actions build (repository variables or secrets) so the client bundle includes Firebase config.
+5. Push to `main` (or run the workflow manually). App Engine runs `gcp-build` (`npm run build`) then `npm start` (serves `dist` on `$PORT`).
 
 ## Play flow
 
-1. Choose Single Player or Two Players (hot-seat)
-2. Enter names (2P) and pick your nation(s)
-3. Each turn: answer purchase prompts, then lock strike targets
-4. After all nations act, watch simultaneous strikes, then review the aftermath board
+1. Enter your name (session)
+2. Choose Single, Hot-seat (2P), or Online Multiplayer
+3. Pick nation(s) / invite players
+4. Each turn: answer purchase prompts (tech, research, bombs, shield, environment, sanctions), then lock strike targets
+5. After all nations act, watch simultaneous strikes, review treasury + scores on the aftermath board
