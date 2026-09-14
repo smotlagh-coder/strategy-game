@@ -69,9 +69,16 @@ export function listenInvitesFor(
     where('toUid', '==', uid),
     where('status', '==', 'pending'),
   );
-  return onSnapshot(q, (snap) => {
-    cb(snap.docs.map((d) => ({ id: d.id, data: d.data() as InviteDoc })));
-  });
+  return onSnapshot(
+    q,
+    (snap) => {
+      cb(snap.docs.map((d) => ({ id: d.id, data: d.data() as InviteDoc })));
+    },
+    (err) => {
+      console.error('listenInvitesFor', err);
+      cb([]);
+    },
+  );
 }
 
 /** Pending invites this player has sent (host side). */
@@ -84,21 +91,33 @@ export function listenOutgoingInvites(
     where('fromUid', '==', fromUid),
     where('status', '==', 'pending'),
   );
-  return onSnapshot(q, (snap) => {
-    cb(snap.docs.map((d) => ({ id: d.id, data: d.data() as InviteDoc })));
-  });
+  return onSnapshot(
+    q,
+    (snap) => {
+      cb(snap.docs.map((d) => ({ id: d.id, data: d.data() as InviteDoc })));
+    },
+    (err) => {
+      console.error('listenOutgoingInvites', err);
+      cb([]);
+    },
+  );
 }
 
 export async function sendInvite(fromUid: string, fromName: string, toUid: string, lobbyId: string) {
+  // Must filter fromUid (== auth.uid) so security rules allow the query.
+  // Use fromUid+status (existing index); filter toUid/lobby client-side.
   const existing = await getDocs(
     query(
       collection(getDb(), 'invites'),
-      where('lobbyId', '==', lobbyId),
-      where('toUid', '==', toUid),
+      where('fromUid', '==', fromUid),
       where('status', '==', 'pending'),
     ),
   );
-  if (!existing.empty) {
+  const alreadyPending = existing.docs.some((d) => {
+    const data = d.data() as InviteDoc;
+    return data.toUid === toUid && (!data.lobbyId || data.lobbyId === lobbyId);
+  });
+  if (alreadyPending) {
     throw new Error('That player already has a pending invite');
   }
 
