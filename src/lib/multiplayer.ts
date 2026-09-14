@@ -15,12 +15,14 @@ import {
 } from 'firebase/firestore';
 import { getDb, isFirebaseConfigured } from './firebase';
 import { setPlayerStatus } from './session';
-import { createInitialState, beginHumanPlanning, convertHumanToAi } from '../game/engine';
+import { createInitialState, beginHumanPlanning, convertHumanToAi, allAliveHumansReady } from '../game/engine';
+import { finishOnlineHumanPlanning } from '../game/ai';
 import { NATIONS, nationDef } from '../data/nations';
 import type {
   GameState,
   InviteDoc,
   NationId,
+  NationState,
   OnlineGameDoc,
   OnlineLobby,
   PendingStrike,
@@ -288,6 +290,82 @@ export async function pushGameState(gameId: string, state: GameState, clearAiLoc
   await updateDoc(doc(getDb(), 'games', gameId), patch);
 }
 
+/** Once ready in a round, stay ready — stale pushes must not clear it. */
+export function mergeHumanReadyFlags(
+  remote?: Partial<Record<NationId, boolean>>,
+  local?: Partial<Record<NationId, boolean>>,
+): Partial<Record<NationId, boolean>> {
+  const out: Partial<Record<NationId, boolean>> = {};
+  for (const key of new Set([
+    ...Object.keys(remote ?? {}),
+    ...Object.keys(local ?? {}),
+  ])) {
+    const id = key as NationId;
+    if (remote?.[id] || local?.[id]) out[id] = true;
+  }
+  return out;
+}
+
+/** Union city upgrades so a stale push cannot wipe research/shields. */
+export function mergeNationPlanning(remote: NationState, local: NationState): NationState {
+  if (!remote.isHuman && local.isHuman) return remote;
+  if (!local.isHuman && remote.isHuman) return local;
+
+  const cities = remote.cities.map((rc) => {
+    const lc = local.cities.find((c) => c.id === rc.id) ?? rc;
+    const destroyed = Boolean(rc.destroyed || lc.destroyed);
+    if (destroyed) {
+      return { ...rc, destroyed: true, hasShield: false, hasResearch: false };
+    }
+    return {
+      ...rc,
+      hasShield: Boolean(rc.hasShield || lc.hasShield),
+      hasResearch: Boolean(rc.hasResearch || lc.hasResearch),
+    };
+  });
+  const researchCenters = cities.filter((c) => !c.destroyed && c.hasResearch).length;
+
+  return {
+    ...remote,
+    ...local,
+    cities,
+    researchCenters,
+    hasNuclearTech: remote.hasNuclearTech || local.hasNuclearTech,
+    nuclearTechUnlockedRound:
+      local.nuclearTechUnlockedRound ?? remote.nuclearTechUnlockedRound,
+    money: Math.min(remote.money, local.money),
+    bombs: Math.max(remote.bombs, local.bombs),
+    bombsBoughtThisRound: Math.max(remote.bombsBoughtThisRound, local.bombsBoughtThisRound),
+    bombsUsed: Math.max(remote.bombsUsed, local.bombsUsed),
+    envBoughtThisRound: remote.envBoughtThisRound || local.envBoughtThisRound,
+    environmentBuys: Math.max(remote.environmentBuys, local.environmentBuys),
+    environmentScore: Math.max(remote.environmentScore, local.environmentScore),
+    citiesStruckThisRound: Array.from(
+      new Set([...remote.citiesStruckThisRound, ...local.citiesStruckThisRound]),
+    ),
+    sanctions: local.sanctions.length >= remote.sanctions.length ? local.sanctions : remote.sanctions,
+    isHuman: remote.isHuman && local.isHuman,
+    playerSlot: local.playerSlot ?? remote.playerSlot,
+    ownerUid: local.ownerUid ?? remote.ownerUid,
+  };
+}
+
+const humanPushQueues = new Map<string, Promise<unknown>>();
+
+/** Serialize planning writes so an older in-flight push cannot clobber a newer one. */
+export function enqueueHumanPlanningPush(
+  gameId: string,
+  nationId: NationId,
+  getLocal: () => GameState,
+): Promise<GameState> {
+  const prev = humanPushQueues.get(gameId) ?? Promise.resolve();
+  const next = prev
+    .catch(() => undefined)
+    .then(() => pushHumanPlanningState(gameId, getLocal(), nationId));
+  humanPushQueues.set(gameId, next);
+  return next;
+}
+
 /**
  * Merge one human's planning into the shared game doc so parallel players
  * don't overwrite each other's nations / strikes / ready flags.
@@ -302,6 +380,17 @@ export async function pushHumanPlanningState(
     const snap = await tx.get(ref);
     const remote = snap.exists() ? (snap.data() as OnlineGameDoc).state : local;
 
+    // Prefer the newer round entirely
+    if (remote.round > local.round) return remote;
+    if (local.round > remote.round) {
+      tx.update(ref, {
+        state: stripUndefined(local),
+        updatedAt: Date.now(),
+        status: local.phase === 'gameOver' ? 'finished' : 'active',
+      });
+      return local;
+    }
+
     const strikeKey = (s: PendingStrike) => `${s.attackerId}:${s.targetNationId}:${s.cityId}`;
     const remoteOtherStrikes = (remote.pendingStrikes ?? []).filter((s) => s.attackerId !== nationId);
     const localMyStrikes = (local.pendingStrikes ?? []).filter((s) => s.attackerId === nationId);
@@ -314,6 +403,7 @@ export async function pushHumanPlanningState(
       return true;
     });
 
+    const mergedReady = mergeHumanReadyFlags(remote.humanReady, local.humanReady);
     const localEnvBuy = local.nations[nationId]?.envBoughtThisRound ? 1 : 0;
     const remoteHadMine = remote.nations[nationId]?.envBoughtThisRound ? 1 : 0;
     let environment = remote.environment;
@@ -342,13 +432,11 @@ export async function pushHumanPlanningState(
       );
     }
 
-    // Don't resurrect a nation another client already timed out to AI
-    const remoteNation = remote.nations[nationId];
-    const useLocalNation = !(remoteNation && !remoteNation.isHuman && local.nations[nationId]?.isHuman);
+    const mergedNations = { ...remote.nations };
+    mergedNations[nationId] = mergeNationPlanning(remote.nations[nationId], local.nations[nationId]);
 
     const merged: GameState = {
       ...remote,
-      ...local,
       phase:
         local.phase === 'resolveStrikes' ||
         local.phase === 'roundSummary' ||
@@ -358,54 +446,55 @@ export async function pushHumanPlanningState(
               remote.phase === 'roundSummary' ||
               remote.phase === 'gameOver'
             ? remote.phase
-            : local.phase,
+            : local.phase === 'action' || remote.phase === 'action'
+              ? 'action'
+              : remote.phase,
       currentTurnIndex: Math.max(remote.currentTurnIndex, local.currentTurnIndex),
       environment,
-      nations: {
-        ...remote.nations,
-        ...(useLocalNation ? { [nationId]: local.nations[nationId] } : {}),
-      },
-      humanReady: { ...remote.humanReady, ...local.humanReady },
+      nations: mergedNations,
+      humanReady: mergedReady,
       humanLastActive: mergedLastActive,
       humanPlanningStartedAt:
         remote.humanPlanningStartedAt ?? local.humanPlanningStartedAt ?? null,
       pendingStrikes: deduped,
       log: mergedLog,
-      round: Math.max(remote.round, local.round),
+      round: remote.round,
       uidToNation: { ...remote.uidToNation, ...local.uidToNation },
+      humanNations: remote.turnOrder.filter((id) => mergedNations[id]?.isHuman),
     };
 
-    merged.humanNations = merged.turnOrder.filter((id) => merged.nations[id]?.isHuman);
     const uidMap = { ...(merged.uidToNation ?? {}) };
     for (const [uid, nid] of Object.entries(uidMap)) {
       if (!merged.nations[nid as NationId]?.isHuman) delete uidMap[uid];
     }
     merged.uidToNation = uidMap;
 
-    if (local.humanReady?.[nationId]) {
-      if (
-        !remote.nations[remote.turnOrder[remote.currentTurnIndex]]?.isHuman &&
-        local.currentTurnIndex !== remote.currentTurnIndex
-      ) {
-        merged.currentTurnIndex = local.currentTurnIndex;
-        merged.phase = local.phase;
-      }
-      if (local.phase === 'resolveStrikes' || local.phase === 'roundSummary') {
-        merged.phase = local.phase;
-        merged.currentTurnIndex = local.currentTurnIndex;
-        merged.pendingStrikes = local.pendingStrikes;
-        merged.roundEvents = local.roundEvents;
-        merged.roundScores = local.roundScores;
-        merged.winner = local.winner;
-      }
+    let finalState = merged;
+    if (
+      (merged.phase === 'buy' || merged.phase === 'action') &&
+      allAliveHumansReady(merged)
+    ) {
+      finalState = finishOnlineHumanPlanning(merged);
+    }
+
+    if (local.phase === 'resolveStrikes' || local.phase === 'roundSummary') {
+      finalState = {
+        ...finalState,
+        phase: local.phase,
+        currentTurnIndex: local.currentTurnIndex,
+        pendingStrikes: local.pendingStrikes,
+        roundEvents: local.roundEvents,
+        roundScores: local.roundScores,
+        winner: local.winner,
+      };
     }
 
     tx.update(ref, {
-      state: stripUndefined(merged),
+      state: stripUndefined(finalState),
       updatedAt: Date.now(),
-      status: merged.phase === 'gameOver' ? 'finished' : 'active',
+      status: finalState.phase === 'gameOver' ? 'finished' : 'active',
     });
-    return merged;
+    return finalState;
   });
 }
 

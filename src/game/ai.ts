@@ -1,6 +1,7 @@
 import { COSTS } from '../data/nations';
 import {
   aliveNations,
+  allAliveHumansReady,
   buyBomb,
   buyEnvironment,
   buyNuclearTech,
@@ -14,6 +15,7 @@ import {
   maxBombsPurchasable,
   queueStrike,
   researchCount,
+  startAiPhaseAfterHumans,
   toggleSanction,
 } from './engine';
 import type { GameState, NationId } from '../types';
@@ -155,6 +157,37 @@ export function runAllAiUntilHumanOrSummary(state: GameState): GameState {
     s.nations[currentNationId(s)].eliminated
   ) {
     s = endTurn(s);
+  }
+  return s;
+}
+
+/**
+ * Online: after every human finished selections, run all AI turns and move to
+ * strike resolution / round summary.
+ */
+export function finishOnlineHumanPlanning(state: GameState): GameState {
+  if (state.mode !== 'online') return state;
+  if (!allAliveHumansReady(state)) return state;
+  if (state.phase !== 'buy' && state.phase !== 'action') return state;
+
+  let s = state;
+  const cur = s.nations[currentNationId(s)];
+  if (cur?.isHuman || cur?.eliminated) {
+    s = startAiPhaseAfterHumans(s);
+  }
+
+  let guard = 0;
+  while (guard++ < 20 && (s.phase === 'buy' || s.phase === 'action')) {
+    const n = s.nations[currentNationId(s)];
+    if (n.isHuman) {
+      s = startAiPhaseAfterHumans(s);
+      continue;
+    }
+    if (n.eliminated) {
+      s = endTurn(s);
+      continue;
+    }
+    s = runAiTurn(s);
   }
   return s;
 }

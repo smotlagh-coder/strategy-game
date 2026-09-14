@@ -27,14 +27,13 @@ import {
   setMode,
   setPlayerNames,
   playerDisplayName,
-  startAiPhaseAfterHumans,
   startGame,
   toggleSanction,
   touchHumanActivity,
   citiesLeft,
   whoIsSanctioning,
 } from './game/engine';
-import { runAllAiUntilHumanOrSummary, runAiTurn } from './game/ai';
+import { runAllAiUntilHumanOrSummary, runAiTurn, finishOnlineHumanPlanning } from './game/ai';
 import type { GameMode, GameState, NationId, RoundWorldEvent } from './types';
 import { isFirebaseConfigured } from './lib/firebase';
 import {
@@ -50,8 +49,10 @@ import {
   incrementSuperpowerWin,
   kickIdleHumanFromGame,
   listenGame,
+  mergeHumanReadyFlags,
+  mergeNationPlanning,
+  enqueueHumanPlanningPush,
   pushGameState,
-  pushHumanPlanningState,
   tryAcquireAiLock,
 } from './lib/multiplayer';
 import { NameGate } from './screens/NameGate';
@@ -889,17 +890,23 @@ function GameBoard({
     : [];
 
   const bumpSelectionActivity = useCallback(() => {
+    // Local idle timer only — do not push (avoids stale overwrites of purchases/ready)
     lastActivityRef.current = Date.now();
     setIdleSecondsLeft(Math.ceil(SELECTION_IDLE_MS / 1000));
-    if (!isOnline || !myNationId) return;
-    setState((s) => {
-      const next = touchHumanActivity(s, myNationId);
-      if (s.onlineGameId) {
-        void pushHumanPlanningState(s.onlineGameId, next, myNationId);
-      }
-      return next;
-    });
-  }, [isOnline, myNationId, setState]);
+  }, []);
+
+  const syncPlanning = useCallback(
+    (next: GameState, actor: NationId) => {
+      if (next.mode !== 'online' || !next.onlineGameId) return;
+      const gameId = next.onlineGameId;
+      void enqueueHumanPlanningPush(gameId, actor, () => stateRef.current).then((merged) => {
+        setState((cur) =>
+          cur.onlineGameId === gameId && cur.round === merged.round ? merged : cur,
+        );
+      });
+    },
+    [setState],
+  );
 
   useEffect(() => {
     setTargets((prev) => (prev.length > turn.bombs ? prev.slice(0, turn.bombs) : prev));
@@ -961,14 +968,26 @@ function GameBoard({
           next = touchHumanActivity(next, actor);
           next = markHumanReady(next, actor);
           if (allAliveHumansReady(next)) {
-            next = startAiPhaseAfterHumans(next);
+            next = finishOnlineHumanPlanning(next);
           }
-          void pushHumanPlanningState(s.onlineGameId, next, actor).then((merged) => {
-            setState((cur) =>
-              cur.onlineGameId === s.onlineGameId && cur.round === merged.round
-                ? merged
-                : cur,
-            );
+          const gameId = s.onlineGameId;
+          stateRef.current = next;
+          void enqueueHumanPlanningPush(gameId, actor, () => stateRef.current).then((merged) => {
+            setState((cur) => {
+              if (cur.onlineGameId !== gameId || cur.round !== merged.round) return cur;
+              // If merge still has all humans ready but stuck in planning, finish now
+              if (
+                (merged.phase === 'buy' || merged.phase === 'action') &&
+                allAliveHumansReady(merged)
+              ) {
+                const done = finishOnlineHumanPlanning(merged);
+                if (done !== merged) {
+                  void pushGameState(gameId, done, true);
+                  return done;
+                }
+              }
+              return merged;
+            });
           });
           return next;
         }
@@ -991,16 +1010,15 @@ function GameBoard({
       let nextState = s;
       if (s.mode === 'online') {
         nextState = touchHumanActivity(s, actor);
+        stateRef.current = nextState;
         setState(nextState);
-        if (s.onlineGameId) {
-          void pushHumanPlanningState(s.onlineGameId, nextState, actor);
-        }
+        syncPlanning(nextState, actor);
       }
       const next = nextWizardStep(nextState, from, actor);
       if (next == null) closeHumanTurn([]);
       else setWizardStep(next);
     },
-    [closeHumanTurn, sessionUid, bumpSelectionActivity, setState],
+    [closeHumanTurn, sessionUid, bumpSelectionActivity, setState, syncPlanning],
   );
 
   // Start turn prompts when this human can act (once per round)
@@ -1114,34 +1132,64 @@ function GameBoard({
     onKicked('You were removed for not making a selection within 30 seconds.');
   }, [isOnline, sessionUid, state.uidToNation, state.phase, onKicked]);
 
-  // AI: only after all online humans are ready (offline: when current nation is AI)
+  // Online: when all humans finished selections → run AI + advance to strikes/summary
+  // Offline: run one AI turn at a time when it's an AI nation
   useEffect(() => {
-    if (isOnline && !allAliveHumansReady(state)) return;
+    if (state.phase !== 'buy' && state.phase !== 'action') return;
+    if (aiRunningRef.current) return;
+
+    if (isOnline) {
+      if (!allAliveHumansReady(state)) return;
+
+      let cancelled = false;
+      const t = window.setTimeout(() => {
+        void (async () => {
+          if (cancelled || aiRunningRef.current) return;
+          if (state.onlineGameId && sessionUid) {
+            const got = await tryAcquireAiLock(
+              state.onlineGameId,
+              sessionUid,
+              `post-human-${state.round}`,
+            );
+            if (!got || cancelled) return;
+          }
+          aiRunningRef.current = true;
+          setBusy(true);
+          try {
+            setState((s) => {
+              if (s.phase !== 'buy' && s.phase !== 'action') return s;
+              if (!allAliveHumansReady(s)) return s;
+              const next = finishOnlineHumanPlanning(s);
+              if (next.mode === 'online' && next.onlineGameId) {
+                void pushGameState(next.onlineGameId, next, true);
+              }
+              return next;
+            });
+          } finally {
+            aiRunningRef.current = false;
+            setBusy(false);
+          }
+        })();
+      }, 200);
+
+      return () => {
+        cancelled = true;
+        window.clearTimeout(t);
+      };
+    }
+
     const aiTurnId = currentNationId(state);
     const aiNation = state.nations[aiTurnId];
     if (aiNation.isHuman || aiNation.eliminated) return;
-    if (state.phase !== 'buy' && state.phase !== 'action') return;
-    if (aiRunningRef.current) return;
 
     let cancelled = false;
     const t = window.setTimeout(() => {
       void (async () => {
         if (cancelled || aiRunningRef.current) return;
-        if (isOnline && state.onlineGameId && sessionUid) {
-          const turnKey = `${state.round}-${state.currentTurnIndex}-${aiTurnId}`;
-          const got = await tryAcquireAiLock(state.onlineGameId, sessionUid, turnKey);
-          if (!got || cancelled) return;
-        }
         aiRunningRef.current = true;
         setBusy(true);
         try {
-          setState((s) => {
-            const next = runAiTurn(s);
-            if (next.mode === 'online' && next.onlineGameId) {
-              void pushGameState(next.onlineGameId, next, true);
-            }
-            return next;
-          });
+          setState((s) => runAiTurn(s));
         } finally {
           aiRunningRef.current = false;
           setBusy(false);
@@ -1537,9 +1585,15 @@ function GameBoard({
                         disabled={!alive}
                         onClick={() => {
                           bumpSelectionActivity();
-                          setState((s) =>
-                            touchHumanActivity(toggleSanction(s, nid, actorId), actorId),
-                          );
+                          setState((s) => {
+                            const next = touchHumanActivity(
+                              toggleSanction(s, nid, actorId),
+                              actorId,
+                            );
+                            stateRef.current = next;
+                            syncPlanning(next, actorId);
+                            return next;
+                          });
                         }}
                       >
                         <img src={ART.leaders[nid]} alt="" draggable={false} />
@@ -1955,25 +2009,49 @@ export default function App() {
       setState((prev) => {
         const remote = game.state;
         if (JSON.stringify(prev) === JSON.stringify(remote)) return prev;
+
+        const ready = mergeHumanReadyFlags(remote.humanReady, prev.humanReady);
+
+        // Still selecting locally: keep my in-progress nation, take everyone else from remote
         if (
           myId &&
           (prev.phase === 'buy' || prev.phase === 'action') &&
-          !prev.humanReady?.[myId] &&
-          !remote.humanReady?.[myId]
+          !ready[myId]
         ) {
           const myStrikes = prev.pendingStrikes.filter((s) => s.attackerId === myId);
           const otherStrikes = remote.pendingStrikes.filter((s) => s.attackerId !== myId);
           return {
             ...remote,
-            nations: { ...remote.nations, [myId]: prev.nations[myId] },
+            nations: {
+              ...remote.nations,
+              [myId]: mergeNationPlanning(remote.nations[myId], prev.nations[myId]),
+            },
             pendingStrikes: [...otherStrikes, ...myStrikes],
-            humanReady: { ...remote.humanReady, [myId]: prev.humanReady?.[myId] },
+            humanReady: ready,
+            humanLastActive: {
+              ...remote.humanLastActive,
+              ...prev.humanLastActive,
+              [myId]: Math.max(
+                remote.humanLastActive?.[myId] ?? 0,
+                prev.humanLastActive?.[myId] ?? 0,
+              ),
+            },
             environment: prev.nations[myId]?.envBoughtThisRound
               ? Math.max(prev.environment, remote.environment)
               : remote.environment,
           };
         }
-        return remote;
+
+        // Finished selecting (or spectator): trust remote, but never lose ready flags / upgrades
+        const nations = { ...remote.nations };
+        if (myId && prev.nations[myId] && remote.nations[myId]) {
+          nations[myId] = mergeNationPlanning(remote.nations[myId], prev.nations[myId]);
+        }
+        return {
+          ...remote,
+          nations,
+          humanReady: ready,
+        };
       });
     });
   }, [state.onlineGameId, state.mode, sessionUid, state.uidToNation]);
