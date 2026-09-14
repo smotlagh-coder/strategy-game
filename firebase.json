@@ -1,5 +1,8 @@
 {
-  "firestore": {
-    "rules": "firestore.rules"
-  }
+  "firestore": [
+    {
+      "database": "nuclear-war",
+      "rules": "firestore.rules"
+    }
+  ]
 }

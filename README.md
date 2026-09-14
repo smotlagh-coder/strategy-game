@@ -42,8 +42,18 @@ Without Firebase env vars, **Single** and **Hot-seat** still work; **Online Mult
 Used for sessions, presence, invites, live games, and the superpower leaderboard.
 
 1. Create a Firebase project (or use GCP project `personal-planner-api`).
-2. Enable **Anonymous Authentication** and **Cloud Firestore**.
-3. Deploy rules from the repo root:
+2. Enable **Anonymous Authentication**.
+3. If the project’s default DB is Datastore mode (common for older apps), create a **Native** database named `nuclear-war`:
+
+```bash
+gcloud firestore databases create \
+  --database=nuclear-war \
+  --location=us-central1 \
+  --type=firestore-native \
+  --project=personal-planner-api
+```
+
+4. Deploy rules from the repo root:
 
 ```bash
 firebase deploy --only firestore:rules

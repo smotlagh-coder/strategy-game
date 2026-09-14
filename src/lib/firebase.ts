@@ -11,6 +11,10 @@ const firebaseConfig = {
   appId: import.meta.env.VITE_FIREBASE_APP_ID as string | undefined,
 };
 
+/** Named Native-mode DB — required when project default DB is Datastore mode */
+const firestoreDatabaseId =
+  (import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE as string | undefined) || 'nuclear-war';
+
 export function isFirebaseConfigured(): boolean {
   return Boolean(firebaseConfig.apiKey && firebaseConfig.projectId && firebaseConfig.appId);
 }
@@ -33,6 +37,6 @@ export function getFirebaseAuth(): Auth {
 }
 
 export function getDb(): Firestore {
-  if (!db) db = getFirestore(getFirebaseApp());
+  if (!db) db = getFirestore(getFirebaseApp(), firestoreDatabaseId);
   return db;
 }
