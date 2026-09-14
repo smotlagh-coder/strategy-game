@@ -28,6 +28,20 @@ import type {
 
 const ONLINE_MS = 60_000;
 
+/** Firestore rejects `undefined` field values — drop them recursively before writes. */
+export function stripUndefined<T>(value: T): T {
+  if (value === null || typeof value !== 'object') return value;
+  if (Array.isArray(value)) {
+    return value.map((item) => stripUndefined(item)) as T;
+  }
+  const out: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    if (child === undefined) continue;
+    out[key] = stripUndefined(child);
+  }
+  return out as T;
+}
+
 export function isPlayerOnline(p: PlayerDoc, now = Date.now()): boolean {
   return now - p.lastSeen < ONLINE_MS && p.status !== 'offline';
 }
@@ -165,7 +179,10 @@ export function buildOnlineGameState(
 
   for (const n of NATIONS) {
     if (!humanNations.includes(n.id)) {
-      nations[n.id] = { ...nations[n.id], isHuman: false, playerSlot: undefined, ownerUid: undefined };
+      const aiNation = { ...nations[n.id], isHuman: false };
+      delete aiNation.playerSlot;
+      delete aiNation.ownerUid;
+      nations[n.id] = aiNation;
     }
   }
 
@@ -214,7 +231,7 @@ export async function startOnlineGameFromLobby(
     aiLock: null,
     updatedAt: Date.now(),
   };
-  await setDoc(gameRef, game);
+  await setDoc(gameRef, stripUndefined(game));
   await updateDoc(doc(getDb(), 'lobbies', lobby.id), { status: 'starting' });
 
   await Promise.all(
@@ -235,7 +252,7 @@ export function listenGame(
 
 export async function pushGameState(gameId: string, state: GameState, clearAiLock = false) {
   const patch: Record<string, unknown> = {
-    state,
+    state: stripUndefined(state),
     updatedAt: Date.now(),
     status: state.phase === 'gameOver' ? 'finished' : 'active',
   };
