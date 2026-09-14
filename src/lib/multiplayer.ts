@@ -15,7 +15,7 @@ import {
 } from 'firebase/firestore';
 import { getDb, isFirebaseConfigured } from './firebase';
 import { setPlayerStatus } from './session';
-import { createInitialState } from '../game/engine';
+import { createInitialState, beginHumanPlanning, convertHumanToAi } from '../game/engine';
 import { NATIONS, nationDef } from '../data/nations';
 import type {
   GameState,
@@ -23,6 +23,7 @@ import type {
   NationId,
   OnlineGameDoc,
   OnlineLobby,
+  PendingStrike,
   PlayerDoc,
 } from '../types';
 
@@ -189,7 +190,7 @@ export function buildOnlineGameState(
   const humans = state.turnOrder.filter((id) => nations[id].isHuman);
   const ai = state.turnOrder.filter((id) => !nations[id].isHuman);
 
-  return {
+  return beginHumanPlanning({
     ...state,
     mode: 'online',
     phase: 'buy',
@@ -208,7 +209,7 @@ export function buildOnlineGameState(
         tone: 'neutral',
       },
     ],
-  };
+  });
 }
 
 export async function startOnlineGameFromLobby(
@@ -246,6 +247,28 @@ export async function fetchGame(gameId: string): Promise<OnlineGameDoc | null> {
   return snap.exists() ? (snap.data() as OnlineGameDoc) : null;
 }
 
+/** Guests discover the match even if they miss the lobby.gameId update. */
+export function listenMyActiveGames(
+  uid: string,
+  cb: (games: { id: string; data: OnlineGameDoc }[]) => void,
+): Unsubscribe {
+  const q = query(
+    collection(getDb(), 'games'),
+    where('playerUids', 'array-contains', uid),
+    where('status', '==', 'active'),
+  );
+  return onSnapshot(
+    q,
+    (snap) => {
+      cb(snap.docs.map((d) => ({ id: d.id, data: d.data() as OnlineGameDoc })));
+    },
+    (err) => {
+      console.error('listenMyActiveGames', err);
+      cb([]);
+    },
+  );
+}
+
 export function listenGame(
   gameId: string,
   cb: (game: OnlineGameDoc | null) => void,
@@ -265,6 +288,160 @@ export async function pushGameState(gameId: string, state: GameState, clearAiLoc
   await updateDoc(doc(getDb(), 'games', gameId), patch);
 }
 
+/**
+ * Merge one human's planning into the shared game doc so parallel players
+ * don't overwrite each other's nations / strikes / ready flags.
+ */
+export async function pushHumanPlanningState(
+  gameId: string,
+  local: GameState,
+  nationId: NationId,
+): Promise<GameState> {
+  const ref = doc(getDb(), 'games', gameId);
+  return runTransaction(getDb(), async (tx) => {
+    const snap = await tx.get(ref);
+    const remote = snap.exists() ? (snap.data() as OnlineGameDoc).state : local;
+
+    const strikeKey = (s: PendingStrike) => `${s.attackerId}:${s.targetNationId}:${s.cityId}`;
+    const remoteOtherStrikes = (remote.pendingStrikes ?? []).filter((s) => s.attackerId !== nationId);
+    const localMyStrikes = (local.pendingStrikes ?? []).filter((s) => s.attackerId === nationId);
+    const pendingStrikes = [...remoteOtherStrikes, ...localMyStrikes];
+    const seen = new Set<string>();
+    const deduped = pendingStrikes.filter((s) => {
+      const k = strikeKey(s);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+
+    const localEnvBuy = local.nations[nationId]?.envBoughtThisRound ? 1 : 0;
+    const remoteHadMine = remote.nations[nationId]?.envBoughtThisRound ? 1 : 0;
+    let environment = remote.environment;
+    if (localEnvBuy && !remoteHadMine) {
+      environment = Math.min(100, remote.environment + 10);
+    }
+
+    const logIds = new Set((remote.log ?? []).map((e) => e.id));
+    const mergedLog = [
+      ...(remote.log ?? []),
+      ...(local.log ?? []).filter((e) => !logIds.has(e.id)),
+    ].slice(-80);
+
+    const mergedLastActive: Partial<Record<NationId, number>> = {
+      ...remote.humanLastActive,
+      ...local.humanLastActive,
+    };
+    for (const id of new Set([
+      ...Object.keys(remote.humanLastActive ?? {}),
+      ...Object.keys(local.humanLastActive ?? {}),
+    ])) {
+      const nid = id as NationId;
+      mergedLastActive[nid] = Math.max(
+        remote.humanLastActive?.[nid] ?? 0,
+        local.humanLastActive?.[nid] ?? 0,
+      );
+    }
+
+    // Don't resurrect a nation another client already timed out to AI
+    const remoteNation = remote.nations[nationId];
+    const useLocalNation = !(remoteNation && !remoteNation.isHuman && local.nations[nationId]?.isHuman);
+
+    const merged: GameState = {
+      ...remote,
+      ...local,
+      phase:
+        local.phase === 'resolveStrikes' ||
+        local.phase === 'roundSummary' ||
+        local.phase === 'gameOver'
+          ? local.phase
+          : remote.phase === 'resolveStrikes' ||
+              remote.phase === 'roundSummary' ||
+              remote.phase === 'gameOver'
+            ? remote.phase
+            : local.phase,
+      currentTurnIndex: Math.max(remote.currentTurnIndex, local.currentTurnIndex),
+      environment,
+      nations: {
+        ...remote.nations,
+        ...(useLocalNation ? { [nationId]: local.nations[nationId] } : {}),
+      },
+      humanReady: { ...remote.humanReady, ...local.humanReady },
+      humanLastActive: mergedLastActive,
+      humanPlanningStartedAt:
+        remote.humanPlanningStartedAt ?? local.humanPlanningStartedAt ?? null,
+      pendingStrikes: deduped,
+      log: mergedLog,
+      round: Math.max(remote.round, local.round),
+      uidToNation: { ...remote.uidToNation, ...local.uidToNation },
+    };
+
+    merged.humanNations = merged.turnOrder.filter((id) => merged.nations[id]?.isHuman);
+    const uidMap = { ...(merged.uidToNation ?? {}) };
+    for (const [uid, nid] of Object.entries(uidMap)) {
+      if (!merged.nations[nid as NationId]?.isHuman) delete uidMap[uid];
+    }
+    merged.uidToNation = uidMap;
+
+    if (local.humanReady?.[nationId]) {
+      if (
+        !remote.nations[remote.turnOrder[remote.currentTurnIndex]]?.isHuman &&
+        local.currentTurnIndex !== remote.currentTurnIndex
+      ) {
+        merged.currentTurnIndex = local.currentTurnIndex;
+        merged.phase = local.phase;
+      }
+      if (local.phase === 'resolveStrikes' || local.phase === 'roundSummary') {
+        merged.phase = local.phase;
+        merged.currentTurnIndex = local.currentTurnIndex;
+        merged.pendingStrikes = local.pendingStrikes;
+        merged.roundEvents = local.roundEvents;
+        merged.roundScores = local.roundScores;
+        merged.winner = local.winner;
+      }
+    }
+
+    tx.update(ref, {
+      state: stripUndefined(merged),
+      updatedAt: Date.now(),
+      status: merged.phase === 'gameOver' ? 'finished' : 'active',
+    });
+    return merged;
+  });
+}
+
+/** Convert an idle human to AI and remove them from game membership. */
+export async function kickIdleHumanFromGame(
+  gameId: string,
+  nationId: NationId,
+): Promise<GameState | null> {
+  const ref = doc(getDb(), 'games', gameId);
+  return runTransaction(getDb(), async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return null;
+    const game = snap.data() as OnlineGameDoc;
+    if (!game.state.nations[nationId]?.isHuman) return game.state;
+
+    const ownerUid = game.state.nations[nationId]?.ownerUid;
+    const mergedState = convertHumanToAi(game.state, nationId);
+    const playerUids = ownerUid
+      ? game.playerUids.filter((u) => u !== ownerUid)
+      : game.playerUids;
+    const playerNames = { ...game.playerNames };
+    if (ownerUid) delete playerNames[ownerUid];
+    const nationAssignments = { ...game.nationAssignments };
+    if (ownerUid) delete nationAssignments[ownerUid];
+
+    tx.update(ref, {
+      state: stripUndefined(mergedState),
+      playerUids,
+      playerNames,
+      nationAssignments,
+      updatedAt: Date.now(),
+    });
+    return mergedState;
+  });
+}
+
 /** First writer wins AI lock for this turn index. */
 export async function tryAcquireAiLock(
   gameId: string,
@@ -277,7 +454,6 @@ export async function tryAcquireAiLock(
     if (!snap.exists()) return false;
     const game = snap.data() as OnlineGameDoc;
     if (game.aiLock && game.aiLock !== `${turnKey}:${uid}`) {
-      // Another client holds a lock for a different key or same
       if (game.aiLock.startsWith(`${turnKey}:`)) return game.aiLock === `${turnKey}:${uid}`;
     }
     tx.update(ref, { aiLock: `${turnKey}:${uid}` });

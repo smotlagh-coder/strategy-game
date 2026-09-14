@@ -133,6 +133,12 @@ export interface GameState {
   roundEvents: RoundWorldEvent[];
   /** Income applied at the start of the current round */
   lastIncomeLedger: IncomeLedgerEntry[];
+  /** Online: humans who finished buy/strike planning this round */
+  humanReady?: Partial<Record<NationId, boolean>>;
+  /** Online: when human parallel planning began this round */
+  humanPlanningStartedAt?: number | null;
+  /** Online: last selection activity per human nation (idle kick) */
+  humanLastActive?: Partial<Record<NationId, number>>;
 }
 
 /** Firestore player presence doc */
@@ -140,6 +146,8 @@ export type PlayerStatus = 'available' | 'in_game' | 'offline';
 
 export interface PlayerDoc {
   displayName: string;
+  /** Per-browser client UUID (informational; auth uid is the real identity key) */
+  clientId?: string;
   status: PlayerStatus;
   lastSeen: number;
   currentGameId: string | null;

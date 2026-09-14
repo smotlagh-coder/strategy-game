@@ -62,11 +62,137 @@ export function createInitialState(): GameState {
     lastIncomeLedger: [],
     uidToNation: {},
     onlineGameId: null,
+    humanReady: {},
+    humanPlanningStartedAt: null,
+    humanLastActive: {},
   };
 }
 
 export function aliveNations(state: GameState): NationId[] {
   return state.turnOrder.filter((id) => !state.nations[id].eliminated);
+}
+
+export function aliveHumanNations(state: GameState): NationId[] {
+  return state.turnOrder.filter(
+    (id) => state.nations[id].isHuman && !state.nations[id].eliminated,
+  );
+}
+
+export function allAliveHumansReady(state: GameState): boolean {
+  const humans = aliveHumanNations(state);
+  if (humans.length === 0) return true;
+  return humans.every((id) => Boolean(state.humanReady?.[id]));
+}
+
+export function markHumanReady(state: GameState, nationId: NationId): GameState {
+  return {
+    ...state,
+    humanReady: { ...state.humanReady, [nationId]: true },
+  };
+}
+
+export function touchHumanActivity(state: GameState, nationId: NationId, at = Date.now()): GameState {
+  return {
+    ...state,
+    humanLastActive: { ...state.humanLastActive, [nationId]: at },
+    humanPlanningStartedAt: state.humanPlanningStartedAt ?? at,
+  };
+}
+
+/** Start/reset the parallel human selection window for this round. */
+export function beginHumanPlanning(state: GameState, at = Date.now()): GameState {
+  const humanLastActive: Partial<Record<NationId, number>> = {};
+  for (const id of aliveHumanNations(state)) {
+    humanLastActive[id] = at;
+  }
+  return {
+    ...state,
+    humanReady: {},
+    humanPlanningStartedAt: at,
+    humanLastActive,
+  };
+}
+
+/** Idle / AFK during selection — nation becomes AI and no longer blocks the round. */
+export function convertHumanToAi(state: GameState, nationId: NationId): GameState {
+  const n = state.nations[nationId];
+  if (!n || !n.isHuman || n.eliminated) return state;
+
+  const ownerUid = n.ownerUid;
+  const aiNation = { ...n, isHuman: false };
+  delete aiNation.playerSlot;
+  delete aiNation.ownerUid;
+
+  const uidToNation = { ...(state.uidToNation ?? {}) };
+  if (ownerUid) delete uidToNation[ownerUid];
+
+  const humanReady = { ...state.humanReady };
+  delete humanReady[nationId];
+  const humanLastActive = { ...state.humanLastActive };
+  delete humanLastActive[nationId];
+
+  let next: GameState = {
+    ...state,
+    nations: { ...state.nations, [nationId]: aiNation },
+    humanNations: state.humanNations.filter((id) => id !== nationId),
+    uidToNation,
+    humanReady,
+    humanLastActive,
+    log: [
+      ...state.log,
+      log(
+        `${nationDef(nationId).name} timed out (no selection) — AI takes over.`,
+        'neutral',
+      ),
+    ],
+  };
+
+  if (
+    (next.phase === 'buy' || next.phase === 'action') &&
+    allAliveHumansReady(next)
+  ) {
+    next = startAiPhaseAfterHumans(next);
+  }
+  return next;
+}
+
+/** After all humans finish planning: run AI turns, or resolve strikes if no AI left. */
+export function startAiPhaseAfterHumans(state: GameState): GameState {
+  const aiIdx = state.turnOrder.findIndex(
+    (id) => !state.nations[id].isHuman && !state.nations[id].eliminated,
+  );
+  if (aiIdx === -1) return concludeRoundTurns(state);
+  return { ...state, currentTurnIndex: aiIdx, phase: 'buy' };
+}
+
+/** Round complete after the last nation acts — resolve queued strikes or score. */
+export function concludeRoundTurns(state: GameState): GameState {
+  let next = checkEliminations(state);
+  next = rememberScores(next, allScores(next));
+  next = checkWinner(next);
+  if (next.phase === 'gameOver') return next;
+
+  if (next.pendingStrikes.length > 0) {
+    return {
+      ...next,
+      phase: 'resolveStrikes',
+      currentTurnIndex: Math.max(0, next.turnOrder.length - 1),
+      log: [
+        ...next.log,
+        log('All targeting locked. Simultaneous strikes inbound…', 'attack'),
+      ],
+    };
+  }
+  next = awardRoundSurvival(next);
+  const scores = allScores(next);
+  next = rememberScores(next, scores);
+  return {
+    ...next,
+    phase: 'roundSummary',
+    roundScores: scores,
+    scoreHistory: [...next.scoreHistory, scores],
+    log: [...next.log, log(`Round ${next.round} complete. Standing scores updated.`, 'neutral')],
+  };
 }
 
 export function currentNationId(state: GameState): NationId {
@@ -326,7 +452,7 @@ export function startGame(state: GameState): GameState {
   const ai = state.turnOrder.filter((id) => !state.nations[id].isHuman);
   const turnOrder = [...humans, ...ai];
   // Round 1: starting treasury only — base/research income begins in round 2
-  return {
+  const base: GameState = {
     ...state,
     turnOrder,
     currentTurnIndex: 0,
@@ -339,6 +465,7 @@ export function startGame(state: GameState): GameState {
       ),
     ],
   };
+  return beginHumanPlanning(base);
 }
 
 /** Apply base + research income (sanctions cut total revenue 20% each) at round start.
@@ -418,8 +545,8 @@ export function maxBombsPurchasable(state: GameState, nationId?: NationId): numb
   return Math.max(0, Math.min(3, byMoney, byCap));
 }
 
-export function buyNuclearTech(state: GameState): GameState {
-  const id = currentNationId(state);
+export function buyNuclearTech(state: GameState, nationId?: NationId): GameState {
+  const id = nationId ?? currentNationId(state);
   const n = state.nations[id];
   if (n.hasNuclearTech || n.money < COSTS.nuclearTech || n.eliminated) return state;
   return {
@@ -443,8 +570,8 @@ export function buyNuclearTech(state: GameState): GameState {
   };
 }
 
-export function buyBomb(state: GameState): GameState {
-  const id = currentNationId(state);
+export function buyBomb(state: GameState, nationId?: NationId): GameState {
+  const id = nationId ?? currentNationId(state);
   const n = state.nations[id];
   if (
     !canBuyBombs(state, id) ||
@@ -469,15 +596,16 @@ export function buyBomb(state: GameState): GameState {
   };
 }
 
-export function buyBombs(state: GameState, count: number): GameState {
+export function buyBombs(state: GameState, count: number, nationId?: NationId): GameState {
   let s = state;
-  const n = Math.max(0, Math.min(count, maxBombsPurchasable(s)));
-  for (let i = 0; i < n; i += 1) s = buyBomb(s);
+  const id = nationId ?? currentNationId(s);
+  const n = Math.max(0, Math.min(count, maxBombsPurchasable(s, id)));
+  for (let i = 0; i < n; i += 1) s = buyBomb(s, id);
   return s;
 }
 
-export function buyResearch(state: GameState, cityId?: string): GameState {
-  const id = currentNationId(state);
+export function buyResearch(state: GameState, cityId?: string, nationId?: NationId): GameState {
+  const id = nationId ?? currentNationId(state);
   const n = state.nations[id];
   if (n.money < COSTS.research || n.eliminated) return state;
 
@@ -509,8 +637,8 @@ export function buyResearch(state: GameState, cityId?: string): GameState {
   };
 }
 
-export function buyEnvironment(state: GameState): GameState {
-  const id = currentNationId(state);
+export function buyEnvironment(state: GameState, nationId?: NationId): GameState {
+  const id = nationId ?? currentNationId(state);
   const n = state.nations[id];
   if (
     n.money < COSTS.environment ||
@@ -540,8 +668,8 @@ export function buyEnvironment(state: GameState): GameState {
   };
 }
 
-export function buyShield(state: GameState, cityId: string): GameState {
-  const id = currentNationId(state);
+export function buyShield(state: GameState, cityId: string, nationId?: NationId): GameState {
+  const id = nationId ?? currentNationId(state);
   const n = state.nations[id];
   const city = n.cities.find((c) => c.id === cityId);
   if (!city || city.destroyed || city.hasShield || n.money < COSTS.shield || n.eliminated) {
@@ -724,8 +852,8 @@ export function attackCity(state: GameState, targetNation: NationId, cityId: str
   return applyQueuedStrike(withoutPending, strike);
 }
 
-export function toggleSanction(state: GameState, target: NationId): GameState {
-  const id = currentNationId(state);
+export function toggleSanction(state: GameState, target: NationId, nationId?: NationId): GameState {
+  const id = nationId ?? currentNationId(state);
   const n = state.nations[id];
   if (n.eliminated || target === id || state.nations[target].eliminated) return state;
 
@@ -760,29 +888,7 @@ export function endTurn(state: GameState): GameState {
   }
 
   if (idx >= next.turnOrder.length) {
-    // Round complete — resolve queued strikes together, then score
-    if (next.pendingStrikes.length > 0) {
-      return {
-        ...next,
-        phase: 'resolveStrikes',
-        // Keep a valid index while cinema resolves (no active nation turn)
-        currentTurnIndex: Math.max(0, next.turnOrder.length - 1),
-        log: [
-          ...next.log,
-          log('All targeting locked. Simultaneous strikes inbound…', 'attack'),
-        ],
-      };
-    }
-    next = awardRoundSurvival(next);
-    const scores = allScores(next);
-    next = rememberScores(next, scores);
-    return {
-      ...next,
-      phase: 'roundSummary',
-      roundScores: scores,
-      scoreHistory: [...next.scoreHistory, scores],
-      log: [...next.log, log(`Round ${next.round} complete. Standing scores updated.`, 'neutral')],
-    };
+    return concludeRoundTurns(next);
   }
 
   return {
@@ -824,6 +930,7 @@ export function nextRound(state: GameState): GameState {
     roundEvents: [],
     log: [...state.log, log(`Round ${nextRoundNum} begins.`, 'neutral')],
   };
+  next = beginHumanPlanning(next);
   next = applyIncome(next);
   next = checkWinner(next);
   return next;

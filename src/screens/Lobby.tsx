@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ART } from '../data/art';
 import {
   createLobby,
@@ -8,12 +8,13 @@ import {
   leaveLobby,
   listenInvitesFor,
   listenLobby,
+  listenMyActiveGames,
   listenPlayers,
   respondInvite,
   sendInvite,
   startOnlineGameFromLobby,
 } from '../lib/multiplayer';
-import { heartbeat, setPlayerStatus } from '../lib/session';
+import { heartbeat, formatPlayerLabel, setPlayerStatus, shortPlayerId } from '../lib/session';
 import type { GameState, InviteDoc, OnlineLobby, PlayerDoc } from '../types';
 
 export function LobbyScreen({
@@ -36,6 +37,31 @@ export function LobbyScreen({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const joinedGameRef = useRef<string | null>(null);
+  const onGameReadyRef = useRef(onGameReady);
+  onGameReadyRef.current = onGameReady;
+
+  const enterGame = useCallback(
+    async (gameId: string, prefetched?: GameState) => {
+      if (joinedGameRef.current === gameId) return;
+      joinedGameRef.current = gameId;
+      try {
+        await setPlayerStatus(uid, 'in_game', gameId);
+        const state =
+          prefetched ??
+          (await fetchGame(gameId).then((g) => g?.state ?? null));
+        if (!state) {
+          joinedGameRef.current = null;
+          setError('Game not found');
+          return;
+        }
+        onGameReadyRef.current(gameId, { ...state, onlineGameId: gameId });
+      } catch (e) {
+        joinedGameRef.current = null;
+        setError(e instanceof Error ? e.message : 'Could not join game');
+      }
+    },
+    [uid],
+  );
 
   useEffect(() => {
     const unsub = listenPlayers(setPlayers);
@@ -55,42 +81,40 @@ export function LobbyScreen({
     return listenLobby(lobbyId, setLobby);
   }, [lobbyId]);
 
+  // Primary path for guests: watch games that include this player
   useEffect(() => {
+    if (!lobbyId) return;
+    return listenMyActiveGames(uid, (games) => {
+      const linked = lobby?.gameId
+        ? games.find((g) => g.id === lobby.gameId)
+        : undefined;
+      const fresh = [...games]
+        .filter((g) => Date.now() - (g.data.updatedAt ?? 0) < 120_000)
+        .sort((a, b) => (b.data.updatedAt ?? 0) - (a.data.updatedAt ?? 0))[0];
+      const pick = linked ?? fresh;
+      if (!pick) return;
+      void enterGame(pick.id, pick.data.state);
+    });
+  }, [uid, lobbyId, lobby?.gameId, enterGame]);
+
+  // Backup: lobby document got gameId (host start)
+  useEffect(() => {
+    const gameId = lobby?.gameId;
+    if (!gameId) return;
+    if (lobby?.status !== 'starting' && lobby?.status !== 'closed') return;
+    void enterGame(gameId);
+  }, [lobby?.gameId, lobby?.status, enterGame]);
+
+  useEffect(() => {
+    // Don't clobber in_game while a match is starting / joining
+    if (lobby?.gameId || joinedGameRef.current) return;
     const tick = () => {
       void heartbeat(uid, 'available');
     };
     tick();
     const t = window.setInterval(tick, 25_000);
     return () => window.clearInterval(t);
-  }, [uid]);
-
-  // Host + guests: when lobby gets a gameId, mark self in-game and enter
-  useEffect(() => {
-    const gameId = lobby?.gameId;
-    if (!gameId || lobby?.status !== 'starting') return;
-    if (joinedGameRef.current === gameId) return;
-
-    let cancelled = false;
-    void (async () => {
-      try {
-        await setPlayerStatus(uid, 'in_game', gameId);
-        const game = await fetchGame(gameId);
-        if (cancelled || !game?.state) return;
-        joinedGameRef.current = gameId;
-        onGameReady(gameId, game.state);
-      } catch (e) {
-        if (!cancelled) {
-          setError(e instanceof Error ? e.message : 'Could not join game');
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-    // onGameReady is stable enough via parent; omit to avoid cancel/retry loops
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lobby?.gameId, lobby?.status, uid]);
+  }, [uid, lobby?.gameId]);
 
   const others = useMemo(() => {
     const now = Date.now();
@@ -110,7 +134,7 @@ export function LobbyScreen({
     setBusy(true);
     setError(null);
     try {
-      const id = await createLobby(uid, displayName);
+      const id = await createLobby(uid, formatPlayerLabel(displayName, uid));
       setLobbyId(id);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not create lobby');
@@ -127,7 +151,7 @@ export function LobbyScreen({
     setBusy(true);
     setError(null);
     try {
-      await sendInvite(uid, displayName, toUid, lobbyId);
+      await sendInvite(uid, formatPlayerLabel(displayName, uid), toUid, lobbyId);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Invite failed');
     } finally {
@@ -141,7 +165,7 @@ export function LobbyScreen({
     try {
       await respondInvite(inviteId, true);
       if (data.lobbyId) {
-        await joinLobby(data.lobbyId, uid, displayName);
+        await joinLobby(data.lobbyId, uid, formatPlayerLabel(displayName, uid));
         setLobbyId(data.lobbyId);
       }
     } catch (e) {
@@ -156,8 +180,8 @@ export function LobbyScreen({
     setBusy(true);
     setError(null);
     try {
-      // Members (including host) enter via lobby.gameId listener
-      await startOnlineGameFromLobby(lobby);
+      const { gameId, state } = await startOnlineGameFromLobby(lobby);
+      await enterGame(gameId, state);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not start');
     } finally {
@@ -177,7 +201,8 @@ export function LobbyScreen({
       <div className="splash-content splash-content--wide lobby-screen">
         <h1 className="stencil-title">ONLINE LOBBY</h1>
         <p className="tagline">
-          Signed in as <strong>{displayName}</strong> · invite 1–4 others (2–5 total)
+          Signed in as <strong>{formatPlayerLabel(displayName, uid)}</strong> · invite 1–4
+          others (2–5 total)
         </p>
 
         {error && <p className="session-error">{error}</p>}
@@ -189,7 +214,8 @@ export function LobbyScreen({
               {others.map((p) => (
                 <li key={p.uid} className="lobby-row">
                   <span>
-                    <strong>{p.data.displayName}</strong>
+                    <strong>{formatPlayerLabel(p.data.displayName, p.uid)}</strong>
+                    <small className="player-id-tag">{shortPlayerId(p.uid)}</small>
                     <small
                       className={
                         p.data.status === 'in_game'
@@ -232,8 +258,9 @@ export function LobbyScreen({
                   {(lobby?.memberUids ?? []).map((id) => (
                     <li key={id} className="lobby-row">
                       <strong>
-                        {lobby?.memberNames[id] ?? id}
+                        {lobby?.memberNames[id] ?? formatPlayerLabel('Commander', id)}
                         {id === lobby?.hostUid ? ' (host)' : ''}
+                        {id === uid ? ' · you' : ''}
                       </strong>
                     </li>
                   ))}
