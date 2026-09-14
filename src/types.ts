@@ -147,6 +147,8 @@ export interface GameState {
   planningComplete?: boolean;
   /** Online: AI nations already bought/queued strikes for this round (runs at round start) */
   aiPlanningComplete?: boolean;
+  /** Epoch ms when aftermath ends and the next round (or finals) may start */
+  aftermathEndsAt?: number | null;
 }
 
 /** Firestore player presence doc */

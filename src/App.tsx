@@ -45,6 +45,7 @@ import {
   setPlayerStatus,
 } from './lib/session';
 import {
+  advanceOnlineRound,
   fetchGame,
   finishOnlineGame,
   incrementSuperpowerWin,
@@ -56,7 +57,7 @@ import {
   tryAcquireAiLock,
 } from './lib/multiplayer';
 import { applyRemoteGameSnapshot } from './lib/onlineSync';
-import { SELECTION_IDLE_MS } from './lib/onlineConstants';
+import { AFTERMATH_THINK_MS, ROUND_BANNER_MS, SELECTION_IDLE_MS } from './lib/onlineConstants';
 import { aftermathMyCityIds, aftermathWorldIds } from './lib/lobbyInvite';
 import { NameGate } from './screens/NameGate';
 import { LobbyScreen } from './screens/Lobby';
@@ -1350,6 +1351,7 @@ function GameBoard({
     if (resolvedRoundRef.current === state.round) return;
 
     let cancelled = false;
+    let peerPoll: number | undefined;
     const t = window.setTimeout(() => {
       void (async () => {
         if (cancelled) return;
@@ -1359,8 +1361,33 @@ function GameBoard({
             sessionUid,
             `resolve-${state.round}`,
           );
-          // Losers wait for the lock holder's push (roundSummary / next round)
-          if (!got || cancelled) return;
+          if (!got || cancelled) {
+            // Lock holder owns cinema + push — pull shared state so we don't miss the advance
+            const gameId = state.onlineGameId;
+            const pull = async () => {
+              if (cancelled) return;
+              const doc = await fetchGame(gameId);
+              if (!doc?.state || cancelled) return;
+              setState((prev) => {
+                if (prev.onlineGameId !== gameId) return prev;
+                const myId =
+                  sessionUid && prev.uidToNation?.[sessionUid]
+                    ? prev.uidToNation[sessionUid]
+                    : null;
+                return applyRemoteGameSnapshot(prev, doc.state, myId);
+              });
+            };
+            await pull();
+            // Keep pulling briefly in case the holder is still mid-cinema
+            peerPoll = window.setInterval(() => {
+              if (cancelled || stateRef.current.phase !== 'resolveStrikes') {
+                if (peerPoll) window.clearInterval(peerPoll);
+                return;
+              }
+              void pull();
+            }, 1200);
+            return;
+          }
         }
         if (resolvedRoundRef.current === state.round) return;
         setBusy(true);
@@ -1387,9 +1414,9 @@ function GameBoard({
         if (!cancelled) {
           if (resolved.mode === 'online' && resolved.onlineGameId) {
             if (resolved.phase === 'gameOver') {
-              void finishOnlineGame(resolved.onlineGameId, resolved, sessionUid ?? undefined);
+              await finishOnlineGame(resolved.onlineGameId, resolved, sessionUid ?? undefined);
             } else {
-              void pushGameState(resolved.onlineGameId, resolved, true);
+              await pushGameState(resolved.onlineGameId, resolved, true);
             }
           }
           setState(resolved);
@@ -1401,6 +1428,7 @@ function GameBoard({
     return () => {
       cancelled = true;
       window.clearTimeout(t);
+      if (peerPoll) window.clearInterval(peerPoll);
       setStrikeRecap(null);
       const resolveRecap = recapResolveRef.current;
       recapResolveRef.current = null;
@@ -1435,7 +1463,10 @@ function GameBoard({
   const researchCities = turn.cities.filter((c) => !c.destroyed && !c.hasResearch);
   const bombMax = maxBombsPurchasable(state, actorId);
   const selectedCityIds = targets.map((t) => t.cityId);
-  const pendingBombCityIds = state.pendingStrikes.map((s) => s.cityId);
+  // Fog of war: only show your own locked targets until simultaneous resolve
+  const pendingBombCityIds = state.pendingStrikes
+    .filter((s) => s.attackerId === actorId)
+    .map((s) => s.cityId);
 
   const allyIds = isOnline
     ? [actorId]
@@ -1953,16 +1984,20 @@ function RoundSummary({
   state,
   onContinue,
   sessionUid,
+  secondsLeft,
 }: {
   state: GameState;
   onContinue: () => void;
   sessionUid?: string | null;
+  /** Shared countdown until next round / finals (null = no auto timer). */
+  secondsLeft: number | null;
 }) {
   const destroyedCityIds = state.roundEvents
     .filter((e) => e.kind === 'cityDestroyed' || e.kind === 'shieldDestroyed')
     .map((e) => e.cityId)
     .filter((id): id is string => Boolean(id));
   const isOnline = state.mode === 'online';
+  const isFinal = state.round >= state.maxRounds;
   const myNationId =
     isOnline && sessionUid && state.uidToNation?.[sessionUid]
       ? state.uidToNation[sessionUid]
@@ -1979,6 +2014,14 @@ function RoundSummary({
   return (
     <div className="screen screen--board screen--round-report">
       <MapBackdrop />
+      {secondsLeft != null && (
+        <div className="aftermath-countdown" role="status" aria-live="polite">
+          {isFinal
+            ? `Final results in ${secondsLeft}s`
+            : `Next round starts in ${secondsLeft}s`}
+          <span className="aftermath-countdown__hint">Use this time to plan your strategy</span>
+        </div>
+      )}
       <div className="board-split round-report__split">
         <section className="board-left round-report__main">
           <header className="board-left__hud">
@@ -2087,19 +2130,18 @@ function RoundSummary({
               </div>
 
               <div className="round-report__actions">
-                {state.round >= state.maxRounds ? (
+                {secondsLeft != null ? (
+                  <p className="round-report__auto-hint">
+                    {isFinal
+                      ? `Final results in ${secondsLeft}s…`
+                      : `Round ${state.round + 1} starts in ${secondsLeft}s — study the board`}
+                  </p>
+                ) : isFinal ? (
                   <p className="round-report__auto-hint">Showing final results…</p>
                 ) : (
-                  <>
-                    <button className="btn btn--xl btn--primary" onClick={onContinue}>
-                      {`Start Round ${state.round + 1}`}
-                    </button>
-                    {isOnline && (
-                      <p className="round-report__auto-hint">
-                        Next round starts automatically for everyone…
-                      </p>
-                    )}
-                  </>
+                  <button className="btn btn--xl btn--primary" onClick={onContinue}>
+                    {`Start Round ${state.round + 1}`}
+                  </button>
                 )}
               </div>
             </div>
@@ -2287,23 +2329,45 @@ export default function App() {
   const advancingRoundRef = useRef(false);
   const lastRoundBannerRef = useRef(0);
   const [roundBanner, setRoundBanner] = useState<number | null>(null);
+  const [aftermathSecondsLeft, setAftermathSecondsLeft] = useState<number | null>(null);
   const [rematchBusy, setRematchBusy] = useState(false);
   const [rematchError, setRematchError] = useState<string | null>(null);
 
   const advanceFromRoundSummary = useCallback(() => {
     setState((s) => {
       if (s.phase !== 'roundSummary') return s;
+
+      // Online: every client runs the same transaction — first advances, all get R+1 back
+      if (s.mode === 'online' && s.onlineGameId) {
+        const gameId = s.onlineGameId;
+        const fromRound = s.round;
+        void advanceOnlineRound(gameId, fromRound).then((remote) => {
+          if (!remote) {
+            advancingRoundRef.current = false;
+            return;
+          }
+          // Think-time gate: another client / clock skew — keep waiting
+          if (remote.phase === 'roundSummary' && remote.round === fromRound) {
+            advancingRoundRef.current = false;
+            return;
+          }
+          if (remote.phase === 'gameOver') {
+            void finishOnlineGame(gameId, remote, sessionUid ?? undefined);
+          }
+          setState((cur) => {
+            if (cur.onlineGameId !== gameId) return cur;
+            const myId =
+              sessionUid && cur.uidToNation?.[sessionUid]
+                ? cur.uidToNation[sessionUid]
+                : null;
+            return applyRemoteGameSnapshot(cur, remote, myId);
+          });
+        });
+        return s;
+      }
+
       const n = nextRound(s);
-      if (n.phase === 'gameOver') {
-        if (n.mode === 'online' && n.onlineGameId) {
-          void finishOnlineGame(n.onlineGameId, n, sessionUid ?? undefined);
-        }
-        return n;
-      }
-      if (n.mode === 'online' && n.onlineGameId) {
-        void pushGameState(n.onlineGameId, n, true);
-        return n;
-      }
+      if (n.phase === 'gameOver') return n;
       return advancePastAi(n);
     });
   }, [advancePastAi, sessionUid]);
@@ -2332,53 +2396,44 @@ export default function App() {
 
   useEffect(() => {
     if (roundBanner == null) return;
-    const t = window.setTimeout(() => setRoundBanner(null), 3000);
+    const t = window.setTimeout(() => setRoundBanner(null), ROUND_BANNER_MS);
     return () => window.clearTimeout(t);
   }, [roundBanner]);
 
-  // Auto-advance aftermath: next round, or final results → game over
+  // Ensure aftermath has a shared end time (covers offline / older snapshots)
+  useEffect(() => {
+    if (state.phase !== 'roundSummary') return;
+    if (state.aftermathEndsAt) return;
+    setState((s) => {
+      if (s.phase !== 'roundSummary' || s.aftermathEndsAt) return s;
+      return { ...s, aftermathEndsAt: Date.now() + AFTERMATH_THINK_MS };
+    });
+  }, [state.phase, state.aftermathEndsAt, state.round]);
+
+  // Aftermath countdown + auto-advance into next round / finals
   useEffect(() => {
     if (state.phase !== 'roundSummary') {
       advancingRoundRef.current = false;
+      setAftermathSecondsLeft(null);
       return;
     }
-    const isFinal = state.round >= state.maxRounds;
-    if (state.mode === 'online') {
-      if (!state.onlineGameId || !sessionUid) return;
-      if (advancingRoundRef.current) return;
+    const endsAt = state.aftermathEndsAt ?? Date.now() + AFTERMATH_THINK_MS;
 
-      let cancelled = false;
-      const t = window.setTimeout(() => {
-        void (async () => {
-          if (cancelled || advancingRoundRef.current) return;
-          const got = await tryAcquireAiLock(
-            state.onlineGameId!,
-            sessionUid,
-            `next-${state.round}`,
-          );
-          if (!got || cancelled) return;
-          advancingRoundRef.current = true;
-          advanceFromRoundSummary();
-        })();
-      }, isFinal ? 1200 : 900);
+    const tick = () => {
+      const left = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
+      setAftermathSecondsLeft(left);
+      if (left > 0 || advancingRoundRef.current) return;
+      advancingRoundRef.current = true;
+      advanceFromRoundSummary();
+    };
 
-      return () => {
-        cancelled = true;
-        window.clearTimeout(t);
-      };
-    }
-
-    // Offline: still auto-show final results; mid-rounds need the Continue button
-    if (!isFinal) return;
-    const t = window.setTimeout(() => advanceFromRoundSummary(), 1200);
-    return () => window.clearTimeout(t);
+    tick();
+    const id = window.setInterval(tick, 250);
+    return () => window.clearInterval(id);
   }, [
     state.phase,
-    state.mode,
-    state.onlineGameId,
+    state.aftermathEndsAt,
     state.round,
-    state.maxRounds,
-    sessionUid,
     advanceFromRoundSummary,
   ]);
 
@@ -2573,6 +2628,7 @@ export default function App() {
         <RoundSummary
           state={state}
           sessionUid={sessionUid}
+          secondsLeft={aftermathSecondsLeft}
           onContinue={advanceFromRoundSummary}
         />
       )}

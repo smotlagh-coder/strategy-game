@@ -501,4 +501,41 @@ describe('3-player online simulation', () => {
     expect(allAliveHumansReady(s)).toBe(true);
     expect(s.nations[state.uidToNation![c] as NationId].eliminated).toBe(true);
   });
+
+  it('late peers still on roundSummary all adopt round 2 from shared advance', () => {
+    const { state, uids } = makeThreePlayerGame();
+    const room = new SimRoom(state, uids);
+    for (const uid of uids) {
+      const local = completeSelections(room.clients[uid], room.nationFor(uid));
+      room.clients[uid] = local;
+      room.push(uid, local);
+    }
+
+    let summary = room.shared;
+    if (summary.phase === 'resolveStrikes') summary = finishStrikeResolution(summary);
+    expect(summary.phase).toBe('roundSummary');
+    room.shared = summary;
+    for (const uid of uids) {
+      room.clients[uid] = applyRemoteGameSnapshot(
+        room.clients[uid],
+        room.shared,
+        room.nationFor(uid),
+      );
+    }
+
+    // First client advances the shared room (transaction winner)
+    room.shared = nextRound(summary);
+
+    // Every other client — still looking at local roundSummary — adopts R2
+    for (const uid of uids) {
+      expect(room.clients[uid].phase).toBe('roundSummary');
+      room.clients[uid] = applyRemoteGameSnapshot(
+        room.clients[uid],
+        room.shared,
+        room.nationFor(uid),
+      );
+      expect(room.clients[uid].round).toBe(2);
+      expect(room.clients[uid].phase).toBe('buy');
+    }
+  });
 });

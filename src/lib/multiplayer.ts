@@ -15,7 +15,7 @@ import {
 } from 'firebase/firestore';
 import { getDb, isFirebaseConfigured } from './firebase';
 import { setPlayerStatus } from './session';
-import { createInitialState, beginHumanPlanning, forfeitNation, allAliveHumansReady } from '../game/engine';
+import { createInitialState, beginHumanPlanning, forfeitNation, allAliveHumansReady, nextRound } from '../game/engine';
 import { finishOnlineHumanPlanning, runOnlineAiPlanning } from '../game/ai';
 import { NATIONS, nationDef } from '../data/nations';
 import {
@@ -416,6 +416,45 @@ export async function pushGameState(gameId: string, state: GameState, clearAiLoc
   await updateDoc(doc(getDb(), 'games', gameId), patch);
 }
 
+/**
+ * Advance past roundSummary in a transaction so EVERY caller gets the new state.
+ * First writer runs nextRound; later callers receive the already-advanced doc
+ * (no one-shot lock that only the winner "consumes").
+ */
+export async function advanceOnlineRound(
+  gameId: string,
+  fromRound: number,
+): Promise<GameState | null> {
+  const ref = doc(getDb(), 'games', gameId);
+  return runTransaction(getDb(), async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return null;
+    const game = snap.data() as OnlineGameDoc;
+    const remote = game.state;
+
+    // Already past this aftermath — hand every client the authoritative state
+    if (remote.round > fromRound || remote.phase === 'gameOver') {
+      return remote;
+    }
+    if (remote.phase !== 'roundSummary' || remote.round !== fromRound) {
+      return remote;
+    }
+    // Respect shared think-time so one early client cannot skip strategy for everyone
+    if (remote.aftermathEndsAt && Date.now() < remote.aftermathEndsAt - 250) {
+      return remote;
+    }
+
+    const next = nextRound(remote);
+    tx.update(ref, {
+      state: stripUndefined(next),
+      updatedAt: Date.now(),
+      aiLock: null,
+      status: next.phase === 'gameOver' ? 'finished' : 'active',
+    });
+    return next;
+  });
+}
+
 const humanPushQueues = new Map<string, Promise<unknown>>();
 
 /** Serialize planning writes so an older in-flight push cannot clobber a newer one. */
@@ -504,7 +543,7 @@ export async function kickIdleHumanFromGame(
   });
 }
 
-/** First writer wins AI lock for this turn index. */
+/** First writer wins AI lock for this turn key. Returns false if another uid holds it. */
 export async function tryAcquireAiLock(
   gameId: string,
   uid: string,
@@ -515,10 +554,13 @@ export async function tryAcquireAiLock(
     const snap = await tx.get(ref);
     if (!snap.exists()) return false;
     const game = snap.data() as OnlineGameDoc;
-    if (game.aiLock && game.aiLock !== `${turnKey}:${uid}`) {
-      if (game.aiLock.startsWith(`${turnKey}:`)) return game.aiLock === `${turnKey}:${uid}`;
+    const mine = `${turnKey}:${uid}`;
+    if (game.aiLock === mine) return true;
+    if (game.aiLock && game.aiLock.startsWith(`${turnKey}:`)) {
+      return false;
     }
-    tx.update(ref, { aiLock: `${turnKey}:${uid}` });
+    // Different key (or empty): take the lock for this step
+    tx.update(ref, { aiLock: mine });
     return true;
   });
 }

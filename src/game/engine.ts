@@ -13,6 +13,7 @@ import {
   nationDef,
 } from '../data/nations';
 import { displayNameOnly } from '../lib/session';
+import { AFTERMATH_THINK_MS } from '../lib/onlineConstants';
 import type {
   GameMode,
   GameState,
@@ -70,6 +71,7 @@ export function createInitialState(): GameState {
     humanLastActive: {},
     planningComplete: false,
     aiPlanningComplete: false,
+    aftermathEndsAt: null,
   };
 }
 
@@ -209,6 +211,7 @@ export function concludeRoundTurns(state: GameState): GameState {
     phase: 'roundSummary',
     roundScores: scores,
     scoreHistory: [...next.scoreHistory, scores],
+    aftermathEndsAt: Date.now() + AFTERMATH_THINK_MS,
     log: [...next.log, log(`Round ${next.round} complete. Standing scores updated.`, 'neutral')],
   };
 }
@@ -756,7 +759,7 @@ export function queueStrike(
     log: [
       ...state.log,
       log(
-        `${nationDef(attackerId).name} locked targeting on ${city.name} (${nationDef(targetNation).name}).`,
+        `${nationDef(attackerId).name} locked in strike orders.`,
         'attack',
       ),
     ],
@@ -853,6 +856,7 @@ export function finishStrikeResolution(state: GameState): GameState {
     phase: 'roundSummary',
     roundScores: scores,
     scoreHistory: [...next.scoreHistory, scores],
+    aftermathEndsAt: Date.now() + AFTERMATH_THINK_MS,
     log: [...next.log, log(`Round ${next.round} complete. Standing scores updated.`, 'neutral')],
   });
   return next;
@@ -946,6 +950,7 @@ export function nextRound(state: GameState): GameState {
     nations: clearedNations,
     pendingStrikes: [],
     roundEvents: [],
+    aftermathEndsAt: null,
     log: [...state.log, log(`Round ${nextRoundNum} begins.`, 'neutral')],
   };
   next = beginHumanPlanning(next);

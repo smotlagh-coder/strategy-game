@@ -2144,6 +2144,38 @@ img { max-width: 100%; display: block; }
   text-align: center;
 }
 
+.aftermath-countdown {
+  position: relative;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.55rem 0.85rem 0.6rem;
+  text-align: center;
+  font-family: var(--stencil);
+  font-size: clamp(1.05rem, 3.6vw, 1.45rem);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #f4f8ff;
+  background: linear-gradient(
+    180deg,
+    rgba(8, 22, 44, 0.96),
+    rgba(6, 14, 28, 0.9)
+  );
+  border-bottom: 1px solid rgba(120, 190, 255, 0.35);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+}
+
+.aftermath-countdown__hint {
+  font-family: var(--body);
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--muted);
+  opacity: 0.95;
+}
+
 .your-cities {
   display: flex;
   flex-direction: column;
