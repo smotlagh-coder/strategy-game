@@ -4,6 +4,12 @@ Strategy game for **Kian** — turn-based nuclear strategy for **1–5 players**
 
 Repo: [smotlagh-coder/strategy-game](https://github.com/smotlagh-coder/strategy-game)
 
+**Current GCP / Firebase project:** `personal-planner-api`  
+**Firestore database (Native):** `nuclear-war`  
+**App URL (after deploy):** `https://personal-planner-api.uc.r.appspot.com`
+
+---
+
 ## Rules
 
 | Item | Cost / Effect |
@@ -25,25 +31,94 @@ Each nation has **3 cities**. Unshielded hit = city destroyed. Lose all 3 cities
 
 Strikes are queued during turns and resolve together at round end. Survival score awards **10 pts × cities still standing** each round.
 
-## Run
+---
+
+## Prerequisites
+
+Install once on your Mac:
 
 ```bash
+# Node (LTS)
+brew install node
+
+# Google Cloud CLI
+brew install --cask google-cloud-sdk
+gcloud auth login
+gcloud config set project personal-planner-api
+
+# Firebase CLI
+npm install -g firebase-tools
+firebase login
+
+# GitHub CLI (for secrets / PRs)
+brew install gh
+gh auth login
+```
+
+---
+
+## Local development
+
+```bash
+cd NuclearWar
 npm install
-cp .env.example .env   # fill Firebase web config for online play
+cp .env.example .env   # then fill values (see Firebase section)
 npm run dev
 ```
 
-Open the local URL Vite prints (usually `http://localhost:5173`).
+Open the URL Vite prints (usually `http://localhost:5173`).
 
-Without Firebase env vars, **Single** and **Hot-seat** still work; **Online Multiplayer** stays disabled.
+Without Firebase env vars, **Single** and **Hot-seat** still work; **Online Multiplayer** stays disabled. Restart `npm run dev` after changing `.env`.
 
-## Firebase (online multiplayer)
+---
 
-Used for sessions, presence, invites, live games, and the superpower leaderboard.
+## Full setup (do this again from scratch)
 
-1. Create a Firebase project (or use GCP project `personal-planner-api`).
-2. Enable **Anonymous Authentication**.
-3. If the project’s default DB is Datastore mode (common for older apps), create a **Native** database named `nuclear-war`:
+Use one GCP project for App Engine + Firebase. This repo is wired to **`personal-planner-api`**.
+
+### 1. Enable Firebase on the GCP project
+
+1. Open [Firebase Console](https://console.firebase.google.com/) → **Add project** → use existing GCP project `personal-planner-api` (or create a new one).
+2. Upgrade the project to **Blaze** (pay-as-you-go) so Auth/Firestore work in production.
+3. In GCP Billing, set **budget alerts** at **$5** and **$20**. Light family usage should stay near **$0**/mo inside free quotas.
+
+### 2. Register a Web app and get config
+
+```bash
+firebase use personal-planner-api
+
+# List apps (or create one in Console: Project settings → Your apps → Web)
+firebase apps:list --project=personal-planner-api
+
+# Print web SDK config (replace APP_ID with the real id, e.g. 1:…:web:…)
+firebase apps:sdkconfig WEB YOUR_APP_ID --project=personal-planner-api
+```
+
+Do **not** leave `APP_ID` / `$PROJECT_ID` as literal placeholders — that fails with “Failed to get WEB app configuration.”
+
+Write values into `.env` (gitignored):
+
+```bash
+VITE_FIREBASE_API_KEY=…
+VITE_FIREBASE_AUTH_DOMAIN=personal-planner-api.firebaseapp.com
+VITE_FIREBASE_PROJECT_ID=personal-planner-api
+VITE_FIREBASE_STORAGE_BUCKET=personal-planner-api.firebasestorage.app
+VITE_FIREBASE_MESSAGING_SENDER_ID=…
+VITE_FIREBASE_APP_ID=1:…:web:…
+VITE_FIREBASE_FIRESTORE_DATABASE=nuclear-war
+```
+
+See `.env.example` for the full key list.
+
+### 3. Enable Anonymous Authentication
+
+Firebase Console → **Build → Authentication → Sign-in method** → enable **Anonymous**.
+
+### 4. Cloud Firestore (Native mode)
+
+This app needs **Firestore Native mode**. The Firebase CLI **cannot** manage a project whose **default** database is **Datastore mode**.
+
+`personal-planner-api` already had Datastore-mode `(default)`, so we use a **second** Native database named **`nuclear-war`**:
 
 ```bash
 gcloud firestore databases create \
@@ -53,43 +128,103 @@ gcloud firestore databases create \
   --project=personal-planner-api
 ```
 
-4. Deploy rules from the repo root:
+- Region is permanent for that database — pick one and keep it.
+- The app defaults to database id `nuclear-war` (`src/lib/firebase.ts` + `VITE_FIREBASE_FIRESTORE_DATABASE`).
+- `firebase.json` deploys rules to database `nuclear-war`.
 
-```bash
-firebase deploy --only firestore:rules
+**If you start a brand-new Firebase project** with no existing DB: create Firestore in **Native** mode as `(default)`, set `VITE_FIREBASE_FIRESTORE_DATABASE=(default)`, and change `firebase.json` to the default database (or a single `"rules": "firestore.rules"` entry).
+
+**Error you may see** (and the fix above):
+
+```text
+This project is using Cloud Firestore in DATASTORE_MODE.
+The Firebase CLI can only manage projects using Cloud Firestore in Native mode.
 ```
 
-4. Copy the web app config into `.env` (`VITE_FIREBASE_*` — see `.env.example`).
-5. Enable **Blaze** (pay-as-you-go) so Auth/Firestore work in production; set GCP **budget alerts** at $5 and $20. Light family usage should stay near **$0**/mo inside free quotas.
+### 5. Deploy security rules
 
-### Online flow
+From the repo root (`.firebaserc` already points at `personal-planner-api`):
 
-1. Enter commander name (stored in session / `localStorage`).
+```bash
+firebase deploy --only firestore:rules --project=personal-planner-api
+```
+
+Rules live in `firestore.rules`.
+
+### 6. App Engine (host the game)
+
+Once per GCP project:
+
+```bash
+gcloud config set project personal-planner-api
+gcloud app create --region=us-central1   # skip if App Engine already exists
+```
+
+Create a deploy service account (or reuse one) with roles:
+
+- **App Engine Admin** (`roles/appengine.appAdmin`)
+- **Storage Admin** (`roles/storage.admin`) — staging uploads
+
+```bash
+# Example — adjust names as needed
+gcloud iam service-accounts create github-deploy \
+  --display-name="GitHub Actions App Engine deploy"
+
+gcloud projects add-iam-policy-binding personal-planner-api \
+  --member="serviceAccount:github-deploy@personal-planner-api.iam.gserviceaccount.com" \
+  --role="roles/appengine.appAdmin"
+
+gcloud projects add-iam-policy-binding personal-planner-api \
+  --member="serviceAccount:github-deploy@personal-planner-api.iam.gserviceaccount.com" \
+  --role="roles/storage.admin"
+
+gcloud iam service-accounts keys create ./gcloud-service-key.json \
+  --iam-account=github-deploy@personal-planner-api.iam.gserviceaccount.com
+
+base64 -i gcloud-service-key.json | pbcopy   # macOS — paste into GitHub secret
+rm gcloud-service-key.json                  # do not commit the key
+```
+
+### 7. GitHub Actions secrets
+
+Repo → **Settings → Secrets and variables → Actions** (or via `gh`):
+
+```bash
+# GCP deploy
+gh secret set GCLOUD_PROJECT_ID --body "personal-planner-api"
+gh secret set GCLOUD_SERVICE_KEY   # paste base64 when prompted
+
+# Firebase client config (same values as .env)
+gh secret set VITE_FIREBASE_API_KEY
+gh secret set VITE_FIREBASE_AUTH_DOMAIN
+gh secret set VITE_FIREBASE_PROJECT_ID
+gh secret set VITE_FIREBASE_STORAGE_BUCKET
+gh secret set VITE_FIREBASE_MESSAGING_SENDER_ID
+gh secret set VITE_FIREBASE_APP_ID
+gh secret set VITE_FIREBASE_FIRESTORE_DATABASE --body "nuclear-war"
+```
+
+Workflow: `.github/workflows/deploy-app-engine.yml`  
+- Writes `.env` from secrets before App Engine build  
+- Deploys with `gcloud app deploy app.yaml`
+
+### 8. Deploy
+
+Push to `main`, or **Actions → Deploy to GCP App Engine → Run workflow**.
+
+App Engine runs `gcp-build` (`npm run build`) then `npm start` (serves `dist` on `$PORT`).
+
+---
+
+## Online multiplayer flow
+
+1. Enter commander name (session / `localStorage`).
 2. Choose **Online Multiplayer** → lobby.
-3. Create a lobby, invite available players (2–5 humans). Players **In game** are marked and not inviteable.
+3. Create a lobby, invite available players (2–5 humans). Players **In game** are not inviteable.
 4. Host starts → nations assigned, AI fills empty seats → shared Firestore game sync.
 5. Wins increment the superpower **Leaderboard**.
 
-## Deploy (GCP App Engine)
-
-Pushes to `main` (or a manual **Actions → Deploy to GCP App Engine** run) build and deploy via GitHub Actions.
-
-Auth matches the Personal-planner GCP pattern: a base64 service-account key plus project id.
-
-### One-time setup
-
-1. In GCP, create/select a project and enable **App Engine** (`gcloud app create --region=us-central1` if needed).
-2. Create a service account with **App Engine Admin** and **Storage Admin** (for staging uploads), and download a JSON key.
-3. In the GitHub repo → **Settings → Secrets and variables → Actions**, add:
-   - `GCLOUD_PROJECT_ID` — your GCP project id
-   - `GCLOUD_SERVICE_KEY` — the service-account JSON, base64-encoded:
-
-```bash
-base64 -i service-account.json | pbcopy   # macOS
-```
-
-4. For production online play, also set the `VITE_FIREBASE_*` values in the GitHub Actions build (repository variables or secrets) so the client bundle includes Firebase config.
-5. Push to `main` (or run the workflow manually). App Engine runs `gcp-build` (`npm run build`) then `npm start` (serves `dist` on `$PORT`).
+---
 
 ## Play flow
 
@@ -98,3 +233,17 @@ base64 -i service-account.json | pbcopy   # macOS
 3. Pick nation(s) / invite players
 4. Each turn: answer purchase prompts (tech, research, bombs, shield, environment, sanctions), then lock strike targets
 5. After all nations act, watch simultaneous strikes, review treasury + scores on the aftermath board
+
+---
+
+## Troubleshooting
+
+| Symptom | Likely cause / fix |
+|---|---|
+| Online mode disabled / Firebase errors | Missing or stale `.env`; restart Vite after edits |
+| `DATASTORE_MODE` on `firebase deploy` | Default DB is Datastore; use Native DB `nuclear-war` (see §4) |
+| `Failed to get WEB app configuration` | Used placeholder `APP_ID`; pass real `1:…:web:…` id |
+| `gh: command not found` | `brew install gh` then `gh auth login` |
+| Deploy fails missing GCLOUD_* | Set `GCLOUD_PROJECT_ID` + base64 `GCLOUD_SERVICE_KEY` |
+| Production online broken, local OK | GitHub `VITE_FIREBASE_*` secrets missing from Actions build |
+| Auth fails in browser | Anonymous sign-in not enabled in Firebase Console |
