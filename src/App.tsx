@@ -1392,15 +1392,6 @@ function GameBoard({
         if (resolvedRoundRef.current === state.round) return;
         setBusy(true);
         const strikes = [...stateRef.current.pendingStrikes];
-        for (const strike of strikes) {
-          if (cancelled) break;
-          await playStrikeCinema(strike.attackerId, strike.targetNationId, strike.cityId);
-        }
-        if (cancelled) {
-          setBusy(false);
-          return;
-        }
-
         let resolved = stateRef.current;
         if (resolved.phase !== 'resolveStrikes') {
           setBusy(false);
@@ -1410,15 +1401,28 @@ function GameBoard({
         resolved = finishStrikeResolution(resolved);
         resolvedRoundRef.current = state.round;
 
-        await playStrikeRecap(resolved.roundEvents);
-        if (!cancelled) {
-          if (resolved.mode === 'online' && resolved.onlineGameId) {
+        // Publish aftermath immediately so peers see the strategy timer
+        // even while this client is still playing cinema / recap.
+        if (resolved.mode === 'online' && resolved.onlineGameId) {
+          try {
             if (resolved.phase === 'gameOver') {
               await finishOnlineGame(resolved.onlineGameId, resolved, sessionUid ?? undefined);
             } else {
               await pushGameState(resolved.onlineGameId, resolved, true);
             }
+          } catch (err) {
+            console.error('failed to publish aftermath', err);
           }
+        }
+
+        for (const strike of strikes) {
+          if (cancelled) break;
+          await playStrikeCinema(strike.attackerId, strike.targetNationId, strike.cityId);
+        }
+        if (!cancelled) {
+          await playStrikeRecap(resolved.roundEvents);
+        }
+        if (!cancelled) {
           setState(resolved);
         }
         setBusy(false);
@@ -1984,14 +1988,39 @@ function RoundSummary({
   state,
   onContinue,
   sessionUid,
-  secondsLeft,
 }: {
   state: GameState;
   onContinue: () => void;
   sessionUid?: string | null;
-  /** Shared countdown until next round / finals (null = no auto timer). */
-  secondsLeft: number | null;
 }) {
+  const endsAtRef = useRef(
+    state.aftermathEndsAt ?? Date.now() + AFTERMATH_THINK_MS,
+  );
+  if (
+    state.aftermathEndsAt != null &&
+    (endsAtRef.current == null || state.aftermathEndsAt < endsAtRef.current)
+  ) {
+    endsAtRef.current = state.aftermathEndsAt;
+  }
+  const [secondsLeft, setSecondsLeft] = useState(() =>
+    Math.max(0, Math.ceil((endsAtRef.current - Date.now()) / 1000)),
+  );
+  const continueOnceRef = useRef(false);
+
+  useEffect(() => {
+    continueOnceRef.current = false;
+    const tick = () => {
+      const left = Math.max(0, Math.ceil((endsAtRef.current - Date.now()) / 1000));
+      setSecondsLeft(left);
+      if (left > 0 || continueOnceRef.current) return;
+      continueOnceRef.current = true;
+      onContinue();
+    };
+    tick();
+    const id = window.setInterval(tick, 250);
+    return () => window.clearInterval(id);
+  }, [state.round, state.aftermathEndsAt, onContinue]);
+
   const destroyedCityIds = state.roundEvents
     .filter((e) => e.kind === 'cityDestroyed' || e.kind === 'shieldDestroyed')
     .map((e) => e.cityId)
@@ -2014,14 +2043,12 @@ function RoundSummary({
   return (
     <div className="screen screen--board screen--round-report">
       <MapBackdrop />
-      {secondsLeft != null && (
-        <div className="aftermath-countdown" role="status" aria-live="polite">
-          {isFinal
-            ? `Final results in ${secondsLeft} ${secondsLeft === 1 ? 'second' : 'seconds'}`
-            : `Next round starts in ${secondsLeft} ${secondsLeft === 1 ? 'second' : 'seconds'}`}
-          <span className="aftermath-countdown__hint">Use this time to plan your strategy</span>
-        </div>
-      )}
+      <div className="aftermath-countdown" role="status" aria-live="polite">
+        {isFinal
+          ? `Final results in ${secondsLeft} ${secondsLeft === 1 ? 'second' : 'seconds'}`
+          : `Next round starts in ${secondsLeft} ${secondsLeft === 1 ? 'second' : 'seconds'}`}
+        <span className="aftermath-countdown__hint">Use this time to plan your strategy</span>
+      </div>
       <div className="board-split round-report__split">
         <section className="board-left round-report__main">
           <header className="board-left__hud">
@@ -2130,19 +2157,11 @@ function RoundSummary({
               </div>
 
               <div className="round-report__actions">
-                {secondsLeft != null ? (
-                  <p className="round-report__auto-hint">
-                    {isFinal
-                      ? `Final results in ${secondsLeft} ${secondsLeft === 1 ? 'second' : 'seconds'}…`
-                      : `Round ${state.round + 1} starts in ${secondsLeft} ${secondsLeft === 1 ? 'second' : 'seconds'} — study the board`}
-                  </p>
-                ) : isFinal ? (
-                  <p className="round-report__auto-hint">Showing final results…</p>
-                ) : (
-                  <button className="btn btn--xl btn--primary" onClick={onContinue}>
-                    {`Start Round ${state.round + 1}`}
-                  </button>
-                )}
+                <p className="round-report__auto-hint">
+                  {isFinal
+                    ? `Final results in ${secondsLeft} ${secondsLeft === 1 ? 'second' : 'seconds'}…`
+                    : `Round ${state.round + 1} starts in ${secondsLeft} ${secondsLeft === 1 ? 'second' : 'seconds'} — study the board`}
+                </p>
               </div>
             </div>
           </div>
@@ -2326,100 +2345,62 @@ export default function App() {
   const [sessionLoading, setSessionLoading] = useState(false);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const advancePastAi = useCallback((s: GameState) => runAllAiUntilHumanOrSummary(s), []);
-  const advancingRoundRef = useRef(false);
-  const aftermathEndsAtRef = useRef<number | null>(null);
   const appStateRef = useRef(state);
   appStateRef.current = state;
-  const advanceFromRoundSummaryRef = useRef<() => Promise<boolean>>(async () => false);
   const lastRoundBannerRef = useRef(0);
   const [roundBanner, setRoundBanner] = useState<number | null>(null);
-  const [aftermathSecondsLeft, setAftermathSecondsLeft] = useState<number | null>(null);
   const [rematchBusy, setRematchBusy] = useState(false);
   const [rematchError, setRematchError] = useState<string | null>(null);
 
-  const advanceFromRoundSummary = useCallback(async () => {
+  const advanceFromRoundSummary = useCallback(() => {
     const current = appStateRef.current;
-    if (current.phase !== 'roundSummary') return false;
+    if (current.phase !== 'roundSummary') return;
+
+    const n = nextRound(current);
+    // Leave aftermath immediately so this client cannot sit on "0 seconds"
+    setState((cur) => {
+      if (cur.phase !== 'roundSummary') return cur;
+      if (cur.mode === 'online') return n;
+      if (n.phase === 'gameOver') return n;
+      return advancePastAi(n);
+    });
 
     if (current.mode === 'online' && current.onlineGameId) {
       const gameId = current.onlineGameId;
       const fromRound = current.round;
-      try {
-        const remote = await advanceOnlineRound(gameId, fromRound);
-        if (!remote) return false;
-        // Server already moved on — adopt it
-        if (remote.round > fromRound || remote.phase === 'gameOver' || remote.phase === 'buy') {
-          if (remote.phase === 'gameOver') {
-            void finishOnlineGame(gameId, remote, sessionUid ?? undefined);
+      void (async () => {
+        try {
+          const remote = await advanceOnlineRound(gameId, fromRound);
+          if (
+            remote &&
+            (remote.round > fromRound ||
+              remote.phase === 'gameOver' ||
+              (remote.phase === 'buy' && remote.round !== fromRound))
+          ) {
+            if (remote.phase === 'gameOver') {
+              void finishOnlineGame(gameId, remote, sessionUid ?? undefined);
+            }
+            setState((cur) => {
+              if (cur.onlineGameId !== gameId) return cur;
+              const myId =
+                sessionUid && cur.uidToNation?.[sessionUid]
+                  ? cur.uidToNation[sessionUid]
+                  : null;
+              return applyRemoteGameSnapshot(cur, remote, myId);
+            });
+            return;
           }
-          setState((cur) => {
-            if (cur.onlineGameId !== gameId) return cur;
-            const myId =
-              sessionUid && cur.uidToNation?.[sessionUid]
-                ? cur.uidToNation[sessionUid]
-                : null;
-            return applyRemoteGameSnapshot(cur, remote, myId);
-          });
-          return true;
-        }
-        // Still on this aftermath in Firestore — advance locally and push
-        if (remote.phase === 'roundSummary' && remote.round === fromRound) {
-          const n = nextRound(remote);
-          try {
-            await pushGameState(gameId, n, true);
-          } catch (err) {
-            console.error('pushGameState after nextRound failed', err);
-            // Still move this client forward so we don't soft-lock at 0s
-          }
+          await pushGameState(gameId, n, true);
           if (n.phase === 'gameOver') {
             void finishOnlineGame(gameId, n, sessionUid ?? undefined);
           }
-          setState((cur) => {
-            if (cur.onlineGameId !== gameId) return cur;
-            const myId =
-              sessionUid && cur.uidToNation?.[sessionUid]
-                ? cur.uidToNation[sessionUid]
-                : null;
-            return applyRemoteGameSnapshot(cur, n, myId);
-          });
-          return true;
+        } catch (err) {
+          console.error('advance after aftermath failed', err);
+          void pushGameState(gameId, n, true).catch(() => undefined);
         }
-        // Unexpected phase — adopt whatever the server has
-        setState((cur) => {
-          if (cur.onlineGameId !== gameId) return cur;
-          const myId =
-            sessionUid && cur.uidToNation?.[sessionUid]
-              ? cur.uidToNation[sessionUid]
-              : null;
-          return applyRemoteGameSnapshot(cur, remote, myId);
-        });
-        return remote.phase !== 'roundSummary';
-      } catch (err) {
-        console.error('advanceOnlineRound failed, falling back to local nextRound', err);
-        const n = nextRound(current);
-        try {
-          await pushGameState(gameId, n, true);
-        } catch (pushErr) {
-          console.error('fallback pushGameState failed', pushErr);
-        }
-        setState((cur) => {
-          if (cur.phase !== 'roundSummary') return cur;
-          if (n.phase === 'gameOver') return n;
-          return n;
-        });
-        return true;
-      }
+      })();
     }
-
-    setState((s) => {
-      if (s.phase !== 'roundSummary') return s;
-      const n = nextRound(s);
-      if (n.phase === 'gameOver') return n;
-      return advancePastAi(n);
-    });
-    return true;
   }, [advancePastAi, sessionUid]);
-  advanceFromRoundSummaryRef.current = advanceFromRoundSummary;
 
   // Brief "Round X" overlay whenever a new round of play begins
   useEffect(() => {
@@ -2448,80 +2429,6 @@ export default function App() {
     const t = window.setTimeout(() => setRoundBanner(null), ROUND_BANNER_MS);
     return () => window.clearTimeout(t);
   }, [roundBanner]);
-
-  // Ensure aftermath has a shared end time (covers offline / older snapshots)
-  useEffect(() => {
-    if (state.phase !== 'roundSummary') return;
-    if (state.aftermathEndsAt) return;
-    setState((s) => {
-      if (s.phase !== 'roundSummary' || s.aftermathEndsAt) return s;
-      return { ...s, aftermathEndsAt: Date.now() + AFTERMATH_THINK_MS };
-    });
-  }, [state.phase, state.aftermathEndsAt, state.round]);
-
-  // Aftermath countdown + auto-advance into next round / finals
-  useEffect(() => {
-    if (state.phase !== 'roundSummary') {
-      advancingRoundRef.current = false;
-      aftermathEndsAtRef.current = null;
-      setAftermathSecondsLeft(null);
-      return;
-    }
-
-    // Pin endsAt once for this aftermath; prefer shared time, never extend the wait
-    if (state.aftermathEndsAt != null) {
-      if (
-        aftermathEndsAtRef.current == null ||
-        state.aftermathEndsAt < aftermathEndsAtRef.current
-      ) {
-        aftermathEndsAtRef.current = state.aftermathEndsAt;
-      }
-    } else if (aftermathEndsAtRef.current == null) {
-      aftermathEndsAtRef.current = Date.now() + AFTERMATH_THINK_MS;
-    }
-    const endsAt = aftermathEndsAtRef.current;
-
-    let cancelled = false;
-    const tick = () => {
-      if (cancelled) return;
-      const left = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
-      setAftermathSecondsLeft(left);
-      if (left > 0) return;
-      if (advancingRoundRef.current) return;
-      advancingRoundRef.current = true;
-      void advanceFromRoundSummaryRef
-        .current()
-        .then((ok) => {
-          // Always clear the in-flight lock so a cancelled effect / failed
-          // advance cannot soft-lock the board at "0 seconds"
-          advancingRoundRef.current = false;
-          if (!ok && !cancelled && appStateRef.current.phase === 'roundSummary') {
-            // Last-resort local unstick
-            setState((s) => {
-              if (s.phase !== 'roundSummary') return s;
-              const n = nextRound(s);
-              if (s.mode === 'online' && s.onlineGameId) {
-                void pushGameState(s.onlineGameId, n, true).catch(() => undefined);
-              }
-              if (n.phase === 'gameOver') return n;
-              return s.mode === 'online' ? n : advancePastAi(n);
-            });
-          }
-        })
-        .catch(() => {
-          advancingRoundRef.current = false;
-        });
-    };
-
-    tick();
-    const id = window.setInterval(tick, 400);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-      // Allow a fresh effect to advance if this one was torn down mid-flight
-      advancingRoundRef.current = false;
-    };
-  }, [state.phase, state.aftermathEndsAt, state.round, advancePastAi]);
 
   // Online game listener — preserve local nation while still planning
   useEffect(() => {
@@ -2714,7 +2621,6 @@ export default function App() {
         <RoundSummary
           state={state}
           sessionUid={sessionUid}
-          secondsLeft={aftermathSecondsLeft}
           onContinue={advanceFromRoundSummary}
         />
       )}

@@ -538,4 +538,29 @@ describe('3-player online simulation', () => {
       expect(room.clients[uid].phase).toBe('buy');
     }
   });
+
+  it('peer still resolving adopts published aftermath and shared strategy timer', () => {
+    const { state, uids } = makeThreePlayerGame();
+    const room = new SimRoom(state, uids);
+    for (const uid of uids) {
+      const local = completeSelections(room.clients[uid], room.nationFor(uid));
+      room.clients[uid] = local;
+      room.push(uid, local);
+    }
+
+    let summary = room.shared;
+    if (summary.phase === 'resolveStrikes') summary = finishStrikeResolution(summary);
+    expect(summary.phase).toBe('roundSummary');
+    expect(summary.aftermathEndsAt).toBeTruthy();
+    room.shared = summary;
+
+    const peer = uids[1];
+    const adopted = applyRemoteGameSnapshot(
+      { ...room.clients[peer], phase: 'resolveStrikes', planningComplete: true },
+      room.shared,
+      room.nationFor(peer),
+    );
+    expect(adopted.phase).toBe('roundSummary');
+    expect(adopted.aftermathEndsAt).toBe(summary.aftermathEndsAt);
+  });
 });

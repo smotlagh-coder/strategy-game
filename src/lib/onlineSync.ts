@@ -162,6 +162,7 @@ export function applyRemoteGameSnapshot(
       nations: mergeNationMaps(further, other),
       humanReady: ready ?? further.humanReady,
       planningComplete: true,
+      aftermathEndsAt: further.aftermathEndsAt ?? other.aftermathEndsAt ?? null,
     };
   }
 
