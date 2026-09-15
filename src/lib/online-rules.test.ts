@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DISCONNECT_MS, SELECTION_IDLE_MS, selectionIdleSeconds } from './onlineConstants';
+import { SELECTION_IDLE_MS, selectionIdleSeconds } from './onlineConstants';
 import {
   aftermathMyCityIds,
   aftermathWorldIds,
@@ -22,7 +22,7 @@ describe('online idle timer', () => {
 });
 
 describe('isHumanDisconnected', () => {
-  it('flags a silent heartbeat so peers can forfeit a leaver', () => {
+  it('only flags after the 60s selection window, not a missed heartbeat', () => {
     const state = buildOnlineGameState(
       assignNations(['a', 'b']),
       { a: 'A', b: 'B' },
@@ -30,12 +30,13 @@ describe('isHumanDisconnected', () => {
     );
     const nation = state.uidToNation!['a'] as NationId;
     const now = Date.now();
+    expect(isHumanDisconnected(state, nation, now)).toBe(false);
     const stale: GameState = {
       ...state,
-      humanHeartbeat: { [nation]: now - DISCONNECT_MS - 1 },
+      humanLastActive: { [nation]: now - SELECTION_IDLE_MS - 1 },
+      humanPlanningStartedAt: now - SELECTION_IDLE_MS - 1,
     };
     expect(isHumanDisconnected(stale, nation, now)).toBe(true);
-    expect(isHumanDisconnected(state, nation, now)).toBe(false);
   });
 });
 

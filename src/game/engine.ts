@@ -13,7 +13,7 @@ import {
   nationDef,
 } from '../data/nations';
 import { displayNameOnly } from '../lib/session';
-import { AFTERMATH_THINK_MS, DISCONNECT_MS, SELECTION_IDLE_MS } from '../lib/onlineConstants';
+import { AFTERMATH_THINK_MS, SELECTION_IDLE_MS } from '../lib/onlineConstants';
 import type {
   GameMode,
   GameState,
@@ -103,11 +103,8 @@ export function isHumanDisconnected(
   const n = state.nations[nationId];
   if (!n?.isHuman || n.eliminated) return false;
   if (state.humanReady?.[nationId]) return false;
-  const beat = state.humanHeartbeat?.[nationId];
-  if (beat != null && now - beat >= DISCONNECT_MS) return true;
   const last = state.humanLastActive?.[nationId] ?? state.humanPlanningStartedAt ?? 0;
-  if (last > 0 && now - last >= SELECTION_IDLE_MS) return true;
-  return beat == null && last <= 0;
+  return last > 0 && now - last >= SELECTION_IDLE_MS;
 }
 
 export function markHumanReady(state: GameState, nationId: NationId): GameState {
