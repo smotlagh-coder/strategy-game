@@ -7,6 +7,9 @@ export const AFTERMATH_THINK_MS = 5_000;
 /** Round-start banner duration after advancing. */
 export const ROUND_BANNER_MS = 3_000;
 
+/** Each personal briefing slide after a round (attacks / sanctions / money). */
+export const ROUND_BRIEFING_SLIDE_MS = 2_500;
+
 export function selectionIdleSeconds(): number {
   return Math.ceil(SELECTION_IDLE_MS / 1000);
 }

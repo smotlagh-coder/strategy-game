@@ -72,6 +72,8 @@ export function createInitialState(): GameState {
     planningComplete: false,
     aiPlanningComplete: false,
     aftermathEndsAt: null,
+    previousRoundEvents: [],
+    previousRoundNumber: null,
   };
 }
 
@@ -212,6 +214,8 @@ export function concludeRoundTurns(state: GameState): GameState {
     roundScores: scores,
     scoreHistory: [...next.scoreHistory, scores],
     aftermathEndsAt: Date.now() + AFTERMATH_THINK_MS,
+    previousRoundEvents: [...next.roundEvents],
+    previousRoundNumber: next.round,
     log: [...next.log, log(`Round ${next.round} complete. Standing scores updated.`, 'neutral')],
   };
 }
@@ -857,6 +861,8 @@ export function finishStrikeResolution(state: GameState): GameState {
     roundScores: scores,
     scoreHistory: [...next.scoreHistory, scores],
     aftermathEndsAt: Date.now() + AFTERMATH_THINK_MS,
+    previousRoundEvents: [...next.roundEvents],
+    previousRoundNumber: next.round,
     log: [...next.log, log(`Round ${next.round} complete. Standing scores updated.`, 'neutral')],
   });
   return next;

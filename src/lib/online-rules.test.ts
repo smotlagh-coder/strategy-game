@@ -3,8 +3,11 @@ import { SELECTION_IDLE_MS, selectionIdleSeconds } from './onlineConstants';
 import {
   aftermathMyCityIds,
   aftermathWorldIds,
+  canJoinLobby,
   inviteButtonState,
   isAlreadyInvited,
+  lobbyCodeFromId,
+  pickLobbyMatchGame,
 } from './lobbyInvite';
 import { phaseRank, pickFurtherState } from './onlineSync';
 import { assignNations, buildOnlineGameState } from './multiplayer';
@@ -44,6 +47,34 @@ describe('lobby invite guards', () => {
     expect(inviteButtonState({ ...base, lobbyId: null }).disabled).toBe(true);
     expect(inviteButtonState({ ...base, online: false }).disabled).toBe(true);
     expect(inviteButtonState({ ...base, inGame: true }).disabled).toBe(true);
+  });
+
+  it('does not send a guest into a leftover game before the host starts', () => {
+    const leftover = { id: 'old-game' };
+    const current = { id: 'lobby-game' };
+    expect(pickLobbyMatchGame([leftover, current], null)).toBeNull();
+    expect(pickLobbyMatchGame([leftover, current], undefined)).toBeNull();
+    expect(pickLobbyMatchGame([leftover], 'lobby-game')).toBeNull();
+    expect(pickLobbyMatchGame([leftover, current], 'lobby-game')?.id).toBe('lobby-game');
+  });
+});
+
+describe('lobby identity', () => {
+  it('derives a stable unique code from the lobby id', () => {
+    const a = lobbyCodeFromId('AbCdEfGh123456');
+    const b = lobbyCodeFromId('AbCdEfGh123456');
+    const c = lobbyCodeFromId('ZyXwVuTs987654');
+    expect(a).toBe(b);
+    expect(a).not.toBe(c);
+    expect(a.length).toBeGreaterThanOrEqual(6);
+  });
+
+  it('rejects started, closed, or leftover lobbies', () => {
+    expect(canJoinLobby({ status: 'open', gameId: null })).toBe(true);
+    expect(canJoinLobby({ status: 'open' })).toBe(true);
+    expect(canJoinLobby({ status: 'open', gameId: 'game-1' })).toBe(false);
+    expect(canJoinLobby({ status: 'starting' })).toBe(false);
+    expect(canJoinLobby({ status: 'closed' })).toBe(false);
   });
 });
 

@@ -156,6 +156,10 @@ export function applyRemoteGameSnapshot(
         Boolean(remote.planningComplete) ||
         phaseRank(remote.phase) >= phaseRank('resolveStrikes'),
       aftermathEndsAt: remote.aftermathEndsAt ?? prev.aftermathEndsAt ?? null,
+      previousRoundEvents: remote.previousRoundEvents?.length
+        ? remote.previousRoundEvents
+        : prev.previousRoundEvents,
+      previousRoundNumber: remote.previousRoundNumber ?? prev.previousRoundNumber ?? null,
       aiPlanningComplete: Boolean(remote.aiPlanningComplete || prev.aiPlanningComplete),
     };
   }
@@ -179,6 +183,10 @@ export function applyRemoteGameSnapshot(
       humanReady: ready ?? further.humanReady,
       planningComplete: true,
       aftermathEndsAt: further.aftermathEndsAt ?? other.aftermathEndsAt ?? null,
+      previousRoundEvents: further.previousRoundEvents?.length
+        ? further.previousRoundEvents
+        : other.previousRoundEvents,
+      previousRoundNumber: further.previousRoundNumber ?? other.previousRoundNumber ?? null,
     };
   }
 

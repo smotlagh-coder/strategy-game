@@ -1,5 +1,28 @@
 export type InviteButtonLabel = 'Invite' | 'Invited' | 'Joined';
 
+/** Short unique public code derived from the Firestore lobby id. */
+export function lobbyCodeFromId(id: string): string {
+  const compact = id.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+  return (compact.slice(0, 8) || 'LOBBY').padEnd(6, 'X');
+}
+
+/** Open, unused lobbies only — never join a started, closed, or leftover match. */
+export function canJoinLobby(lobby: {
+  status?: string | null;
+  gameId?: string | null;
+}): boolean {
+  return lobby.status === 'open' && !lobby.gameId;
+}
+
+/** Only enter the game the host started for this lobby — never an older leftover match. */
+export function pickLobbyMatchGame<T extends { id: string }>(
+  games: T[],
+  lobbyGameId: string | null | undefined,
+): T | null {
+  if (!lobbyGameId) return null;
+  return games.find((g) => g.id === lobbyGameId) ?? null;
+}
+
 export function isAlreadyInvited(
   toUid: string,
   pendingInviteUids: ReadonlySet<string>,

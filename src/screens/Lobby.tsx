@@ -3,6 +3,7 @@ import { ART } from '../data/art';
 import {
   createLobby,
   fetchGame,
+  fetchLobby,
   isPlayerOnline,
   joinLobby,
   leaveLobby,
@@ -16,7 +17,7 @@ import {
   startOnlineGameFromLobby,
 } from '../lib/multiplayer';
 import { heartbeat, formatPlayerLabel, setPlayerStatus } from '../lib/session';
-import { inviteButtonState, isAlreadyInvited } from '../lib/lobbyInvite';
+import { inviteButtonState, isAlreadyInvited, lobbyCodeFromId, pickLobbyMatchGame } from '../lib/lobbyInvite';
 import type { GameState, InviteDoc, OnlineLobby, PlayerDoc } from '../types';
 
 export function LobbyScreen({
@@ -89,29 +90,24 @@ export function LobbyScreen({
     return listenLobby(lobbyId, setLobby);
   }, [lobbyId]);
 
-  // Primary path for guests: watch games that include this player
-  useEffect(() => {
-    if (!lobbyId) return;
-    return listenMyActiveGames(uid, (games) => {
-      const linked = lobby?.gameId
-        ? games.find((g) => g.id === lobby.gameId)
-        : undefined;
-      const fresh = [...games]
-        .filter((g) => Date.now() - (g.data.updatedAt ?? 0) < 120_000)
-        .sort((a, b) => (b.data.updatedAt ?? 0) - (a.data.updatedAt ?? 0))[0];
-      const pick = linked ?? fresh;
-      if (!pick) return;
-      void enterGame(pick.id, pick.data.state);
-    });
-  }, [uid, lobbyId, lobby?.gameId, enterGame]);
-
-  // Backup: lobby document got gameId (host start)
+  // Guests enter only the match the host started for THIS lobby
   useEffect(() => {
     const gameId = lobby?.gameId;
     if (!gameId) return;
     if (lobby?.status !== 'starting' && lobby?.status !== 'closed') return;
     void enterGame(gameId);
   }, [lobby?.gameId, lobby?.status, enterGame]);
+
+  // Confirm the lobby game exists (covers a missed lobby snapshot)
+  useEffect(() => {
+    if (!lobbyId || !lobby?.gameId) return;
+    const expectedId = lobby.gameId;
+    return listenMyActiveGames(uid, (games) => {
+      const pick = pickLobbyMatchGame(games, expectedId);
+      if (!pick) return;
+      void enterGame(pick.id, pick.data.state);
+    });
+  }, [uid, lobbyId, lobby?.gameId, enterGame]);
 
   useEffect(() => {
     // Don't clobber in_game while a match is starting / joining
@@ -185,11 +181,14 @@ export function LobbyScreen({
     setBusy(true);
     setError(null);
     try {
-      await respondInvite(inviteId, true);
-      if (data.lobbyId) {
-        await joinLobby(data.lobbyId, uid, formatPlayerLabel(displayName, uid));
-        setLobbyId(data.lobbyId);
+      if (!data.lobbyId) throw new Error('This invite has no lobby');
+      const target = await fetchLobby(data.lobbyId);
+      if (!target || target.status !== 'open' || target.gameId) {
+        throw new Error('That lobby is no longer available');
       }
+      await respondInvite(inviteId, true);
+      await joinLobby(data.lobbyId, uid, formatPlayerLabel(displayName, uid));
+      setLobbyId(data.lobbyId);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not join');
     } finally {
@@ -213,6 +212,7 @@ export function LobbyScreen({
 
   const onLeave = async () => {
     if (lobbyId) await leaveLobby(lobbyId, uid);
+    joinedGameRef.current = null;
     setLobbyId(null);
   };
 
@@ -286,6 +286,9 @@ export function LobbyScreen({
               </button>
             ) : (
               <>
+                <p className="lobby-code">
+                  Lobby <strong>{lobby?.code ?? lobbyCodeFromId(lobbyId)}</strong>
+                </p>
                 <ul className="lobby-list">
                   {(lobby?.memberUids ?? []).map((id) => (
                     <li key={id} className="lobby-row">
@@ -300,7 +303,7 @@ export function LobbyScreen({
                   ))}
                 </ul>
                 <div className="lobby-actions">
-                  {lobby?.hostUid === uid && (
+                  {lobby?.hostUid === uid ? (
                     <button
                       className="btn btn--xl btn--primary"
                       type="button"
@@ -309,6 +312,12 @@ export function LobbyScreen({
                     >
                       Start Game ({lobby?.memberUids.length ?? 0}/5)
                     </button>
+                  ) : (
+                    <p className="upgrade-hint">
+                      {lobby?.gameId
+                        ? 'Host started the match — joining…'
+                        : 'Waiting for the host to start the game…'}
+                    </p>
                   )}
                   <button className="btn btn--xl" type="button" onClick={() => void onLeave()}>
                     Leave Lobby
@@ -325,6 +334,9 @@ export function LobbyScreen({
                 <li key={inv.id} className="lobby-row">
                   <span>
                     From <strong>{inv.data.fromName}</strong>
+                    {inv.data.lobbyCode || inv.data.lobbyId ? (
+                      <small>Lobby {inv.data.lobbyCode ?? lobbyCodeFromId(inv.data.lobbyId!)}</small>
+                    ) : null}
                   </span>
                   <span className="lobby-invite-actions">
                     <button className="btn btn--primary" type="button" disabled={busy} onClick={() => void onAccept(inv.id, inv.data)}>

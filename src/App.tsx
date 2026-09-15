@@ -1,5 +1,5 @@
 import './App.css';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ART, SFX } from './data/art';
 import { NATIONS, nationDef, COSTS, RESEARCH_INCOME } from './data/nations';
 import { LEADER_SPEECHES, speechFor } from './data/speeches';
@@ -57,7 +57,7 @@ import {
   tryAcquireAiLock,
 } from './lib/multiplayer';
 import { applyRemoteGameSnapshot } from './lib/onlineSync';
-import { AFTERMATH_THINK_MS, ROUND_BANNER_MS, SELECTION_IDLE_MS } from './lib/onlineConstants';
+import { AFTERMATH_THINK_MS, ROUND_BANNER_MS, ROUND_BRIEFING_SLIDE_MS, SELECTION_IDLE_MS } from './lib/onlineConstants';
 import { aftermathMyCityIds, aftermathWorldIds } from './lib/lobbyInvite';
 import { NameGate } from './screens/NameGate';
 import { LobbyScreen } from './screens/Lobby';
@@ -269,12 +269,147 @@ function formatRoundEvent(e: RoundWorldEvent): string {
     : `${e.cityName} (${nation}) was destroyed.`;
 }
 
-function RoundBanner({ round }: { round: number }) {
+type RoundStartSlide =
+  | { kind: 'round'; round: number }
+  | { kind: 'attack'; attackers: { id: NationId; cities: string[] }[] }
+  | { kind: 'sanction'; from: NationId[] }
+  | { kind: 'money'; amount: number; income?: number };
+
+function buildRoundStartSlides(state: GameState, myId: NationId | null): RoundStartSlide[] {
+  const slides: RoundStartSlide[] = [{ kind: 'round', round: state.round }];
+  if (!myId || state.round < 2) return slides;
+
+  const hits = (state.previousRoundEvents ?? []).filter(
+    (e) =>
+      e.nationId === myId &&
+      (e.kind === 'cityDestroyed' || e.kind === 'shieldDestroyed') &&
+      e.attackerId,
+  );
+  if (hits.length > 0) {
+    const byAttacker = new Map<NationId, string[]>();
+    for (const h of hits) {
+      const attacker = h.attackerId as NationId;
+      const cities = byAttacker.get(attacker) ?? [];
+      if (h.cityName && !cities.includes(h.cityName)) cities.push(h.cityName);
+      byAttacker.set(attacker, cities);
+    }
+    slides.push({
+      kind: 'attack',
+      attackers: Array.from(byAttacker.entries()).map(([id, cities]) => ({ id, cities })),
+    });
+  }
+
+  const from = whoIsSanctioning(state, myId);
+  if (from.length > 0) slides.push({ kind: 'sanction', from });
+
+  const ledger = state.lastIncomeLedger.find((e) => e.nationId === myId);
+  slides.push({
+    kind: 'money',
+    amount: state.nations[myId]?.money ?? 0,
+    income: ledger?.revenue,
+  });
+  return slides;
+}
+
+function RoundStartOverlay({
+  slides,
+  onDone,
+}: {
+  slides: RoundStartSlide[];
+  onDone: () => void;
+}) {
+  const [index, setIndex] = useState(0);
+  const slide = slides[index];
+
+  useEffect(() => {
+    if (!slide) {
+      onDone();
+      return;
+    }
+    const ms = slide.kind === 'round' ? ROUND_BANNER_MS : ROUND_BRIEFING_SLIDE_MS;
+    const t = window.setTimeout(() => {
+      if (index >= slides.length - 1) onDone();
+      else setIndex((i) => i + 1);
+    }, ms);
+    return () => window.clearTimeout(t);
+  }, [index, slide, slides.length, onDone]);
+
+  if (!slide) return null;
+
+  let title = '';
+  let body: ReactNode = null;
+  let tone = 'round';
+  if (slide.kind === 'round') {
+    title = `Round ${slide.round}`;
+    body = <p className="round-start__hint">Prepare your orders</p>;
+    tone = 'round';
+  } else if (slide.kind === 'attack') {
+    title = 'Incoming strikes';
+    tone = 'attack';
+    body = (
+      <ul className="round-start__list">
+        {slide.attackers.map((a) => (
+          <li key={a.id} className="round-start__row">
+            <img src={ART.leaders[a.id]} alt="" />
+            <div>
+              <strong>{nationDef(a.id).name}</strong>
+              <span>
+                targeted your cities
+                {a.cities.length ? `: ${a.cities.join(' · ')}` : ''}
+              </span>
+            </div>
+          </li>
+        ))}
+      </ul>
+    );
+  } else if (slide.kind === 'sanction') {
+    title = 'Sanctions';
+    tone = 'sanction';
+    body = (
+      <ul className="round-start__list">
+        {slide.from.map((id) => (
+          <li key={id} className="round-start__row">
+            <img src={ART.leaders[id]} alt="" />
+            <div>
+              <strong>{nationDef(id).name}</strong>
+              <span>sanctioned you (−20% research income)</span>
+            </div>
+          </li>
+        ))}
+      </ul>
+    );
+  } else {
+    title = 'Treasury';
+    tone = 'money';
+    body = (
+      <div className="round-start__money">
+        <p className="round-start__cash">${formatMoney(slide.amount)}</p>
+        <p className="round-start__hint">
+          {slide.income != null && slide.income > 0
+            ? `Including $${formatMoney(slide.income)} income this round`
+            : 'Available for this round'}
+        </p>
+      </div>
+    );
+  }
+
   return (
-    <div className="round-banner" role="status" aria-live="polite" aria-label={`Round ${round}`}>
+    <div
+      className="round-banner round-start"
+      role="status"
+      aria-live="polite"
+      aria-label={title}
+    >
       <div className="round-banner__veil" />
-      <div className="round-banner__panel enter-pop">
-        <p className="round-banner__label">Round {round}</p>
+      <div
+        key={`${slide.kind}-${index}`}
+        className={`round-banner__panel round-start__panel round-start__panel--${tone} enter-pop`}
+      >
+        <p className="round-start__eyebrow">
+          {index + 1} / {slides.length}
+        </p>
+        <h2 className="round-start__title">{title}</h2>
+        {body}
       </div>
     </div>
   );
@@ -913,11 +1048,13 @@ function GameBoard({
   setState,
   sessionUid,
   onKicked,
+  roundBriefingActive = false,
 }: {
   state: GameState;
   setState: React.Dispatch<React.SetStateAction<GameState>>;
   sessionUid?: string | null;
   onKicked?: (message: string) => void;
+  roundBriefingActive?: boolean;
 }) {
   const turnId = currentNationId(state);
   const myNationId =
@@ -1117,13 +1254,14 @@ function GameBoard({
     [closeHumanTurn, sessionUid, bumpSelectionActivity, setState, syncPlanning],
   );
 
-  // Start turn prompts when this human can act (once per round)
+  // Start turn prompts when this human can act (once per round), after briefing
   useEffect(() => {
     if (!isMyHumanTurn) {
       setWizardStep(null);
       setIdleSecondsLeft(null);
       return;
     }
+    if (roundBriefingActive) return;
     if (wizardStartedRoundRef.current === state.round) return;
 
     wizardStartedRoundRef.current = state.round;
@@ -1136,7 +1274,7 @@ function GameBoard({
       return () => window.clearTimeout(t);
     }
     setWizardStep(first);
-  }, [isMyHumanTurn, actorId, state.round, closeHumanTurn]);
+  }, [isMyHumanTurn, actorId, state.round, closeHumanTurn, roundBriefingActive]);
 
   // 60s idle kick — only while this client must make selections
   useEffect(() => {
@@ -1885,14 +2023,6 @@ function GameBoard({
             </div>
           </header>
 
-          <div className="board-left__log" aria-live="polite">
-            {state.log.slice(-4).map((e) => (
-              <div key={e.id} className={`log-line log-line--${e.tone ?? 'neutral'}`}>
-                {e.text}
-              </div>
-            ))}
-          </div>
-
           <h3 className="board-section-title">
             {isOnline
               ? 'You'
@@ -2396,7 +2526,7 @@ export default function App() {
   const appStateRef = useRef(state);
   appStateRef.current = state;
   const lastRoundBannerRef = useRef(0);
-  const [roundBanner, setRoundBanner] = useState<number | null>(null);
+  const [roundStartSlides, setRoundStartSlides] = useState<RoundStartSlide[] | null>(null);
   const [rematchBusy, setRematchBusy] = useState(false);
   const [rematchError, setRematchError] = useState<string | null>(null);
 
@@ -2450,7 +2580,7 @@ export default function App() {
     }
   }, [advancePastAi, sessionUid]);
 
-  // Brief "Round X" overlay whenever a new round of play begins
+  // Round start overlay: Round X, then personal attacks / sanctions / treasury
   useEffect(() => {
     const preGame =
       state.phase === 'session' ||
@@ -2469,14 +2599,14 @@ export default function App() {
     if (state.phase !== 'buy' && state.phase !== 'action' && state.phase !== 'income') return;
     if (lastRoundBannerRef.current === state.round) return;
     lastRoundBannerRef.current = state.round;
-    setRoundBanner(state.round);
-  }, [state.round, state.phase]);
+    const myId =
+      state.mode === 'online' && sessionUid && state.uidToNation?.[sessionUid]
+        ? state.uidToNation[sessionUid]
+        : state.humanNations[0] ?? null;
+    setRoundStartSlides(buildRoundStartSlides(state, myId ?? null));
+  }, [state, sessionUid]);
 
-  useEffect(() => {
-    if (roundBanner == null) return;
-    const t = window.setTimeout(() => setRoundBanner(null), ROUND_BANNER_MS);
-    return () => window.clearTimeout(t);
-  }, [roundBanner]);
+  const dismissRoundStart = useCallback(() => setRoundStartSlides(null), []);
 
   // Online game listener — preserve local nation while still planning
   useEffect(() => {
@@ -2642,7 +2772,13 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      {roundBanner != null && <RoundBanner round={roundBanner} />}
+      {roundStartSlides && roundStartSlides.length > 0 && (
+        <RoundStartOverlay
+          key={`rs-${roundStartSlides[0].kind === 'round' ? roundStartSlides[0].round : 0}`}
+          slides={roundStartSlides}
+          onDone={dismissRoundStart}
+        />
+      )}
       {state.phase === 'session' && (
         <NameGate
           initialName={displayName}
@@ -2707,6 +2843,7 @@ export default function App() {
           state={state}
           setState={setState}
           sessionUid={sessionUid}
+          roundBriefingActive={Boolean(roundStartSlides)}
           onKicked={(message) => {
             if (sessionUid) void setPlayerStatus(sessionUid, 'available', null);
             setSessionError(message);

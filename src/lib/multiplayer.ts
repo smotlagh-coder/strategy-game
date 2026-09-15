@@ -21,6 +21,7 @@ import { NATIONS, nationDef } from '../data/nations';
 import {
   mergeHumanPlanningWrite,
 } from './onlineSync';
+import { canJoinLobby, lobbyCodeFromId } from './lobbyInvite';
 import type {
   GameState,
   InviteDoc,
@@ -128,6 +129,7 @@ export async function sendInvite(fromUid: string, fromName: string, toUid: strin
     status: 'pending',
     createdAt: Date.now(),
     lobbyId,
+    lobbyCode: lobbyCodeFromId(lobbyId),
   };
   await addDoc(collection(getDb(), 'invites'), payload);
 }
@@ -138,7 +140,47 @@ export async function respondInvite(inviteId: string, accept: boolean) {
   });
 }
 
+export async function fetchLobby(lobbyId: string): Promise<OnlineLobby | null> {
+  const snap = await getDoc(doc(getDb(), 'lobbies', lobbyId));
+  if (!snap.exists()) return null;
+  const data = snap.data() as OnlineLobby;
+  return { ...data, id: data.id ?? snap.id };
+}
+
+/** Close leftover open lobbies this host still has from previous games. */
+export async function closeOpenLobbiesForHost(hostUid: string, keepId?: string) {
+  const q = query(
+    collection(getDb(), 'lobbies'),
+    where('hostUid', '==', hostUid),
+    where('status', '==', 'open'),
+  );
+  const snap = await getDocs(q);
+  await Promise.all(
+    snap.docs
+      .filter((d) => d.id !== keepId)
+      .map((d) =>
+        updateDoc(d.ref, { status: 'closed', gameId: null }).catch(() => undefined),
+      ),
+  );
+}
+
+export async function cancelPendingInvitesForLobby(fromUid: string, lobbyId: string) {
+  const existing = await getDocs(
+    query(
+      collection(getDb(), 'invites'),
+      where('fromUid', '==', fromUid),
+      where('status', '==', 'pending'),
+    ),
+  );
+  await Promise.all(
+    existing.docs
+      .filter((d) => (d.data() as InviteDoc).lobbyId === lobbyId)
+      .map((d) => updateDoc(d.ref, { status: 'cancelled' }).catch(() => undefined)),
+  );
+}
+
 export async function createLobby(hostUid: string, hostName: string): Promise<string> {
+  await closeOpenLobbiesForHost(hostUid).catch(() => undefined);
   const ref = doc(collection(getDb(), 'lobbies'));
   const lobby: OnlineLobby = {
     id: ref.id,
@@ -147,6 +189,8 @@ export async function createLobby(hostUid: string, hostName: string): Promise<st
     memberNames: { [hostUid]: hostName },
     status: 'open',
     createdAt: Date.now(),
+    code: lobbyCodeFromId(ref.id),
+    gameId: null,
   };
   await setDoc(ref, lobby);
   return ref.id;
@@ -164,7 +208,7 @@ export async function joinLobby(lobbyId: string, uid: string, name: string) {
     const snap = await tx.get(ref);
     if (!snap.exists()) throw new Error('Lobby not found');
     const lobby = snap.data() as OnlineLobby;
-    if (lobby.status !== 'open') throw new Error('Lobby closed');
+    if (!canJoinLobby(lobby)) throw new Error('This lobby is no longer available');
     if (lobby.memberUids.includes(uid)) return;
     if (lobby.memberUids.length >= 5) throw new Error('Lobby full');
     tx.update(ref, {
@@ -299,6 +343,7 @@ export async function startOnlineGameFromLobby(
     status: 'starting',
     gameId: gameRef.id,
   });
+  await cancelPendingInvitesForLobby(lobby.hostUid, lobby.id);
 
   return { gameId: gameRef.id, state };
 }
@@ -315,50 +360,26 @@ export async function rematchOnlineGame(
   if (!finished) throw new Error('Finished game not found');
   if (finished.hostUid !== hostUid) throw new Error('Only the host can start a rematch');
 
-  const lobbyId = finished.lobbyId ?? finished.state.onlineLobbyId ?? null;
-  let lobby: OnlineLobby;
-  if (lobbyId) {
-    const lobbySnap = await getDoc(doc(getDb(), 'lobbies', lobbyId));
-    if (lobbySnap.exists()) {
-      lobby = {
-        ...(lobbySnap.data() as OnlineLobby),
-        id: lobbyId,
-        hostUid: finished.hostUid,
-        memberUids: finished.playerUids,
-        memberNames: finished.playerNames,
-        status: 'open',
-        gameId: null,
-      };
-      await updateDoc(doc(getDb(), 'lobbies', lobbyId), {
-        status: 'open',
-        gameId: null,
-        memberUids: finished.playerUids,
-        memberNames: finished.playerNames,
-        hostUid: finished.hostUid,
-      });
-    } else {
-      lobby = {
-        id: lobbyId,
-        hostUid: finished.hostUid,
-        memberUids: finished.playerUids,
-        memberNames: finished.playerNames,
-        status: 'open',
-        createdAt: Date.now(),
-      };
-      await setDoc(doc(getDb(), 'lobbies', lobbyId), lobby);
-    }
-  } else {
-    const lobbyRef = doc(collection(getDb(), 'lobbies'));
-    lobby = {
-      id: lobbyRef.id,
-      hostUid: finished.hostUid,
-      memberUids: finished.playerUids,
-      memberNames: finished.playerNames,
-      status: 'open',
-      createdAt: Date.now(),
-    };
-    await setDoc(lobbyRef, lobby);
+  const oldLobbyId = finished.lobbyId ?? finished.state.onlineLobbyId ?? null;
+  if (oldLobbyId) {
+    await updateDoc(doc(getDb(), 'lobbies', oldLobbyId), {
+      status: 'closed',
+    }).catch(() => undefined);
   }
+
+  // Always a new lobby id so leftover invites/docs cannot reopen the last match
+  const lobbyRef = doc(collection(getDb(), 'lobbies'));
+  const lobby: OnlineLobby = {
+    id: lobbyRef.id,
+    hostUid: finished.hostUid,
+    memberUids: finished.playerUids,
+    memberNames: finished.playerNames,
+    status: 'open',
+    createdAt: Date.now(),
+    code: lobbyCodeFromId(lobbyRef.id),
+    gameId: null,
+  };
+  await setDoc(lobbyRef, stripUndefined(lobby));
 
   const { gameId, state } = await startOnlineGameFromLobby(lobby);
   await updateDoc(doc(getDb(), 'games', finishedGameId), {

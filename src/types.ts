@@ -149,6 +149,10 @@ export interface GameState {
   aiPlanningComplete?: boolean;
   /** Epoch ms when aftermath ends and the next round (or finals) may start */
   aftermathEndsAt?: number | null;
+  /** Events from the round that just ended (kept after nextRound clears roundEvents) */
+  previousRoundEvents?: RoundWorldEvent[];
+  /** Round number those previousRoundEvents belong to */
+  previousRoundNumber?: number | null;
 }
 
 /** Firestore player presence doc */
@@ -171,6 +175,8 @@ export interface InviteDoc {
   status: 'pending' | 'accepted' | 'declined' | 'cancelled';
   createdAt: number;
   lobbyId?: string;
+  /** Short public code for the lobby this invite belongs to */
+  lobbyCode?: string;
 }
 
 export interface OnlineLobby {
@@ -180,6 +186,8 @@ export interface OnlineLobby {
   memberNames: Record<string, string>;
   status: 'open' | 'starting' | 'closed';
   createdAt: number;
+  /** Short unique code shown in the lobby UI */
+  code?: string;
   /** Set when host starts — members join this game */
   gameId?: string | null;
 }
