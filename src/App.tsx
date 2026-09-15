@@ -63,8 +63,9 @@ import {
   publishSharedPhase,
   rematchOnlineGame,
   tryAcquireAiLock,
+  publishStrikeResolution,
 } from './lib/multiplayer';
-import { applyRemoteGameSnapshot } from './lib/onlineSync';
+import { applyRemoteGameSnapshot, phaseRank } from './lib/onlineSync';
 import { applyPublishedGame } from './lib/gameSync';
 import { ROUND_BANNER_MS, ROUND_BRIEFING_SLIDE_MS, SELECTION_IDLE_MS } from './lib/onlineConstants';
 import { aftermathMyCityIds, aftermathWorldIds } from './lib/lobbyInvite';
