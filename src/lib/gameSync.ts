@@ -12,12 +12,14 @@ export function nextGameSync(
   kind: GameSyncKind,
   round: number,
   at = Date.now(),
+  extra?: Pick<GameSyncEvent, 'nationId' | 'playerName' | 'nationName'>,
 ): GameSyncEvent {
   return {
     seq: (prev?.seq ?? 0) + 1,
     kind,
     round,
     publishedAt: at,
+    ...extra,
   };
 }
 
@@ -32,14 +34,8 @@ export function shouldFollowPublishedClock(
   if (!sync) return false;
   if (sync.round > prev.round) return true;
   if (sync.kind === 'gameOver' && remote.phase === 'gameOver') return true;
-  if (
-    sync.kind === 'roundStart' &&
-    remote.round >= prev.round &&
-    prev.phase === 'roundSummary' &&
-    remote.phase !== 'roundSummary'
-  ) {
-    return true;
-  }
+  if (sync.kind === 'roundStart' && remote.round > prev.round) return true;
+  if (sync.kind === 'dropout') return true;
   if (sync.kind === 'aftermath' && prev.phase !== 'roundSummary' && remote.phase === 'roundSummary') {
     return true;
   }

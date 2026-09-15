@@ -56,6 +56,8 @@ export interface NationState {
   bombsBoughtThisRound: number;
   /** Whether environment was bought this round */
   envBoughtThisRound: boolean;
+  /** Buy-wizard prompts already answered this round (survives board remounts) */
+  promptsDoneThisRound?: string[];
   /** Round number for which base/research income was already applied */
   incomeRound?: number;
   /** Score frozen when eliminated so wipeout doesn't zero the standings */
@@ -145,6 +147,8 @@ export interface GameState {
   humanPlanningStartedAt?: number | null;
   /** Online: last selection activity per human nation (idle kick) */
   humanLastActive?: Partial<Record<NationId, number>>;
+  /** Online: last presence beat per human (tab closed / left) */
+  humanHeartbeat?: Partial<Record<NationId, number>>;
   /** Online: human planning finished and AI/strikes advanced — blocks re-entry loops */
   planningComplete?: boolean;
   /** Online: AI nations already bought/queued strikes for this round (runs at round start) */
@@ -195,13 +199,17 @@ export interface OnlineLobby {
 }
 
 /** Shared table clock — clients follow this event, they do not invent the next round. */
-export type GameSyncKind = 'roundStart' | 'aftermath' | 'gameOver';
+export type GameSyncKind = 'roundStart' | 'aftermath' | 'gameOver' | 'dropout';
 
 export interface GameSyncEvent {
   seq: number;
   kind: GameSyncKind;
   round: number;
   publishedAt: number;
+  /** Set on dropout — who left */
+  nationId?: NationId;
+  playerName?: string;
+  nationName?: string;
 }
 
 export interface OnlineGameDoc {

@@ -1,6 +1,12 @@
 /** Online selection idle kick window (local timer + peer kick). */
 export const SELECTION_IDLE_MS = 60_000;
 
+/** How often a connected client writes presence while in a match. */
+export const HEARTBEAT_MS = 5_000;
+
+/** No heartbeat → treat as left so others are not stuck waiting. */
+export const DISCONNECT_MS = 20_000;
+
 /** Aftermath think time before next round / final results. */
 export const AFTERMATH_THINK_MS = 5_000;
 

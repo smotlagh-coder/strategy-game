@@ -13,7 +13,7 @@ import {
   nationDef,
 } from '../data/nations';
 import { displayNameOnly } from '../lib/session';
-import { AFTERMATH_THINK_MS } from '../lib/onlineConstants';
+import { AFTERMATH_THINK_MS, DISCONNECT_MS, SELECTION_IDLE_MS } from '../lib/onlineConstants';
 import type {
   GameMode,
   GameState,
@@ -69,6 +69,7 @@ export function createInitialState(): GameState {
     humanReady: {},
     humanPlanningStartedAt: null,
     humanLastActive: {},
+    humanHeartbeat: {},
     planningComplete: false,
     aiPlanningComplete: false,
     aftermathEndsAt: null,
@@ -93,6 +94,22 @@ export function allAliveHumansReady(state: GameState): boolean {
   return humans.every((id) => Boolean(state.humanReady?.[id]));
 }
 
+/** True when a human stopped sending presence or sat idle through the selection window. */
+export function isHumanDisconnected(
+  state: GameState,
+  nationId: NationId,
+  now = Date.now(),
+): boolean {
+  const n = state.nations[nationId];
+  if (!n?.isHuman || n.eliminated) return false;
+  if (state.humanReady?.[nationId]) return false;
+  const beat = state.humanHeartbeat?.[nationId];
+  if (beat != null && now - beat >= DISCONNECT_MS) return true;
+  const last = state.humanLastActive?.[nationId] ?? state.humanPlanningStartedAt ?? 0;
+  if (last > 0 && now - last >= SELECTION_IDLE_MS) return true;
+  return beat == null && last <= 0;
+}
+
 export function markHumanReady(state: GameState, nationId: NationId): GameState {
   return {
     ...state,
@@ -111,14 +128,17 @@ export function touchHumanActivity(state: GameState, nationId: NationId, at = Da
 /** Start/reset the parallel human selection window for this round. */
 export function beginHumanPlanning(state: GameState, at = Date.now()): GameState {
   const humanLastActive: Partial<Record<NationId, number>> = {};
+  const humanHeartbeat: Partial<Record<NationId, number>> = {};
   for (const id of aliveHumanNations(state)) {
     humanLastActive[id] = at;
+    humanHeartbeat[id] = at;
   }
   return {
     ...state,
     humanReady: {},
     humanPlanningStartedAt: at,
     humanLastActive,
+    humanHeartbeat,
     planningComplete: false,
     aiPlanningComplete: false,
   };
@@ -154,6 +174,8 @@ export function forfeitNation(state: GameState, nationId: NationId): GameState {
   delete humanReady[nationId];
   const humanLastActive = { ...state.humanLastActive };
   delete humanLastActive[nationId];
+  const humanHeartbeat = { ...state.humanHeartbeat };
+  delete humanHeartbeat[nationId];
 
   let next: GameState = {
     ...state,
@@ -162,6 +184,7 @@ export function forfeitNation(state: GameState, nationId: NationId): GameState {
     uidToNation,
     humanReady,
     humanLastActive,
+    humanHeartbeat,
     // Drop queued attacks from the leaver — they're out of the war
     pendingStrikes: state.pendingStrikes.filter((s) => s.attackerId !== nationId),
     log: [
@@ -928,6 +951,25 @@ export function attackCity(state: GameState, targetNation: NationId, cityId: str
   return applyQueuedStrike(withoutPending, strike);
 }
 
+/** Remember a buy-wizard prompt so a remount cannot ask it again this round. */
+export function markPromptDone(
+  state: GameState,
+  nationId: NationId,
+  prompt: string,
+): GameState {
+  const n = state.nations[nationId];
+  if (!n || n.eliminated) return state;
+  const done = n.promptsDoneThisRound ?? [];
+  if (done.includes(prompt)) return state;
+  return {
+    ...state,
+    nations: {
+      ...state.nations,
+      [nationId]: { ...n, promptsDoneThisRound: [...done, prompt] },
+    },
+  };
+}
+
 export function toggleSanction(state: GameState, target: NationId, nationId?: NationId): GameState {
   const id = nationId ?? currentNationId(state);
   const n = state.nations[id];
@@ -993,6 +1035,7 @@ export function nextRound(state: GameState): GameState {
       citiesStruckThisRound: [],
       bombsBoughtThisRound: 0,
       envBoughtThisRound: false,
+      promptsDoneThisRound: [],
     };
   }
 

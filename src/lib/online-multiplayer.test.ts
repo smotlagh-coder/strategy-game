@@ -607,6 +607,17 @@ describe('3-player online simulation', () => {
     expect(kept.phase).toBe('roundSummary');
   });
 
+  it('published dropout event names the leaver and is a follow-clock kind', () => {
+    const sync = nextGameSync(undefined, 'dropout', 1, 1, {
+      nationId: 'us',
+      playerName: 'Farshad',
+      nationName: 'United States',
+    });
+    expect(sync.kind).toBe('dropout');
+    expect(sync.playerName).toBe('Farshad');
+    expect(sync.seq).toBe(1);
+  });
+
   it('published roundStart event forces every client onto the new round', () => {
     const { state, uids } = makeThreePlayerGame();
     const room = new SimRoom(state, uids);

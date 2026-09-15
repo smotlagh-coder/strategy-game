@@ -114,6 +114,9 @@ export function mergeNationPlanning(
     bombsBoughtThisRound: Math.max(remote.bombsBoughtThisRound, local.bombsBoughtThisRound),
     bombsUsed: Math.max(remote.bombsUsed, local.bombsUsed),
     envBoughtThisRound: remote.envBoughtThisRound || local.envBoughtThisRound,
+    promptsDoneThisRound: Array.from(
+      new Set([...(remote.promptsDoneThisRound ?? []), ...(local.promptsDoneThisRound ?? [])]),
+    ),
     environmentBuys: Math.max(remote.environmentBuys, local.environmentBuys),
     environmentScore: Math.max(remote.environmentScore, local.environmentScore),
     citiesStruckThisRound: Array.from(
@@ -350,6 +353,23 @@ export function mergeHumanPlanningWrite(
     nations: mergedNations,
     humanReady: mergedReady,
     humanLastActive: mergedLastActive,
+    humanHeartbeat: (() => {
+      const out: Partial<Record<NationId, number>> = {
+        ...remote.humanHeartbeat,
+        ...local.humanHeartbeat,
+      };
+      for (const id of new Set([
+        ...Object.keys(remote.humanHeartbeat ?? {}),
+        ...Object.keys(local.humanHeartbeat ?? {}),
+      ])) {
+        const nid = id as NationId;
+        out[nid] = Math.max(
+          remote.humanHeartbeat?.[nid] ?? 0,
+          local.humanHeartbeat?.[nid] ?? 0,
+        );
+      }
+      return out;
+    })(),
     humanPlanningStartedAt:
       remote.humanPlanningStartedAt ?? local.humanPlanningStartedAt ?? null,
     pendingStrikes: deduped,

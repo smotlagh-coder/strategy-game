@@ -8,6 +8,7 @@ import {
   aliveHumanNations,
   allAliveHumansReady,
   armAftermathTimer,
+  isHumanDisconnected,
   buyBombs,
   buyEnvironment,
   buyNuclearTech,
@@ -21,6 +22,7 @@ import {
   finishStrikeResolution,
   formatMoney,
   markHumanReady,
+  markPromptDone,
   maxBombsPurchasable,
   nextRound,
   pickCountry,
@@ -36,7 +38,7 @@ import {
   whoIsSanctioning,
 } from './game/engine';
 import { runAllAiUntilHumanOrSummary, runAiTurn, finishOnlineHumanPlanning, runOnlineAiPlanning } from './game/ai';
-import type { GameMode, GameState, NationId, RoundWorldEvent } from './types';
+import type { GameMode, GameState, GameSyncEvent, NationId, RoundWorldEvent } from './types';
 import { isFirebaseConfigured } from './lib/firebase';
 import {
   ensureAuthSession,
@@ -52,7 +54,10 @@ import {
   finishOnlineGame,
   incrementSuperpowerWin,
   kickIdleHumanFromGame,
+  leaveOnlineGame,
   listenGame,
+  listenPlayers,
+  touchGameHeartbeat,
   enqueueHumanPlanningPush,
   publishSharedPhase,
   pushGameState,
@@ -61,7 +66,7 @@ import {
 } from './lib/multiplayer';
 import { applyRemoteGameSnapshot } from './lib/onlineSync';
 import { applyPublishedGame } from './lib/gameSync';
-import { ROUND_BANNER_MS, ROUND_BRIEFING_SLIDE_MS, SELECTION_IDLE_MS } from './lib/onlineConstants';
+import { HEARTBEAT_MS, ROUND_BANNER_MS, ROUND_BRIEFING_SLIDE_MS, SELECTION_IDLE_MS } from './lib/onlineConstants';
 import { aftermathMyCityIds, aftermathWorldIds } from './lib/lobbyInvite';
 import { NameGate } from './screens/NameGate';
 import { LobbyScreen } from './screens/Lobby';
@@ -414,6 +419,34 @@ function RoundStartOverlay({
         </p>
         <h2 className="round-start__title">{title}</h2>
         {body}
+      </div>
+    </div>
+  );
+}
+
+function DropoutOverlay({
+  playerName,
+  nationName,
+  onDone,
+}: {
+  playerName: string;
+  nationName: string;
+  onDone: () => void;
+}) {
+  useEffect(() => {
+    const t = window.setTimeout(onDone, ROUND_BANNER_MS);
+    return () => window.clearTimeout(t);
+  }, [onDone]);
+
+  return (
+    <div className="round-banner round-start" role="status" aria-live="polite">
+      <div className="round-banner__veil" />
+      <div className="round-banner__panel round-start__panel round-start__panel--dropout enter-pop">
+        <p className="round-start__eyebrow">Player left</p>
+        <h2 className="round-start__title">{playerName} dropped out</h2>
+        <p className="round-start__hint">
+          {nationName} is OUT. The game continues.
+        </p>
       </div>
     </div>
   );
@@ -1034,6 +1067,8 @@ function canOfferEnv(state: GameState, actorId: NationId): boolean {
 }
 
 function canOfferSanction(state: GameState, actorId: NationId): boolean {
+  const n = state.nations[actorId];
+  if (n.promptsDoneThisRound?.includes('sanctionAsk')) return false;
   return state.turnOrder.some((nid) => nid !== actorId && !state.nations[nid].eliminated);
 }
 
@@ -1272,12 +1307,18 @@ function GameBoard({
           : currentNationId(s);
       if (!actor) return;
       bumpSelectionActivity();
-      let nextState = s;
+      let nextState = markPromptDone(s, actor, from);
+      if (from === 'researchPick') nextState = markPromptDone(nextState, actor, 'researchAsk');
+      if (from === 'shieldPick') nextState = markPromptDone(nextState, actor, 'shieldAsk');
+      if (from === 'sanctionPick') nextState = markPromptDone(nextState, actor, 'sanctionAsk');
       if (s.mode === 'online') {
-        nextState = touchHumanActivity(s, actor);
+        nextState = touchHumanActivity(nextState, actor);
         stateRef.current = nextState;
         setState(nextState);
         syncPlanning(nextState, actor);
+      } else {
+        stateRef.current = nextState;
+        setState(nextState);
       }
       const next = nextWizardStep(nextState, from, actor);
       if (next == null) closeHumanTurn([]);
@@ -1339,7 +1380,7 @@ function GameBoard({
     return () => window.clearInterval(tick);
   }, [isOnline, isMyHumanTurn, myNationId, state.onlineGameId, setState]);
 
-  // Peers: kick other humans who went idle during selection
+  // Peers: forfeit humans who closed the tab or sat through the idle window
   useEffect(() => {
     if (!isOnline || !humansPlanning || !state.onlineGameId || !sessionUid) return;
 
@@ -1350,9 +1391,7 @@ function GameBoard({
       for (const id of aliveHumanNations(s)) {
         if (s.humanReady?.[id]) continue;
         if (id === myNationId) continue; // local idle timer handles self
-        const last =
-          s.humanLastActive?.[id] ?? s.humanPlanningStartedAt ?? now;
-        if (now - last < SELECTION_IDLE_MS) continue;
+        if (!isHumanDisconnected(s, id, now)) continue;
         void (async () => {
           const got = await tryAcquireAiLock(
             s.onlineGameId!,
@@ -1360,7 +1399,7 @@ function GameBoard({
             `kick-${s.round}-${id}`,
           );
           if (!got) return;
-          const next = await kickIdleHumanFromGame(s.onlineGameId!, id);
+          const next = await leaveOnlineGame(s.onlineGameId!, id);
           if (next) setState(next);
         })();
       }
@@ -1376,6 +1415,51 @@ function GameBoard({
     myNationId,
     setState,
   ]);
+
+  // Peers: if their player doc is available/offline or in another match, they left
+  useEffect(() => {
+    if (!isOnline || !state.onlineGameId || !sessionUid) return;
+    const gameId = state.onlineGameId;
+    return listenPlayers((players) => {
+      const s = stateRef.current;
+      if (s.onlineGameId !== gameId) return;
+      if (s.phase !== 'buy' && s.phase !== 'action') return;
+      const byUid = new Map(players.map((p) => [p.uid, p.data]));
+      for (const id of aliveHumanNations(s)) {
+        if (id === myNationId || s.humanReady?.[id]) continue;
+        const uid = s.nations[id].ownerUid;
+        if (!uid) continue;
+        const doc = byUid.get(uid);
+        if (!doc) continue;
+        const left =
+          doc.status === 'available' ||
+          doc.status === 'offline' ||
+          (doc.status === 'in_game' &&
+            Boolean(doc.currentGameId) &&
+            doc.currentGameId !== gameId);
+        if (!left) continue;
+        void (async () => {
+          const got = await tryAcquireAiLock(gameId, sessionUid, `left-${s.round}-${id}`);
+          if (!got) return;
+          const next = await leaveOnlineGame(gameId, id);
+          if (next) setState(next);
+        })();
+      }
+    });
+  }, [isOnline, state.onlineGameId, sessionUid, myNationId, setState]);
+
+  // Presence while this tab is in the match
+  useEffect(() => {
+    if (!isOnline || !myNationId || !state.onlineGameId) return;
+    const gameId = state.onlineGameId;
+    const nation = myNationId;
+    const beat = () => {
+      void touchGameHeartbeat(gameId, nation).catch(() => undefined);
+    };
+    beat();
+    const id = window.setInterval(beat, HEARTBEAT_MS);
+    return () => window.clearInterval(id);
+  }, [isOnline, myNationId, state.onlineGameId]);
 
   // If we were kicked remotely, leave the board
   useEffect(() => {
@@ -1939,6 +2023,7 @@ function GameBoard({
                     className="btn btn--xl btn--primary"
                     onClick={() => {
                       bumpSelectionActivity();
+                      setState((s) => markPromptDone(s, actorId, 'sanctionAsk'));
                       setWizardStep('sanctionPick');
                     }}
                   >
@@ -2572,6 +2657,12 @@ export default function App() {
   appStateRef.current = state;
   const lastRoundBannerRef = useRef(0);
   const [roundStartSlides, setRoundStartSlides] = useState<RoundStartSlide[] | null>(null);
+  const [dropoutNotice, setDropoutNotice] = useState<{
+    playerName: string;
+    nationName: string;
+    seq: number;
+  } | null>(null);
+  const lastDropoutSeqRef = useRef(0);
   const [rematchBusy, setRematchBusy] = useState(false);
   const [rematchError, setRematchError] = useState<string | null>(null);
 
@@ -2645,10 +2736,47 @@ export default function App() {
   }, [state, sessionUid]);
 
   const dismissRoundStart = useCallback(() => setRoundStartSlides(null), []);
+  const dismissDropout = useCallback(() => setDropoutNotice(null), []);
+
+  const notePublishedDropout = useCallback(
+    (sync: GameSyncEvent | undefined, myId: NationId | null) => {
+      if (sync?.kind !== 'dropout' || !sync.seq) return;
+      if (sync.seq <= lastDropoutSeqRef.current) return;
+      lastDropoutSeqRef.current = sync.seq;
+      if (sync.nationId && myId && sync.nationId === myId) return;
+      setDropoutNotice({
+        playerName: sync.playerName || 'A player',
+        nationName: sync.nationName || (sync.nationId ? nationDef(sync.nationId).name : 'Their nation'),
+        seq: sync.seq,
+      });
+    },
+    [],
+  );
+
+  // Closing the tab / refreshing must forfeit so others are not stuck waiting
+  useEffect(() => {
+    if (state.mode !== 'online' || !state.onlineGameId || !sessionUid) return;
+    const onLeave = () => {
+      const s = appStateRef.current;
+      if (s.mode !== 'online' || !s.onlineGameId) return;
+      if (s.phase === 'gameOver' || s.phase === 'mode' || s.phase === 'lobby') return;
+      const nation = s.uidToNation?.[sessionUid];
+      if (!nation) return;
+      void leaveOnlineGame(s.onlineGameId, nation);
+      void setPlayerStatus(sessionUid, 'available', null);
+    };
+    window.addEventListener('pagehide', onLeave);
+    window.addEventListener('beforeunload', onLeave);
+    return () => {
+      window.removeEventListener('pagehide', onLeave);
+      window.removeEventListener('beforeunload', onLeave);
+    };
+  }, [state.mode, state.onlineGameId, sessionUid]);
 
   // Online game listener — preserve local nation while still planning
   useEffect(() => {
     if (!state.onlineGameId || state.mode !== 'online') return;
+    lastDropoutSeqRef.current = 0;
     const gameId = state.onlineGameId;
     let joiningRematch = false;
     return listenGame(gameId, (game) => {
@@ -2677,6 +2805,11 @@ export default function App() {
         return;
       }
       if (!game.state) return;
+      const myIdNow =
+        sessionUid && appStateRef.current.uidToNation?.[sessionUid]
+          ? appStateRef.current.uidToNation[sessionUid]
+          : null;
+      notePublishedDropout(game.sync, myIdNow ?? null);
       setState((prev) => {
         const myId =
           sessionUid && prev.uidToNation?.[sessionUid]
@@ -2692,7 +2825,7 @@ export default function App() {
     });
     // Intentionally omit uidToNation — resolve myId from prev inside the callback
     // so we don't tear down the listener on every nation merge.
-  }, [state.onlineGameId, state.mode, sessionUid]);
+  }, [state.onlineGameId, state.mode, sessionUid, notePublishedDropout]);
 
   // Safety net: if a snapshot is missed, pull shared state so nobody sits on a dead board
   useEffect(() => {
@@ -2712,6 +2845,11 @@ export default function App() {
       try {
         const doc = await fetchGame(gameId);
         if (!doc?.state || cancelled) return;
+        const myIdNow =
+          sessionUid && appStateRef.current.uidToNation?.[sessionUid]
+            ? appStateRef.current.uidToNation[sessionUid]
+            : null;
+        notePublishedDropout(doc.sync, myIdNow ?? null);
         setState((prev) => {
           if (prev.onlineGameId !== gameId) return prev;
           const myId =
@@ -2756,7 +2894,7 @@ export default function App() {
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('focus', onVisible);
     };
-  }, [state.mode, state.onlineGameId, state.phase, state.round, sessionUid]);
+  }, [state.mode, state.onlineGameId, state.phase, state.round, sessionUid, notePublishedDropout]);
 
   // If nobody armed the aftermath timer (cinema holder dropped), arm it so the table can move
   useEffect(() => {
@@ -2852,6 +2990,14 @@ export default function App() {
           onDone={dismissRoundStart}
         />
       )}
+      {dropoutNotice && (
+        <DropoutOverlay
+          key={`drop-${dropoutNotice.seq}`}
+          playerName={dropoutNotice.playerName}
+          nationName={dropoutNotice.nationName}
+          onDone={dismissDropout}
+        />
+      )}
       {state.phase === 'session' && (
         <NameGate
           initialName={displayName}
@@ -2918,6 +3064,11 @@ export default function App() {
           sessionUid={sessionUid}
           roundBriefingActive={Boolean(roundStartSlides)}
           onKicked={(message) => {
+            const s = appStateRef.current;
+            const nation = sessionUid ? s.uidToNation?.[sessionUid] : undefined;
+            if (s.onlineGameId && nation) {
+              void leaveOnlineGame(s.onlineGameId, nation);
+            }
             if (sessionUid) void setPlayerStatus(sessionUid, 'available', null);
             setSessionError(message);
             setState({ ...createInitialState(), phase: 'mode' });

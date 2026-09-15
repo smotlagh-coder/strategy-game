@@ -1834,6 +1834,10 @@ img { max-width: 100%; display: block; }
   border-color: rgba(61, 214, 140, 0.45);
 }
 
+.round-start__panel--dropout {
+  border-color: rgba(255, 150, 90, 0.5);
+}
+
 .round-start__eyebrow {
   margin: 0 0 0.35rem;
   font-size: 0.72rem;

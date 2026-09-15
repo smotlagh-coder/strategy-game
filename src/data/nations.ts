@@ -132,6 +132,7 @@ export function initialNation(id: NationId): NationState {
     citiesStruckThisRound: [],
     bombsBoughtThisRound: 0,
     envBoughtThisRound: false,
+    promptsDoneThisRound: [],
     lockedScore: null,
     roundsSurvived: 0,
     citySurvivalPoints: 0,

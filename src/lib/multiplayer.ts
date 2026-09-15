@@ -15,7 +15,7 @@ import {
 } from 'firebase/firestore';
 import { getDb, isFirebaseConfigured } from './firebase';
 import { setPlayerStatus } from './session';
-import { createInitialState, beginHumanPlanning, forfeitNation, allAliveHumansReady, nextRound } from '../game/engine';
+import { createInitialState, beginHumanPlanning, forfeitNation, allAliveHumansReady, nextRound, playerDisplayName } from '../game/engine';
 import { finishOnlineHumanPlanning, runOnlineAiPlanning } from '../game/ai';
 import { NATIONS, nationDef } from '../data/nations';
 import {
@@ -54,6 +54,22 @@ export function stripUndefined<T>(value: T): T {
 
 export function isPlayerOnline(p: PlayerDoc, now = Date.now()): boolean {
   return now - p.lastSeen < ONLINE_MS && p.status !== 'offline';
+}
+
+/** Presence tick — does not merge planning or change phase. */
+export async function touchGameHeartbeat(gameId: string, nationId: NationId) {
+  await updateDoc(doc(getDb(), 'games', gameId), {
+    [`state.humanHeartbeat.${nationId}`]: Date.now(),
+    updatedAt: Date.now(),
+  });
+}
+
+/** Leave / disconnect — same as idle kick so the table can move on. */
+export async function leaveOnlineGame(
+  gameId: string,
+  nationId: NationId,
+): Promise<GameState | null> {
+  return kickIdleHumanFromGame(gameId, nationId);
 }
 
 export function listenPlayers(cb: (players: { uid: string; data: PlayerDoc }[]) => void): Unsubscribe {
@@ -573,6 +589,8 @@ export async function kickIdleHumanFromGame(
     }
 
     const ownerUid = game.state.nations[nationId]?.ownerUid;
+    const playerName = playerDisplayName(game.state, nationId);
+    const nationName = nationDef(nationId).name;
     let mergedState = forfeitNation(game.state, nationId);
     // Remaining humans may all be ready now — advance planning without AI for the leaver
     if (
@@ -597,6 +615,11 @@ export async function kickIdleHumanFromGame(
 
     tx.update(ref, {
       state: stripUndefined(mergedState),
+      sync: nextGameSync(game.sync, 'dropout', mergedState.round, Date.now(), {
+        nationId,
+        playerName,
+        nationName,
+      }),
       playerUids,
       playerNames,
       nationAssignments,

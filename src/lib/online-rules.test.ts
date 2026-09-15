@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SELECTION_IDLE_MS, selectionIdleSeconds } from './onlineConstants';
+import { DISCONNECT_MS, SELECTION_IDLE_MS, selectionIdleSeconds } from './onlineConstants';
 import {
   aftermathMyCityIds,
   aftermathWorldIds,
@@ -11,12 +11,31 @@ import {
 } from './lobbyInvite';
 import { phaseRank, pickFurtherState } from './onlineSync';
 import { assignNations, buildOnlineGameState } from './multiplayer';
-import type { GameState } from '../types';
+import { isHumanDisconnected } from '../game/engine';
+import type { GameState, NationId } from '../types';
 
 describe('online idle timer', () => {
   it('is 60 seconds', () => {
     expect(SELECTION_IDLE_MS).toBe(60_000);
     expect(selectionIdleSeconds()).toBe(60);
+  });
+});
+
+describe('isHumanDisconnected', () => {
+  it('flags a silent heartbeat so peers can forfeit a leaver', () => {
+    const state = buildOnlineGameState(
+      assignNations(['a', 'b']),
+      { a: 'A', b: 'B' },
+      'g-leave',
+    );
+    const nation = state.uidToNation!['a'] as NationId;
+    const now = Date.now();
+    const stale: GameState = {
+      ...state,
+      humanHeartbeat: { [nation]: now - DISCONNECT_MS - 1 },
+    };
+    expect(isHumanDisconnected(stale, nation, now)).toBe(true);
+    expect(isHumanDisconnected(state, nation, now)).toBe(false);
   });
 });
 
