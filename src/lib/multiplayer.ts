@@ -600,6 +600,40 @@ export async function lockInHumanPlanning(
 }
 
 /**
+ * Everyone is ready → publish the resolve transition. Lock-free and idempotent
+ * so any client can retry it; a stalled peer can never freeze the table.
+ */
+export async function publishPlanningComplete(
+  gameId: string,
+  round: number,
+): Promise<GameState | null> {
+  const ref = doc(getDb(), 'games', gameId);
+  return runTransaction(getDb(), async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return null;
+    const game = snap.data() as OnlineGameDoc;
+    const remote = game.state;
+
+    if (Number(remote.round) !== Number(round)) return remote;
+    if (remote.phase !== 'buy' && remote.phase !== 'action') return remote;
+    if (remote.planningComplete) return remote;
+    if (!allAliveHumansReady(remote)) return remote;
+
+    const next = finishOnlineHumanPlanning(remote);
+    if (!next.planningComplete) return remote;
+
+    tx.update(ref, {
+      state: stripUndefined(next),
+      sync: nextGameSync(game.sync, 'resolve', next.round),
+      updatedAt: Date.now(),
+      aiLock: null,
+      status: next.phase === 'gameOver' ? 'finished' : 'active',
+    });
+    return next;
+  });
+}
+
+/**
  * Merge one human's planning into the shared game doc so parallel players
  * don't overwrite each other's nations / strikes / ready flags.
  */

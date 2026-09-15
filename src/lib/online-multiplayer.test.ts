@@ -660,4 +660,45 @@ describe('3-player online simulation', () => {
       expect(adopted.phase).toBe('buy');
     }
   });
+
+  it('any client can publish resolve once everyone is ready, freeing stuck peers', () => {
+    const { state, uids } = makeThreePlayerGame();
+    const room = new SimRoom(state, uids);
+    for (const uid of uids) {
+      const local = completeSelections(room.clients[uid], room.nationFor(uid));
+      room.clients[uid] = local;
+      room.push(uid, local);
+    }
+
+    // Shared doc has everyone ready but nobody published the transition yet.
+    const stalled: GameState = {
+      ...room.shared,
+      phase: 'buy',
+      planningComplete: false,
+      aiPlanningComplete: false,
+    };
+    expect(allAliveHumansReady(stalled)).toBe(true);
+
+    // Mirrors the publishPlanningComplete transaction body.
+    const published = finishOnlineHumanPlanning(stalled);
+    expect(published.planningComplete).toBe(true);
+    expect(published.phase).not.toBe('buy');
+
+    const sync = nextGameSync(undefined, 'resolve', published.round);
+    for (const uid of uids) {
+      const stuckWatchingAi: GameState = {
+        ...room.clients[uid],
+        phase: 'buy',
+        planningComplete: false,
+      };
+      const adopted = applyPublishedGame(
+        stuckWatchingAi,
+        published,
+        room.nationFor(uid),
+        sync,
+      );
+      expect(adopted.planningComplete).toBe(true);
+      expect(adopted.phase).toBe(published.phase);
+    }
+  });
 });

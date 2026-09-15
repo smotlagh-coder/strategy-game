@@ -58,6 +58,7 @@ import {
   listenGame,
   enqueueHumanPlanningPush,
   lockInHumanPlanning,
+  publishPlanningComplete,
   publishSharedPhase,
   rematchOnlineGame,
   tryAcquireAiLock,
@@ -652,12 +653,12 @@ function NationPod({
         <img src={ART.leaders[id]} alt={def.leader} />
         <div className="nation-card__meta">
           <strong>
-            {def.name}
+            {playerDisplayName(state, id)}
             {n.eliminated ? ' — OUT' : ''}
           </strong>
           <span className="nation-card__score">{score} pts</span>
           <span>
-            {n.isHuman ? playerDisplayName(state, id) : 'AI'} · ${formatMoney(n.money)}
+            {def.name} · ${formatMoney(n.money)}
             {n.hasNuclearTech ? ' · ☢' : ''}
             {n.bombs > 0 ? ` · 💣${n.bombs}` : ''}
           </span>
@@ -1437,12 +1438,24 @@ function GameBoard({
     if (!state.humanReady?.[myNationId] || state.planningComplete) return;
     const gameId = state.onlineGameId;
     const nation = myNationId;
-    const t = window.setTimeout(() => {
-      void lockInHumanPlanning(gameId, stateRef.current, nation)
+    let cancelled = false;
+    const republish = () => {
+      const cur = stateRef.current;
+      if (
+        cancelled ||
+        cur.onlineGameId !== gameId ||
+        (cur.phase !== 'buy' && cur.phase !== 'action') ||
+        !cur.humanReady?.[nation] ||
+        cur.planningComplete
+      ) {
+        return;
+      }
+      void lockInHumanPlanning(gameId, cur, nation)
         .then((merged) => {
-          setState((cur) => {
-            if (cur.onlineGameId !== gameId) return cur;
-            return applyPublishedGame(cur, merged, nation, {
+          if (cancelled) return;
+          setState((prev) => {
+            if (prev.onlineGameId !== gameId) return prev;
+            return applyPublishedGame(prev, merged, nation, {
               seq: 0,
               kind: 'playerReady',
               round: merged.round,
@@ -1452,8 +1465,14 @@ function GameBoard({
           });
         })
         .catch(() => undefined);
-    }, 800);
-    return () => window.clearTimeout(t);
+    };
+    const t = window.setTimeout(republish, 800);
+    const retry = window.setInterval(republish, 2500);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+      window.clearInterval(retry);
+    };
   }, [
     isOnline,
     myNationId,
@@ -1505,84 +1524,46 @@ function GameBoard({
     if (isOnline) {
       if (!allAliveHumansReady(state)) return;
       if (state.planningComplete) return;
+      const gameId = state.onlineGameId;
+      if (!gameId) return;
+      const round = state.round;
 
       let cancelled = false;
-      let peerPoll: number | undefined;
-      const t = window.setTimeout(() => {
-        void (async () => {
-          if (cancelled || aiRunningRef.current) return;
-          if (stateRef.current.planningComplete) return;
-          const gameId = state.onlineGameId;
-          if (gameId && sessionUid) {
-            const got = await tryAcquireAiLock(
-              gameId,
-              sessionUid,
-              `post-human-${state.round}`,
-            );
-            if (!got || cancelled) {
-              const pull = async () => {
-                if (cancelled) return;
-                const doc = await fetchGame(gameId);
-                if (!doc?.state || cancelled) return;
-                setState((prev) => {
-                  if (prev.onlineGameId !== gameId) return prev;
-                  const myId =
-                    sessionUid && prev.uidToNation?.[sessionUid]
-                      ? prev.uidToNation[sessionUid]
-                      : null;
-                  return applyPublishedGame(prev, doc.state, myId, doc.sync);
-                });
-              };
-              void pull();
-              peerPoll = window.setInterval(() => {
-                const phase = stateRef.current.phase;
-                if (
-                  cancelled ||
-                  (phase !== 'buy' && phase !== 'action' && phase !== 'resolveStrikes')
-                ) {
-                  if (peerPoll) window.clearInterval(peerPoll);
-                  return;
-                }
-                void pull();
-              }, 1000);
-              return;
-            }
-          }
-          aiRunningRef.current = true;
-          setBusy(true);
-          try {
-            const actor = myNationId;
-            const snap = stateRef.current;
-            if (
-              actor &&
-              gameId &&
-              (snap.phase === 'buy' || snap.phase === 'action') &&
-              allAliveHumansReady(snap) &&
-              !snap.planningComplete
-            ) {
-              const merged = await lockInHumanPlanning(gameId, snap, actor);
-              setState((cur) => {
-                if (cur.onlineGameId !== gameId) return cur;
-                return applyPublishedGame(cur, merged, actor, {
-                  seq: 0,
-                  kind: 'playerReady',
-                  round: merged.round,
-                  publishedAt: Date.now(),
-                  nationId: actor,
-                });
-              });
-            }
-          } finally {
-            aiRunningRef.current = false;
-            setBusy(false);
-          }
-        })();
-      }, 200);
+      // Lock-free and idempotent: every client retries until the room publishes
+      // the resolve event, so one stalled peer can never freeze the table.
+      const attempt = async () => {
+        if (cancelled) return;
+        const cur = stateRef.current;
+        if (cur.onlineGameId !== gameId || cur.round !== round) return;
+        if (cur.phase !== 'buy' && cur.phase !== 'action') return;
+        if (!allAliveHumansReady(cur)) return;
+        try {
+          const merged = await publishPlanningComplete(gameId, round);
+          if (!merged || cancelled) return;
+          setState((prev) => {
+            if (prev.onlineGameId !== gameId) return prev;
+            const myId =
+              sessionUid && prev.uidToNation?.[sessionUid]
+                ? prev.uidToNation[sessionUid]
+                : null;
+            return applyPublishedGame(prev, merged, myId, {
+              seq: 0,
+              kind: 'resolve',
+              round: merged.round,
+              publishedAt: Date.now(),
+            });
+          });
+        } catch (err) {
+          console.error('publish planning complete failed', err);
+        }
+      };
 
+      const first = window.setTimeout(() => void attempt(), 200);
+      const retry = window.setInterval(() => void attempt(), 1200);
       return () => {
         cancelled = true;
-        window.clearTimeout(t);
-        if (peerPoll) window.clearInterval(peerPoll);
+        window.clearTimeout(first);
+        window.clearInterval(retry);
       };
     }
 

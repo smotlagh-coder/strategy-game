@@ -199,7 +199,13 @@ export interface OnlineLobby {
 }
 
 /** Shared table clock — clients follow this event, they do not invent the next round. */
-export type GameSyncKind = 'roundStart' | 'aftermath' | 'gameOver' | 'dropout' | 'playerReady';
+export type GameSyncKind =
+  | 'roundStart'
+  | 'aftermath'
+  | 'gameOver'
+  | 'dropout'
+  | 'playerReady'
+  | 'resolve';
 
 export interface GameSyncEvent {
   seq: number;

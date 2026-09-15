@@ -37,6 +37,15 @@ export function shouldFollowPublishedClock(
   if (sync.kind === 'roundStart' && remote.round > prev.round) return true;
   if (sync.kind === 'dropout') return true;
   if (
+    sync.kind === 'resolve' &&
+    remote.round === prev.round &&
+    remote.planningComplete &&
+    (prev.phase === 'buy' || prev.phase === 'action')
+  ) {
+    // Orders are locked room-wide; the published board is authoritative
+    return true;
+  }
+  if (
     prev.phase === 'roundSummary' &&
     remote.phase !== 'roundSummary' &&
     remote.phase !== 'gameOver' &&

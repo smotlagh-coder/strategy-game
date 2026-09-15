@@ -2708,7 +2708,8 @@ img { max-width: 100%; display: block; }
 
   .board-split {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    /* Enemies need room for four cards; "You" gives up the difference */
+    grid-template-rows: minmax(0, 0.72fr) minmax(0, 1.28fr);
     overflow: hidden;
   }
 
@@ -2719,9 +2720,52 @@ img { max-width: 100%; display: block; }
     overflow: hidden;
   }
 
+  /* Env, round and resources share one line */
+  .board-left__hud {
+    flex-wrap: nowrap;
+    gap: 0.28rem;
+  }
+
+  .board-left__hud .env-meter,
+  .board-left__hud .round-pill {
+    flex-shrink: 0;
+    gap: 0.25rem;
+    padding: 0.26rem 0.5rem;
+    font-size: clamp(0.6rem, 2.7vw, 0.74rem);
+  }
+
   .board-left__hud .res-bar {
-    margin-left: 0;
-    width: 100%;
+    margin-left: auto;
+    width: auto;
+    gap: 0.22rem;
+    flex-shrink: 0;
+  }
+
+  .board-left__hud .res-bar__item {
+    min-height: 1.4rem;
+    padding: 0.08rem 0.3rem 0.08rem 0.2rem;
+    font-size: clamp(0.6rem, 2.7vw, 0.72rem);
+  }
+
+  .board-left__hud .res-bar__icon,
+  .board-left__hud .res-bar__img {
+    width: 0.9rem;
+    height: 0.9rem;
+    font-size: 0.64rem;
+  }
+
+  .board-left .panel--shop .modal__leader {
+    width: 38px;
+    height: 38px;
+  }
+
+  .board-left .panel--shop .modal__head h2 {
+    font-size: 0.85rem;
+  }
+
+  .board-left__your-cities,
+  .board-left__your-cities .nation-card {
+    min-height: 5rem;
   }
 
   .board-right {
@@ -2730,13 +2774,14 @@ img { max-width: 100%; display: block; }
   }
 
   .board-right__nations {
+    gap: 0.25rem;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
   }
 
   .board-right__nations .nation-card {
-    flex: 0 0 auto;
-    min-height: 5.75rem;
+    flex: 1 1 auto;
+    min-height: 4.6rem;
     height: auto;
     max-height: none;
     overflow: visible;
