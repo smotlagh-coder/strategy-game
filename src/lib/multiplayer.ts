@@ -552,6 +552,54 @@ export function enqueueHumanPlanningPush(
 }
 
 /**
+ * Final "orders locked" write. Always sets this nation's ready flag on the
+ * shared doc and publishes a playerReady clock event peers listen for.
+ */
+export async function lockInHumanPlanning(
+  gameId: string,
+  local: GameState,
+  nationId: NationId,
+): Promise<GameState> {
+  const ref = doc(getDb(), 'games', gameId);
+  return runTransaction(getDb(), async (tx) => {
+    const snap = await tx.get(ref);
+    const remote = snap.exists() ? (snap.data() as OnlineGameDoc).state : local;
+    const prevSync = snap.exists() ? (snap.data() as OnlineGameDoc).sync : undefined;
+    if (Number(remote.round) !== Number(local.round)) return remote;
+    if (phaseRank(remote.phase) >= phaseRank('resolveStrikes') || remote.planningComplete) {
+      return remote;
+    }
+
+    const locked: GameState = {
+      ...local,
+      humanReady: { ...local.humanReady, [nationId]: true },
+    };
+    let finalState = mergeHumanPlanningWrite(remote, locked, nationId);
+    finalState = {
+      ...finalState,
+      humanReady: { ...finalState.humanReady, [nationId]: true },
+    };
+    if (
+      (finalState.phase === 'buy' || finalState.phase === 'action') &&
+      allAliveHumansReady(finalState) &&
+      !finalState.planningComplete
+    ) {
+      finalState = finishOnlineHumanPlanning(finalState);
+    }
+
+    tx.update(ref, {
+      state: stripUndefined(finalState),
+      sync: nextGameSync(prevSync, 'playerReady', finalState.round, Date.now(), {
+        nationId,
+      }),
+      updatedAt: Date.now(),
+      status: finalState.phase === 'gameOver' ? 'finished' : 'active',
+    });
+    return finalState;
+  });
+}
+
+/**
  * Merge one human's planning into the shared game doc so parallel players
  * don't overwrite each other's nations / strikes / ready flags.
  */

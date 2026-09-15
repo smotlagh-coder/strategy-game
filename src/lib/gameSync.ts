@@ -36,6 +36,17 @@ export function shouldFollowPublishedClock(
   if (sync.kind === 'gameOver' && remote.phase === 'gameOver') return true;
   if (sync.kind === 'roundStart' && remote.round > prev.round) return true;
   if (sync.kind === 'dropout') return true;
+  if (
+    prev.phase === 'roundSummary' &&
+    remote.phase !== 'roundSummary' &&
+    remote.phase !== 'gameOver' &&
+    sync.kind !== 'aftermath' &&
+    sync.kind !== 'roundStart' &&
+    sync.kind !== 'gameOver'
+  ) {
+    // Local aftermath was never published — follow the shared room
+    return true;
+  }
   if (sync.kind === 'aftermath' && prev.phase !== 'roundSummary' && remote.phase === 'roundSummary') {
     return true;
   }

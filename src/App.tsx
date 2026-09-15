@@ -37,7 +37,7 @@ import {
   shieldsLeft,
   whoIsSanctioning,
 } from './game/engine';
-import { runAllAiUntilHumanOrSummary, runAiTurn, finishOnlineHumanPlanning, runOnlineAiPlanning } from './game/ai';
+import { runAllAiUntilHumanOrSummary, runAiTurn, runOnlineAiPlanning } from './game/ai';
 import type { GameMode, GameState, GameSyncEvent, NationId, RoundWorldEvent } from './types';
 import { isFirebaseConfigured } from './lib/firebase';
 import {
@@ -59,8 +59,8 @@ import {
   listenPlayers,
   touchGameHeartbeat,
   enqueueHumanPlanningPush,
+  lockInHumanPlanning,
   publishSharedPhase,
-  pushGameState,
   rematchOnlineGame,
   tryAcquireAiLock,
 } from './lib/multiplayer';
@@ -1265,30 +1265,25 @@ function GameBoard({
         if (s.mode === 'online' && s.onlineGameId) {
           next = touchHumanActivity(next, actor);
           next = markHumanReady(next, actor);
-          if (allAliveHumansReady(next)) {
-            next = finishOnlineHumanPlanning(next);
-          }
           const gameId = s.onlineGameId;
           stateRef.current = next;
-          void enqueueHumanPlanningPush(gameId, actor, () => stateRef.current).then((merged) => {
-            setState((cur) => {
-              if (cur.onlineGameId !== gameId) return cur;
-              let adopted = applyRemoteGameSnapshot(cur, merged, actor);
-              // If merge still has all humans ready but stuck in planning, finish now
-              if (
-                (adopted.phase === 'buy' || adopted.phase === 'action') &&
-                allAliveHumansReady(adopted) &&
-                !adopted.planningComplete
-              ) {
-                const done = finishOnlineHumanPlanning(adopted);
-                if (done !== adopted) {
-                  void pushGameState(gameId, done, true);
-                  return done;
-                }
-              }
-              return adopted;
+          void lockInHumanPlanning(gameId, next, actor)
+            .then((merged) => {
+              setState((cur) => {
+                if (cur.onlineGameId !== gameId) return cur;
+                return applyPublishedGame(cur, merged, actor, {
+                  seq: 0,
+                  kind: 'playerReady',
+                  round: merged.round,
+                  publishedAt: Date.now(),
+                  nationId: actor,
+                });
+              });
+            })
+            .catch((err) => {
+              console.error('lock-in orders failed', err);
+              void enqueueHumanPlanningPush(gameId, actor, () => stateRef.current);
             });
-          });
           return next;
         }
 
@@ -1482,6 +1477,41 @@ function GameBoard({
     onKicked('You left the game — your cities were destroyed.');
   }, [isOnline, sessionUid, state.uidToNation, state.phase, onKicked]);
 
+  // If we already locked in but the shared room still lists us as waiting, publish again
+  useEffect(() => {
+    if (!isOnline || !myNationId || !state.onlineGameId) return;
+    if (state.phase !== 'buy' && state.phase !== 'action') return;
+    if (!state.humanReady?.[myNationId] || state.planningComplete) return;
+    const gameId = state.onlineGameId;
+    const nation = myNationId;
+    const t = window.setTimeout(() => {
+      void lockInHumanPlanning(gameId, stateRef.current, nation)
+        .then((merged) => {
+          setState((cur) => {
+            if (cur.onlineGameId !== gameId) return cur;
+            return applyPublishedGame(cur, merged, nation, {
+              seq: 0,
+              kind: 'playerReady',
+              round: merged.round,
+              publishedAt: Date.now(),
+              nationId: nation,
+            });
+          });
+        })
+        .catch(() => undefined);
+    }, 800);
+    return () => window.clearTimeout(t);
+  }, [
+    isOnline,
+    myNationId,
+    state.onlineGameId,
+    state.phase,
+    state.round,
+    state.humanReady,
+    state.planningComplete,
+    setState,
+  ]);
+
   // Online: AI buys/queues at round start so their board updates while humans select
   useEffect(() => {
     if (!isOnline) return;
@@ -1494,11 +1524,8 @@ function GameBoard({
       setState((s) => {
         if (s.phase !== 'buy' && s.phase !== 'action') return s;
         if (s.planningComplete || s.aiPlanningComplete) return s;
-        const next = runOnlineAiPlanning(s);
-        if (next.mode === 'online' && next.onlineGameId && next.aiPlanningComplete) {
-          void pushGameState(next.onlineGameId, next, true);
-        }
-        return next;
+        // Keep AI buys local until a human lock-in publishes — never overwrite ready flags
+        return runOnlineAiPlanning(s);
       });
     }, 50);
 
@@ -1540,13 +1567,6 @@ function GameBoard({
               `post-human-${state.round}`,
             );
             if (!got || cancelled) {
-              // Lock loser: still finish locally so we don't sit on a dead board,
-              // then keep pulling if the holder already published aftermath / R+1.
-              setState((s) => {
-                if (s.phase !== 'buy' && s.phase !== 'action') return s;
-                if (!allAliveHumansReady(s) || s.planningComplete) return s;
-                return finishOnlineHumanPlanning(s);
-              });
               const pull = async () => {
                 if (cancelled) return;
                 const doc = await fetchGame(gameId);
@@ -1578,15 +1598,27 @@ function GameBoard({
           aiRunningRef.current = true;
           setBusy(true);
           try {
-            setState((s) => {
-              if (s.phase !== 'buy' && s.phase !== 'action') return s;
-              if (!allAliveHumansReady(s) || s.planningComplete) return s;
-              const next = finishOnlineHumanPlanning(s);
-              if (next.mode === 'online' && next.onlineGameId) {
-                void pushGameState(next.onlineGameId, next, true);
-              }
-              return next;
-            });
+            const actor = myNationId;
+            const snap = stateRef.current;
+            if (
+              actor &&
+              gameId &&
+              (snap.phase === 'buy' || snap.phase === 'action') &&
+              allAliveHumansReady(snap) &&
+              !snap.planningComplete
+            ) {
+              const merged = await lockInHumanPlanning(gameId, snap, actor);
+              setState((cur) => {
+                if (cur.onlineGameId !== gameId) return cur;
+                return applyPublishedGame(cur, merged, actor, {
+                  seq: 0,
+                  kind: 'playerReady',
+                  round: merged.round,
+                  publishedAt: Date.now(),
+                  nationId: actor,
+                });
+              });
+            }
           } finally {
             aiRunningRef.current = false;
             setBusy(false);

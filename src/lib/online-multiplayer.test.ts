@@ -607,6 +607,24 @@ describe('3-player online simulation', () => {
     expect(kept.phase).toBe('roundSummary');
   });
 
+  it('local aftermath without a published clock yields to shared planning', () => {
+    const { state, uids } = makeThreePlayerGame();
+    const nation = state.uidToNation![uids[0]] as NationId;
+    const localSummary = {
+      ...state,
+      phase: 'roundSummary' as const,
+      planningComplete: true,
+    };
+    const adopted = applyPublishedGame(
+      localSummary,
+      state,
+      nation,
+      nextGameSync(undefined, 'playerReady', 1, 1, { nationId: nation }),
+    );
+    expect(adopted.phase).toBe('buy');
+    expect(adopted.round).toBe(1);
+  });
+
   it('published dropout event names the leaver and is a follow-clock kind', () => {
     const sync = nextGameSync(undefined, 'dropout', 1, 1, {
       nationId: 'us',
