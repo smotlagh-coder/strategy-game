@@ -1156,12 +1156,14 @@ function GameBoard({
   sessionUid,
   onKicked,
   roundBriefingActive = false,
+  cinemaHoldRef,
 }: {
   state: GameState;
   setState: React.Dispatch<React.SetStateAction<GameState>>;
   sessionUid?: string | null;
   onKicked?: (message: string) => void;
   roundBriefingActive?: boolean;
+  cinemaHoldRef: React.MutableRefObject<{ round: number; until: number } | null>;
 }) {
   const turnId = currentNationId(state);
   const myNationId =
@@ -1664,58 +1666,15 @@ function GameBoard({
     setState,
   ]);
 
-  // Fair simultaneous strike resolution at round end (one lock holder; peers follow sync)
+  // Every client animates the same queued strikes, then publishes the outcome
   useEffect(() => {
     if (state.phase !== 'resolveStrikes') return;
     if (resolvedRoundRef.current === state.round) return;
 
     let cancelled = false;
-    let peerPoll: number | undefined;
     const t = window.setTimeout(() => {
       void (async () => {
         if (cancelled) return;
-        if (isOnline && state.onlineGameId && sessionUid) {
-          const got = await tryAcquireAiLock(
-            state.onlineGameId,
-            sessionUid,
-            `resolve-${state.round}`,
-          );
-          if (!got || cancelled) {
-            // Follow the holder; if they never publish, resolve locally so we see aftermath
-            const gameId = state.onlineGameId;
-            const pull = async () => {
-              if (cancelled) return;
-              const doc = await fetchGame(gameId);
-              if (!doc?.state || cancelled) return;
-              setState((prev) => {
-                if (prev.onlineGameId !== gameId) return prev;
-                const myId =
-                  sessionUid && prev.uidToNation?.[sessionUid]
-                    ? prev.uidToNation[sessionUid]
-                    : null;
-                return applyPublishedGame(prev, doc.state, myId, doc.sync);
-              });
-            };
-            await pull();
-            if (!cancelled && stateRef.current.phase === 'resolveStrikes') {
-              const local = finishStrikeResolution(
-                stateRef.current.pendingStrikes.reduce(
-                  (s, strike) => applyQueuedStrike(s, strike),
-                  stateRef.current,
-                ),
-              );
-              setState(local);
-            }
-            peerPoll = window.setInterval(() => {
-              if (cancelled || stateRef.current.phase !== 'resolveStrikes') {
-                if (peerPoll) window.clearInterval(peerPoll);
-                return;
-              }
-              void pull();
-            }, 1000);
-            return;
-          }
-        }
         if (resolvedRoundRef.current === state.round) return;
         setBusy(true);
         const strikes = [...stateRef.current.pendingStrikes];
@@ -1728,39 +1687,46 @@ function GameBoard({
         resolved = finishStrikeResolution(resolved);
         resolvedRoundRef.current = state.round;
 
-        // Publish aftermath board immediately so peers leave the waiting screen,
-        // but do NOT start the strategy timer until cinema / recap finish.
-        if (resolved.mode === 'online' && resolved.onlineGameId) {
-          try {
-            if (resolved.phase === 'gameOver') {
-              await finishOnlineGame(resolved.onlineGameId, resolved, sessionUid ?? undefined);
-            } else {
-              await publishSharedPhase(resolved.onlineGameId, resolved, 'aftermath');
-            }
-          } catch (err) {
-            console.error('failed to publish aftermath', err);
-          }
+        const gameId = resolved.mode === 'online' ? resolved.onlineGameId : null;
+        // Hold off the published aftermath so the launch cinema isn't cut short
+        // by whichever client finishes animating first.
+        if (gameId) {
+          cinemaHoldRef.current = {
+            round: state.round,
+            until: Date.now() + strikes.length * 4000 + 20_000,
+          };
         }
 
-        for (const strike of strikes) {
-          if (cancelled) break;
-          await playStrikeCinema(strike.attackerId, strike.targetNationId, strike.cityId);
-        }
-        if (!cancelled) {
-          await playStrikeRecap(resolved.roundEvents);
-        }
-        if (!cancelled) {
-          let shown = resolved;
-          if (shown.phase === 'roundSummary') {
-            shown = armAftermathTimer(shown);
-            if (shown.mode === 'online' && shown.onlineGameId) {
-              try {
-                await publishSharedPhase(shown.onlineGameId, shown, 'aftermath');
-              } catch (err) {
-                console.error('failed to publish aftermath timer', err);
-              }
-            }
+        try {
+          for (const strike of strikes) {
+            if (cancelled) break;
+            await playStrikeCinema(strike.attackerId, strike.targetNationId, strike.cityId);
           }
+          if (!cancelled) {
+            await playStrikeRecap(resolved.roundEvents);
+          }
+        } finally {
+          cinemaHoldRef.current = null;
+        }
+
+        // Everyone publishes; the transaction is idempotent so the first wins
+        // and the rest simply adopt it — no lock a departed player can hold.
+        if (gameId && !cancelled) {
+          try {
+            const published = await publishStrikeResolution(gameId, state.round);
+            if (published) {
+              if (published.phase === 'gameOver') {
+                await finishOnlineGame(gameId, published, sessionUid ?? undefined);
+              }
+              resolved = published;
+            }
+          } catch (err) {
+            console.error('failed to publish strike resolution', err);
+          }
+        }
+        if (!cancelled) {
+          // Online: the published write already armed the shared countdown
+          const shown = gameId ? resolved : armAftermathTimer(resolved);
           setState(shown);
         }
         setBusy(false);
@@ -1770,7 +1736,7 @@ function GameBoard({
     return () => {
       cancelled = true;
       window.clearTimeout(t);
-      if (peerPoll) window.clearInterval(peerPoll);
+      cinemaHoldRef.current = null;
       setStrikeRecap(null);
       const resolveRecap = recapResolveRef.current;
       recapResolveRef.current = null;
@@ -1785,6 +1751,7 @@ function GameBoard({
     setState,
     playStrikeCinema,
     playStrikeRecap,
+    cinemaHoldRef,
   ]);
 
   const onSelectCity = (nationId: NationId, cityId: string) => {
@@ -2694,6 +2661,9 @@ export default function App() {
   const advancePastAi = useCallback((s: GameState) => runAllAiUntilHumanOrSummary(s), []);
   const appStateRef = useRef(state);
   appStateRef.current = state;
+  // Set while a client is playing the strike cinema, so the published aftermath
+  // doesn't cut the animation short mid-flight.
+  const cinemaHoldRef = useRef<{ round: number; until: number } | null>(null);
   const lastRoundBannerRef = useRef(0);
   const [roundStartSlides, setRoundStartSlides] = useState<RoundStartSlide[] | null>(null);
   const [dropoutNotice, setDropoutNotice] = useState<{
@@ -2774,6 +2744,17 @@ export default function App() {
     setRoundStartSlides(buildRoundStartSlides(state, myId ?? null));
   }, [state, sessionUid]);
 
+  /** True while the local strike cinema still owes this round its animation. */
+  const holdsCinema = useCallback((remote: GameState) => {
+    const hold = cinemaHoldRef.current;
+    if (!hold) return false;
+    if (Date.now() > hold.until) return false;
+    return (
+      Number(remote.round) === hold.round &&
+      phaseRank(remote.phase) > phaseRank('resolveStrikes')
+    );
+  }, []);
+
   const dismissRoundStart = useCallback(() => setRoundStartSlides(null), []);
   const dismissDropout = useCallback(() => setDropoutNotice(null), []);
 
@@ -2824,6 +2805,8 @@ export default function App() {
         return;
       }
       if (!game.state) return;
+      // Let the launch cinema finish before adopting the aftermath board
+      if (holdsCinema(game.state)) return;
       const myIdNow =
         sessionUid && appStateRef.current.uidToNation?.[sessionUid]
           ? appStateRef.current.uidToNation[sessionUid]
@@ -2844,7 +2827,7 @@ export default function App() {
     });
     // Intentionally omit uidToNation — resolve myId from prev inside the callback
     // so we don't tear down the listener on every nation merge.
-  }, [state.onlineGameId, state.mode, sessionUid, notePublishedDropout]);
+  }, [state.onlineGameId, state.mode, sessionUid, notePublishedDropout, holdsCinema]);
 
   // Safety net: if a snapshot is missed, pull shared state so nobody sits on a dead board
   useEffect(() => {
@@ -2864,6 +2847,7 @@ export default function App() {
       try {
         const doc = await fetchGame(gameId);
         if (!doc?.state || cancelled) return;
+        if (holdsCinema(doc.state)) return;
         const myIdNow =
           sessionUid && appStateRef.current.uidToNation?.[sessionUid]
             ? appStateRef.current.uidToNation[sessionUid]
@@ -2921,7 +2905,15 @@ export default function App() {
       document.removeEventListener('visibilitychange', onVisible);
       window.removeEventListener('focus', onVisible);
     };
-  }, [state.mode, state.onlineGameId, state.phase, state.round, sessionUid, notePublishedDropout]);
+  }, [
+    state.mode,
+    state.onlineGameId,
+    state.phase,
+    state.round,
+    sessionUid,
+    notePublishedDropout,
+    holdsCinema,
+  ]);
 
   // If nobody armed the aftermath timer (cinema holder dropped), arm it so the table can move
   useEffect(() => {
@@ -3090,6 +3082,7 @@ export default function App() {
           setState={setState}
           sessionUid={sessionUid}
           roundBriefingActive={Boolean(roundStartSlides)}
+          cinemaHoldRef={cinemaHoldRef}
           onKicked={(message) => {
             if (sessionUid) void setPlayerStatus(sessionUid, 'available', null);
             setSessionError(message);

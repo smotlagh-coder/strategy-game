@@ -4,6 +4,7 @@ import {
   buyShield,
   markHumanReady,
   allAliveHumansReady,
+  applyQueuedStrike,
   touchHumanActivity,
   finishStrikeResolution,
   armAftermathTimer,
@@ -661,6 +662,39 @@ describe('3-player online simulation', () => {
     }
   });
 
+  it('a dropout event is followed once, so a client that moved on is not yanked back', () => {
+    const { state, uids } = makeThreePlayerGame();
+    const room = new SimRoom(state, uids);
+    const me = uids[0];
+    const myNation = room.nationFor(me);
+
+    // Shared doc still shows planning; I have already resolved locally
+    const planning = room.shared;
+    const localSummary: GameState = {
+      ...room.clients[me],
+      phase: 'roundSummary',
+      planningComplete: true,
+      aftermathEndsAt: Date.now() + 5000,
+    };
+    const dropout = nextGameSync(undefined, 'dropout', planning.round, Date.now(), {
+      nationId: 'us',
+      playerName: 'Daddy',
+      nationName: 'United States',
+    });
+
+    const first = applyPublishedGame(localSummary, planning, myNation, dropout);
+    expect(first.syncSeq).toBe(dropout.seq);
+
+    // Same event arriving again (snapshot echo / safety pull) must not rewind us
+    const resolvedAgain: GameState = {
+      ...first,
+      phase: 'roundSummary',
+      planningComplete: true,
+    };
+    const second = applyPublishedGame(resolvedAgain, planning, myNation, dropout);
+    expect(second.phase).toBe('roundSummary');
+  });
+
   it('any client can publish resolve once everyone is ready, freeing stuck peers', () => {
     const { state, uids } = makeThreePlayerGame();
     const room = new SimRoom(state, uids);
@@ -700,5 +734,33 @@ describe('3-player online simulation', () => {
       expect(adopted.planningComplete).toBe(true);
       expect(adopted.phase).toBe(published.phase);
     }
+  });
+
+  it('strike resolution publishes an armed aftermath clock for every client', () => {
+    const { state, nations } = (() => {
+      const { state: s, uids } = makeThreePlayerGame();
+      return { state: s, nations: uids.map((u) => s.uidToNation![u] as NationId) };
+    })();
+
+    let s = state;
+    for (const id of nations) s = completeSelections(s, id);
+    s = finishOnlineHumanPlanning(s);
+
+    // Mirrors the publishStrikeResolution transaction body
+    let published = s.pendingStrikes.reduce((acc, strike) => applyQueuedStrike(acc, strike), s);
+    published = finishStrikeResolution(published);
+    if (published.phase === 'roundSummary') published = armAftermathTimer(published);
+
+    expect(published.pendingStrikes).toEqual([]);
+    if (published.phase === 'roundSummary') {
+      expect(published.aftermathEndsAt).toBeGreaterThan(Date.now());
+    }
+
+    // A peer still sitting on resolveStrikes adopts the same countdown
+    const peer: GameState = { ...s, phase: 'resolveStrikes' };
+    const sync = nextGameSync(undefined, 'aftermath', published.round);
+    const adopted = applyPublishedGame(peer, published, nations[0], sync);
+    expect(adopted.phase).toBe(published.phase);
+    expect(adopted.aftermathEndsAt).toBe(published.aftermathEndsAt);
   });
 });

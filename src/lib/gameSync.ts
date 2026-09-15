@@ -35,7 +35,10 @@ export function shouldFollowPublishedClock(
   if (sync.round > prev.round) return true;
   if (sync.kind === 'gameOver' && remote.phase === 'gameOver') return true;
   if (sync.kind === 'roundStart' && remote.round > prev.round) return true;
-  if (sync.kind === 'dropout') return true;
+  // Events that rewind local progress must land once, not on every snapshot,
+  // or a client that has moved on gets yanked back in a loop.
+  const unseen = sync.seq > (prev.syncSeq ?? 0);
+  if (sync.kind === 'dropout') return unseen;
   if (
     sync.kind === 'resolve' &&
     remote.round === prev.round &&
@@ -46,6 +49,7 @@ export function shouldFollowPublishedClock(
     return true;
   }
   if (
+    unseen &&
     prev.phase === 'roundSummary' &&
     remote.phase !== 'roundSummary' &&
     remote.phase !== 'gameOver' &&
@@ -72,6 +76,8 @@ export function applyPublishedGame(
   myNationId: NationId | null,
   sync?: GameSyncEvent | null,
 ): GameState {
+  // Tracked locally only, so a peer's doc write can never rewind our watermark
+  const syncSeq = Math.max(prev.syncSeq ?? 0, sync?.seq ?? 0);
   if (shouldFollowPublishedClock(prev, remote, sync)) {
     let next = remote;
     if (
@@ -81,7 +87,7 @@ export function applyPublishedGame(
     ) {
       next = runOnlineAiPlanning(next);
     }
-    return ensureIncome(next);
+    return { ...ensureIncome(next), syncSeq };
   }
-  return applyRemoteGameSnapshot(prev, remote, myNationId);
+  return { ...applyRemoteGameSnapshot(prev, remote, myNationId), syncSeq };
 }

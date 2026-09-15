@@ -132,6 +132,8 @@ export interface GameState {
   onlineHostUid?: string | null;
   roundScores: RoundScore[];
   scoreHistory: RoundScore[][];
+  /** Highest published sync event this client has followed (local only). */
+  syncSeq?: number;
   log: LogEntry[];
   winner: NationId | 'draw' | null;
   pendingCountryPick: NationId | null;

@@ -36,8 +36,9 @@ function decodeScoreHistory(history: unknown): RoundScore[][] {
  * and silently loses whatever else that write carried (ready flags, orders).
  */
 export function encodeGameState(state: GameState): Record<string, unknown> {
+  const { syncSeq: _localOnly, ...rest } = state;
   return stripUndefined({
-    ...state,
+    ...rest,
     scoreHistory: encodeScoreHistory(state.scoreHistory),
   }) as unknown as Record<string, unknown>;
 }

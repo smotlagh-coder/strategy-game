@@ -15,7 +15,17 @@ import {
 } from 'firebase/firestore';
 import { getDb, isFirebaseConfigured } from './firebase';
 import { setPlayerStatus } from './session';
-import { createInitialState, beginHumanPlanning, forfeitNation, allAliveHumansReady, nextRound, playerDisplayName } from '../game/engine';
+import {
+  createInitialState,
+  beginHumanPlanning,
+  forfeitNation,
+  allAliveHumansReady,
+  applyQueuedStrike,
+  armAftermathTimer,
+  finishStrikeResolution,
+  nextRound,
+  playerDisplayName,
+} from '../game/engine';
 import { finishOnlineHumanPlanning, runOnlineAiPlanning } from '../game/ai';
 import { NATIONS, nationDef } from '../data/nations';
 import {
@@ -550,6 +560,45 @@ export function enqueueHumanPlanningPush(
     .then(() => pushHumanPlanningState(gameId, getLocal(), nationId));
   humanPushQueues.set(gameId, next);
   return next;
+}
+
+/**
+ * Strikes land on the shared doc. Lock-free and idempotent like the planning
+ * transition, so a player who left mid-round cannot freeze the resolution.
+ * The aftermath countdown is armed in the same write, keeping every client on
+ * one clock no matter who publishes first.
+ */
+export async function publishStrikeResolution(
+  gameId: string,
+  round: number,
+): Promise<GameState | null> {
+  const ref = doc(getDb(), 'games', gameId);
+  return runTransaction(getDb(), async (tx) => {
+    const snap = await tx.get(ref);
+    const game = readGameDoc(snap);
+    if (!game) return null;
+    const remote = game.state;
+
+    if (Number(remote.round) !== Number(round)) return remote;
+    if (remote.phase !== 'resolveStrikes') return remote;
+
+    let next = remote.pendingStrikes.reduce(
+      (s, strike) => applyQueuedStrike(s, strike),
+      remote,
+    );
+    next = finishStrikeResolution(next);
+    if (next.phase === 'roundSummary') next = armAftermathTimer(next);
+
+    const kind: GameSyncKind = next.phase === 'gameOver' ? 'gameOver' : 'aftermath';
+    tx.update(ref, {
+      state: encodeGameState(next),
+      sync: nextGameSync(game.sync, kind, next.round),
+      updatedAt: Date.now(),
+      aiLock: null,
+      status: next.phase === 'gameOver' ? 'finished' : 'active',
+    });
+    return next;
+  });
 }
 
 /**
