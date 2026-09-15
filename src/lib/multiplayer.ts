@@ -418,8 +418,7 @@ export async function pushGameState(gameId: string, state: GameState, clearAiLoc
 
 /**
  * Advance past roundSummary in a transaction so EVERY caller gets the new state.
- * First writer runs nextRound; later callers receive the already-advanced doc
- * (no one-shot lock that only the winner "consumes").
+ * First writer runs nextRound; later callers receive the already-advanced doc.
  */
 export async function advanceOnlineRound(
   gameId: string,
@@ -437,10 +436,6 @@ export async function advanceOnlineRound(
       return remote;
     }
     if (remote.phase !== 'roundSummary' || remote.round !== fromRound) {
-      return remote;
-    }
-    // Respect shared think-time so one early client cannot skip strategy for everyone
-    if (remote.aftermathEndsAt && Date.now() < remote.aftermathEndsAt - 250) {
       return remote;
     }
 

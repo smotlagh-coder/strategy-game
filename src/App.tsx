@@ -2017,8 +2017,8 @@ function RoundSummary({
       {secondsLeft != null && (
         <div className="aftermath-countdown" role="status" aria-live="polite">
           {isFinal
-            ? `Final results in ${secondsLeft}s`
-            : `Next round starts in ${secondsLeft}s`}
+            ? `Final results in ${secondsLeft} ${secondsLeft === 1 ? 'second' : 'seconds'}`
+            : `Next round starts in ${secondsLeft} ${secondsLeft === 1 ? 'second' : 'seconds'}`}
           <span className="aftermath-countdown__hint">Use this time to plan your strategy</span>
         </div>
       )}
@@ -2133,8 +2133,8 @@ function RoundSummary({
                 {secondsLeft != null ? (
                   <p className="round-report__auto-hint">
                     {isFinal
-                      ? `Final results in ${secondsLeft}s…`
-                      : `Round ${state.round + 1} starts in ${secondsLeft}s — study the board`}
+                      ? `Final results in ${secondsLeft} ${secondsLeft === 1 ? 'second' : 'seconds'}…`
+                      : `Round ${state.round + 1} starts in ${secondsLeft} ${secondsLeft === 1 ? 'second' : 'seconds'} — study the board`}
                   </p>
                 ) : isFinal ? (
                   <p className="round-report__auto-hint">Showing final results…</p>
@@ -2327,49 +2327,52 @@ export default function App() {
   const [showLeaderboard, setShowLeaderboard] = useState(false);
   const advancePastAi = useCallback((s: GameState) => runAllAiUntilHumanOrSummary(s), []);
   const advancingRoundRef = useRef(false);
+  const aftermathEndsAtRef = useRef<number | null>(null);
+  const appStateRef = useRef(state);
+  appStateRef.current = state;
   const lastRoundBannerRef = useRef(0);
   const [roundBanner, setRoundBanner] = useState<number | null>(null);
   const [aftermathSecondsLeft, setAftermathSecondsLeft] = useState<number | null>(null);
   const [rematchBusy, setRematchBusy] = useState(false);
   const [rematchError, setRematchError] = useState<string | null>(null);
 
-  const advanceFromRoundSummary = useCallback(() => {
+  const advanceFromRoundSummary = useCallback(async () => {
+    const current = appStateRef.current;
+    if (current.phase !== 'roundSummary') return false;
+
+    if (current.mode === 'online' && current.onlineGameId) {
+      const gameId = current.onlineGameId;
+      const fromRound = current.round;
+      try {
+        const remote = await advanceOnlineRound(gameId, fromRound);
+        if (!remote) return false;
+        if (remote.phase === 'roundSummary' && remote.round === fromRound) {
+          return false;
+        }
+        if (remote.phase === 'gameOver') {
+          void finishOnlineGame(gameId, remote, sessionUid ?? undefined);
+        }
+        setState((cur) => {
+          if (cur.onlineGameId !== gameId) return cur;
+          const myId =
+            sessionUid && cur.uidToNation?.[sessionUid]
+              ? cur.uidToNation[sessionUid]
+              : null;
+          return applyRemoteGameSnapshot(cur, remote, myId);
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
     setState((s) => {
       if (s.phase !== 'roundSummary') return s;
-
-      // Online: every client runs the same transaction — first advances, all get R+1 back
-      if (s.mode === 'online' && s.onlineGameId) {
-        const gameId = s.onlineGameId;
-        const fromRound = s.round;
-        void advanceOnlineRound(gameId, fromRound).then((remote) => {
-          if (!remote) {
-            advancingRoundRef.current = false;
-            return;
-          }
-          // Think-time gate: another client / clock skew — keep waiting
-          if (remote.phase === 'roundSummary' && remote.round === fromRound) {
-            advancingRoundRef.current = false;
-            return;
-          }
-          if (remote.phase === 'gameOver') {
-            void finishOnlineGame(gameId, remote, sessionUid ?? undefined);
-          }
-          setState((cur) => {
-            if (cur.onlineGameId !== gameId) return cur;
-            const myId =
-              sessionUid && cur.uidToNation?.[sessionUid]
-                ? cur.uidToNation[sessionUid]
-                : null;
-            return applyRemoteGameSnapshot(cur, remote, myId);
-          });
-        });
-        return s;
-      }
-
       const n = nextRound(s);
       if (n.phase === 'gameOver') return n;
       return advancePastAi(n);
     });
+    return true;
   }, [advancePastAi, sessionUid]);
 
   // Brief "Round X" overlay whenever a new round of play begins
@@ -2414,28 +2417,46 @@ export default function App() {
   useEffect(() => {
     if (state.phase !== 'roundSummary') {
       advancingRoundRef.current = false;
+      aftermathEndsAtRef.current = null;
       setAftermathSecondsLeft(null);
       return;
     }
-    const endsAt = state.aftermathEndsAt ?? Date.now() + AFTERMATH_THINK_MS;
 
+    // Prefer shared server time; pin fallback once so effect churn can't reset the timer
+    if (state.aftermathEndsAt) {
+      aftermathEndsAtRef.current = state.aftermathEndsAt;
+    } else if (aftermathEndsAtRef.current == null) {
+      aftermathEndsAtRef.current = Date.now() + AFTERMATH_THINK_MS;
+    }
+    const endsAt = aftermathEndsAtRef.current;
+
+    let cancelled = false;
     const tick = () => {
+      if (cancelled) return;
       const left = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
       setAftermathSecondsLeft(left);
-      if (left > 0 || advancingRoundRef.current) return;
+      if (left > 0) return;
+      if (advancingRoundRef.current) return;
       advancingRoundRef.current = true;
-      advanceFromRoundSummary();
+      void advanceFromRoundSummary()
+        .then((ok) => {
+          if (!ok && !cancelled) {
+            // Retry shortly — transaction may have raced or briefly failed
+            advancingRoundRef.current = false;
+          }
+        })
+        .catch(() => {
+          advancingRoundRef.current = false;
+        });
     };
 
     tick();
     const id = window.setInterval(tick, 250);
-    return () => window.clearInterval(id);
-  }, [
-    state.phase,
-    state.aftermathEndsAt,
-    state.round,
-    advanceFromRoundSummary,
-  ]);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [state.phase, state.aftermathEndsAt, state.round, advanceFromRoundSummary]);
 
   // Online game listener — preserve local nation while still planning
   useEffect(() => {

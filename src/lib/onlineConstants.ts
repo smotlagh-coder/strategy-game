@@ -2,7 +2,7 @@
 export const SELECTION_IDLE_MS = 60_000;
 
 /** Aftermath think time before next round / final results. */
-export const AFTERMATH_THINK_MS = 10_000;
+export const AFTERMATH_THINK_MS = 5_000;
 
 /** Round-start banner duration after advancing. */
 export const ROUND_BANNER_MS = 3_000;
