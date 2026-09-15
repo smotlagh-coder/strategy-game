@@ -56,6 +56,8 @@ export interface NationState {
   bombsBoughtThisRound: number;
   /** Whether environment was bought this round */
   envBoughtThisRound: boolean;
+  /** Round number for which base/research income was already applied */
+  incomeRound?: number;
   /** Score frozen when eliminated so wipeout doesn't zero the standings */
   lockedScore: number | null;
   /** Rounds completed while still alive */

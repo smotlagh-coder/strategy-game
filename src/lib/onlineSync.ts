@@ -1,5 +1,5 @@
 import type { GameState, NationId, NationState, Phase } from '../types';
-import { allAliveHumansReady } from '../game/engine';
+import { allAliveHumansReady, ensureIncome } from '../game/engine';
 import { finishOnlineHumanPlanning, runOnlineAiPlanning } from '../game/ai';
 
 /** Later phases win merges so stale resolveStrikes cannot clobber roundSummary. */
@@ -83,6 +83,23 @@ export function mergeNationPlanning(
   const eliminated =
     Boolean(remote.eliminated || local.eliminated) || cities.every((c) => c.destroyed);
 
+  const remoteIncome = remote.incomeRound ?? 0;
+  const localIncome = local.incomeRound ?? 0;
+  // Prefer the side that already received this round's income so Math.min
+  // cannot discard the +$3M grant against a stale pre-income snapshot.
+  let money: number;
+  let incomeRound: number | undefined;
+  if (remoteIncome > localIncome) {
+    money = remote.money;
+    incomeRound = remote.incomeRound;
+  } else if (localIncome > remoteIncome) {
+    money = local.money;
+    incomeRound = local.incomeRound;
+  } else {
+    money = Math.min(remote.money, local.money);
+    incomeRound = remote.incomeRound ?? local.incomeRound;
+  }
+
   return {
     ...remote,
     ...local,
@@ -91,7 +108,8 @@ export function mergeNationPlanning(
     hasNuclearTech: remote.hasNuclearTech || local.hasNuclearTech,
     nuclearTechUnlockedRound:
       local.nuclearTechUnlockedRound ?? remote.nuclearTechUnlockedRound,
-    money: Math.min(remote.money, local.money),
+    money: eliminated ? 0 : money,
+    incomeRound: eliminated ? undefined : incomeRound,
     bombs: eliminated ? 0 : Math.max(remote.bombs, local.bombs),
     bombsBoughtThisRound: Math.max(remote.bombsBoughtThisRound, local.bombsBoughtThisRound),
     bombsUsed: Math.max(remote.bombsUsed, local.bombsUsed),
@@ -143,12 +161,12 @@ export function applyRemoteGameSnapshot(
     ) {
       next = runOnlineAiPlanning(next);
     }
-    return next;
+    return ensureIncome(next);
   }
 
   // Remote already left planning (strikes / aftermath / next phase) — follow it
   if (phaseRank(remote.phase) > phaseRank(prev.phase)) {
-    return {
+    return ensureIncome({
       ...remote,
       nations: mergeNationMaps(remote, prev),
       humanReady: mergeHumanReadyFlags(remote.humanReady, prev.humanReady),
@@ -161,7 +179,7 @@ export function applyRemoteGameSnapshot(
         : prev.previousRoundEvents,
       previousRoundNumber: remote.previousRoundNumber ?? prev.previousRoundNumber ?? null,
       aiPlanningComplete: Boolean(remote.aiPlanningComplete || prev.aiPlanningComplete),
-    };
+    });
   }
 
   // Same round: never go backwards in phase (stops resolveStrikes ↔ summary loops)
@@ -177,7 +195,7 @@ export function applyRemoteGameSnapshot(
     further.planningComplete ||
     phaseRank(further.phase) >= phaseRank('resolveStrikes')
   ) {
-    return {
+    return ensureIncome({
       ...further,
       nations: mergeNationMaps(further, other),
       humanReady: ready ?? further.humanReady,
@@ -187,7 +205,7 @@ export function applyRemoteGameSnapshot(
         ? further.previousRoundEvents
         : other.previousRoundEvents,
       previousRoundNumber: further.previousRoundNumber ?? other.previousRoundNumber ?? null,
-    };
+    });
   }
 
   // Still selecting locally: keep my in-progress nation, take everyone else from remote
@@ -223,7 +241,7 @@ export function applyRemoteGameSnapshot(
     if (allAliveHumansReady(next) && !next.planningComplete) {
       next = finishOnlineHumanPlanning(next);
     }
-    return next;
+    return ensureIncome(next);
   }
 
   const nations = { ...remote.nations };
@@ -246,7 +264,7 @@ export function applyRemoteGameSnapshot(
   ) {
     next = finishOnlineHumanPlanning(next);
   }
-  return next;
+  return ensureIncome(next);
 }
 
 /** Server-side merge when one human pushes planning state. */
@@ -359,5 +377,5 @@ export function mergeHumanPlanningWrite(
     merged = finishOnlineHumanPlanning(merged);
   }
 
-  return merged;
+  return ensureIncome(merged);
 }

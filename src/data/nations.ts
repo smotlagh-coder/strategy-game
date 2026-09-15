@@ -87,10 +87,11 @@ export const COSTS = {
 } as const;
 
 export const STARTING_MONEY = 10;
-/** Flat income every living nation receives each round */
-export const BASE_INCOME = 3.5;
+/** Flat income every living nation receives each round (from round 2) */
+export const BASE_INCOME = 3;
 export const RESEARCH_INCOME = 1.5;
-export const SANCTION_PENALTY = 0.2;
+/** Each sanction cuts the target's total revenue by this fraction */
+export const SANCTION_PENALTY = 0.1;
 export const ENV_BOMB_HIT = 5;
 export const ENV_IMPROVE = 10;
 /** Points awarded each time a nation survives a completed round */

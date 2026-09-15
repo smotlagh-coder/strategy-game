@@ -31,6 +31,7 @@ import {
   toggleSanction,
   touchHumanActivity,
   citiesLeft,
+  shieldsLeft,
   whoIsSanctioning,
 } from './game/engine';
 import { runAllAiUntilHumanOrSummary, runAiTurn, finishOnlineHumanPlanning, runOnlineAiPlanning } from './game/ai';
@@ -372,7 +373,7 @@ function RoundStartOverlay({
             <img src={ART.leaders[id]} alt="" />
             <div>
               <strong>{nationDef(id).name}</strong>
-              <span>sanctioned you (−20% research income)</span>
+              <span>sanctioned you (−10% income)</span>
             </div>
           </li>
         ))}
@@ -506,6 +507,35 @@ function NationFlag({
   );
 }
 
+function ResourceBar({
+  money,
+  bombs,
+  shields,
+}: {
+  money: number;
+  bombs: number;
+  shields: number;
+}) {
+  return (
+    <div className="res-bar" aria-label="Your resources">
+      <div className="res-bar__item" title="Treasury">
+        <span className="res-bar__icon res-bar__icon--cash" aria-hidden>
+          $
+        </span>
+        <span className="res-bar__val">{formatMoney(money)}</span>
+      </div>
+      <div className="res-bar__item" title="Bombs">
+        <img className="res-bar__img" src={ART.missile} alt="" draggable={false} />
+        <span className="res-bar__val">{bombs}</span>
+      </div>
+      <div className="res-bar__item" title="Shields">
+        <img className="res-bar__img" src={ART.shield} alt="" draggable={false} />
+        <span className="res-bar__val">{shields}</span>
+      </div>
+    </div>
+  );
+}
+
 function WizardNationHeader({
   state,
   nationId,
@@ -535,9 +565,8 @@ function WizardNationHeader({
         <h2>
           {playerDisplayName(state, nationId)}
         </h2>
-        <p>
-          ${formatMoney(money)} · Bombs {bombs} · Env {environment}%
-        </p>
+        <ResourceBar money={money} bombs={bombs} shields={shieldsLeft(state, nationId)} />
+        <p className="wizard-nation-head__env">Env {environment}%</p>
         {idleSecondsLeft != null && (
           <p className={`idle-timer ${idleSecondsLeft <= 10 ? 'is-urgent' : ''}`}>
             Select within {idleSecondsLeft}s or you leave the game
@@ -1889,7 +1918,7 @@ function GameBoard({
               <>
                 <h3 className="turn-wizard__q">Do you want to impose sanctions?</h3>
                 <p className="turn-wizard__hint">
-                  Free · each sanctioned rival loses 20% of their income
+                  Free · each sanctioned rival loses 10% of their income
                 </p>
                 <div className="turn-wizard__actions">
                   <button
@@ -1915,7 +1944,7 @@ function GameBoard({
               <>
                 <h3 className="turn-wizard__q">Choose rivals to sanction</h3>
                 <p className="turn-wizard__hint">
-                  Tap to toggle · −20% income each · currently sanctioning{' '}
+                  Tap to toggle · −10% income each · currently sanctioning{' '}
                   {turn.sanctions.filter((nid) => !state.nations[nid]?.eliminated).length}
                 </p>
                 <div className="turn-wizard__sanction-grid">
@@ -2021,6 +2050,11 @@ function GameBoard({
             <div className="round-pill">
               ROUND {state.round}/{state.maxRounds}
             </div>
+            <ResourceBar
+              money={turn.money}
+              bombs={turn.bombs}
+              shields={shieldsLeft(state, actorId)}
+            />
           </header>
 
           <h3 className="board-section-title">
@@ -2040,11 +2074,6 @@ function GameBoard({
                     <h2>
                       {playerDisplayName(state, actorId).toUpperCase()}
                     </h2>
-                    <p>
-                      ${formatMoney(turn.money)} · Bombs {turn.bombs} · 🔍
-                      {turn.cities.filter((c) => !c.destroyed && c.hasResearch).length}
-                      {turn.hasNuclearTech ? ' · ☢' : ''}
-                    </p>
                     {inboundSanctions.length > 0 && (
                       <p className="sanctioned-by">
                         Sanctioned by:{' '}

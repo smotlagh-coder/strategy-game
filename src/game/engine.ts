@@ -485,7 +485,7 @@ export function startGame(state: GameState): GameState {
     round: 1,
     log: [
       log(
-        'Round 1 begins. Spend your starting funds — $3.5M income starts in round 2.',
+        'Round 1 begins. Spend your starting funds — $3M income starts in round 2.',
         'neutral',
       ),
     ],
@@ -493,10 +493,16 @@ export function startGame(state: GameState): GameState {
   return beginHumanPlanning(base);
 }
 
-/** Apply base + research income (sanctions cut total revenue 20% each) at round start.
- *  Income begins in round 2 (not round 1). */
+/** Apply base + research income (sanctions cut total revenue 10% each) at round start.
+ *  Income begins in round 2 (not round 1). Safe to call more than once per round. */
 export function applyIncome(state: GameState): GameState {
   if (state.round < 2) return { ...state, lastIncomeLedger: [] };
+
+  const unpaid = state.turnOrder.filter((id) => {
+    const n = state.nations[id];
+    return !n.eliminated && n.incomeRound !== state.round;
+  });
+  if (unpaid.length === 0) return state;
 
   const nations = { ...state.nations };
   const logEntries = [...state.log];
@@ -506,21 +512,38 @@ export function applyIncome(state: GameState): GameState {
     const n = nations[id];
     if (n.eliminated) continue;
 
-    const previousBalance = n.money;
     const researchIncome =
       n.cities.filter((c) => !c.destroyed && c.hasResearch).length * RESEARCH_INCOME;
     const gross = BASE_INCOME + researchIncome;
     const sanctioners = state.turnOrder.filter(
       (other) => other !== id && !nations[other].eliminated && nations[other].sanctions.includes(id),
     );
-    const sanctionPenalty = Math.min(0.8, sanctioners.length * SANCTION_PENALTY);
+    const sanctionPenalty = Math.min(0.9, sanctioners.length * SANCTION_PENALTY);
     const revenue = +(gross * (1 - sanctionPenalty)).toFixed(2);
+
+    if (n.incomeRound === state.round) {
+      const prevEntry = state.lastIncomeLedger.find((e) => e.nationId === id);
+      ledger.push(
+        prevEntry ?? {
+          nationId: id,
+          previousBalance: +(n.money - revenue).toFixed(2),
+          revenue,
+          balanceAfterIncome: n.money,
+          sanctionPenalty,
+          sanctioners,
+        },
+      );
+      continue;
+    }
+
+    const previousBalance = n.money;
     const balanceAfterIncome = +(previousBalance + revenue).toFixed(2);
 
     nations[id] = {
       ...n,
       money: balanceAfterIncome,
       researchCenters: n.cities.filter((c) => !c.destroyed && c.hasResearch).length,
+      incomeRound: state.round,
     };
     ledger.push({
       nationId: id,
@@ -538,6 +561,19 @@ export function applyIncome(state: GameState): GameState {
   }
 
   return { ...state, nations, log: logEntries, lastIncomeLedger: ledger };
+}
+
+/** Ensure round income has been applied (online sync safety net). */
+export function ensureIncome(state: GameState): GameState {
+  if (state.phase !== 'buy' && state.phase !== 'action' && state.phase !== 'income') {
+    return state;
+  }
+  if (state.round < 2) return state;
+  const needsPay = state.turnOrder.some((id) => {
+    const n = state.nations[id];
+    return !n.eliminated && n.incomeRound !== state.round;
+  });
+  return needsPay ? applyIncome(state) : state;
 }
 
 /** Nations currently sanctioning `targetId`. */
@@ -895,7 +931,7 @@ export function toggleSanction(state: GameState, target: NationId, nationId?: Na
       log(
         has
           ? `${nationDef(id).name} lifted sanctions on ${nationDef(target).name}.`
-          : `${nationDef(id).name} sanctioned ${nationDef(target).name} (−20% research income).`,
+          : `${nationDef(id).name} sanctioned ${nationDef(target).name} (−10% income).`,
         'sanction',
       ),
     ],
