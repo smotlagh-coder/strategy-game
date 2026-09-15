@@ -6,6 +6,8 @@ export const ART = {
   explosion: '/art/explosion.png',
   nukeTech: '/art/nuke-tech.png',
   shield: '/art/shield-icon.png',
+  researchLab: '/art/research-lab.jpg',
+  researchIcon: '/art/research-icon.png',
   sanction: '/art/sanction-icon.svg',
   leaders: {
     russia: '/art/leader-russia.png',

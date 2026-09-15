@@ -91,7 +91,7 @@ function wizardArt(step: WizardStep): string {
       return ART.nukeTech;
     case 'researchAsk':
     case 'researchPick':
-      return ART.map;
+      return ART.researchLab;
     case 'bombs':
     case 'strike':
       return ART.missile;
@@ -691,7 +691,7 @@ function NationPod({
               )}
               {c.hasResearch && !c.destroyed && (
                 <span className="city-tile__research" title="Research" aria-label="Research">
-                  🔍
+                  <img src={ART.researchIcon} alt="" draggable={false} />
                 </span>
               )}
               {(selected || bombLocked) && (
@@ -2435,7 +2435,15 @@ function RoundSummary({
                 <h2 className="round-report__panel-title">World — shields, research, ruins</h2>
                 <p className="round-report__legend">
                   <span>🛡 Shield</span>
-                  <span>🔍 Research</span>
+                  <span>
+                    <img
+                      className="legend-icon"
+                      src={ART.researchIcon}
+                      alt=""
+                      draggable={false}
+                    />{' '}
+                    Research
+                  </span>
                   <span className="round-report__legend-burnt">Burnt = destroyed</span>
                 </p>
                 <div className="round-report__world-list">
@@ -2467,7 +2475,10 @@ function RoundSummary({
           <h3 className="board-section-title">World — shields, research, ruins</h3>
           <p className="round-report__legend">
             <span>🛡 Shield</span>
-            <span>🔍 Research</span>
+            <span>
+              <img className="legend-icon" src={ART.researchIcon} alt="" draggable={false} />{' '}
+              Research
+            </span>
             <span className="round-report__legend-burnt">Burnt = destroyed</span>
           </p>
           <div className="board-right__nations">

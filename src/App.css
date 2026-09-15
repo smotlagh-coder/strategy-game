@@ -967,12 +967,19 @@ img { max-width: 100%; display: block; }
   width: clamp(1.55rem, 22%, 2.35rem);
   height: clamp(1.55rem, 22%, 2.35rem);
   border-radius: 999px;
+  overflow: hidden;
   font-size: clamp(0.95rem, 14%, 1.45rem);
   line-height: 1;
   background: rgba(8, 18, 36, 0.82);
   border: 2px solid rgba(120, 220, 160, 0.85);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55), 0 0 10px rgba(80, 200, 140, 0.35);
   filter: none;
+}
+
+.city-tile__research img {
+  width: 128%;
+  height: 128%;
+  object-fit: contain;
 }
 
 .city-tile.has-shield {
@@ -1722,9 +1729,20 @@ img { max-width: 100%; display: block; }
 
 .turn-wizard__hero--researchAsk,
 .turn-wizard__hero--researchPick {
+  width: min(420px, 92%);
   background:
     radial-gradient(ellipse at 50% 45%, rgba(80, 190, 255, 0.22), transparent 60%),
     rgba(6, 14, 28, 0.9);
+}
+
+/* Lab scene reads as a photo, not a floating icon */
+.turn-wizard__hero--researchAsk img,
+.turn-wizard__hero--researchPick img {
+  width: 100%;
+  height: min(170px, 38vw);
+  object-fit: cover;
+  border-radius: 14px;
+  animation: none;
 }
 
 .turn-wizard__hero--sanctionAsk,
@@ -2440,6 +2458,14 @@ img { max-width: 100%; display: block; }
 
 .round-report__legend-burnt {
   color: #ff9b7a;
+}
+
+.legend-icon {
+  width: 1.15em;
+  height: 1.15em;
+  border-radius: 999px;
+  object-fit: contain;
+  vertical-align: -0.25em;
 }
 
 /* Round aftermath: give world pane a bit more room and keep everything on-screen */
