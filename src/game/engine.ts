@@ -213,7 +213,8 @@ export function concludeRoundTurns(state: GameState): GameState {
     phase: 'roundSummary',
     roundScores: scores,
     scoreHistory: [...next.scoreHistory, scores],
-    aftermathEndsAt: Date.now() + AFTERMATH_THINK_MS,
+    // Timer starts when the aftermath UI is actually shown (see armAftermathTimer)
+    aftermathEndsAt: null,
     previousRoundEvents: [...next.roundEvents],
     previousRoundNumber: next.round,
     log: [...next.log, log(`Round ${next.round} complete. Standing scores updated.`, 'neutral')],
@@ -896,12 +897,23 @@ export function finishStrikeResolution(state: GameState): GameState {
     phase: 'roundSummary',
     roundScores: scores,
     scoreHistory: [...next.scoreHistory, scores],
-    aftermathEndsAt: Date.now() + AFTERMATH_THINK_MS,
+    // Timer starts when the aftermath UI is actually shown (see armAftermathTimer)
+    aftermathEndsAt: null,
     previousRoundEvents: [...next.roundEvents],
     previousRoundNumber: next.round,
     log: [...next.log, log(`Round ${next.round} complete. Standing scores updated.`, 'neutral')],
   });
   return next;
+}
+
+/** Start the shared strategy countdown once strike cinema / recap has finished. */
+export function armAftermathTimer(state: GameState, at = Date.now()): GameState {
+  if (state.phase !== 'roundSummary') return state;
+  if (state.aftermathEndsAt != null && state.aftermathEndsAt > at) return state;
+  return {
+    ...state,
+    aftermathEndsAt: at + AFTERMATH_THINK_MS,
+  };
 }
 
 export function attackCity(state: GameState, targetNation: NationId, cityId: string): GameState {

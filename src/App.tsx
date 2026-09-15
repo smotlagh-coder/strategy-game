@@ -7,6 +7,7 @@ import {
   applyQueuedStrike,
   aliveHumanNations,
   allAliveHumansReady,
+  armAftermathTimer,
   buyBombs,
   buyEnvironment,
   buyNuclearTech,
@@ -58,7 +59,7 @@ import {
   tryAcquireAiLock,
 } from './lib/multiplayer';
 import { applyRemoteGameSnapshot } from './lib/onlineSync';
-import { AFTERMATH_THINK_MS, ROUND_BANNER_MS, ROUND_BRIEFING_SLIDE_MS, SELECTION_IDLE_MS } from './lib/onlineConstants';
+import { ROUND_BANNER_MS, ROUND_BRIEFING_SLIDE_MS, SELECTION_IDLE_MS } from './lib/onlineConstants';
 import { aftermathMyCityIds, aftermathWorldIds } from './lib/lobbyInvite';
 import { NameGate } from './screens/NameGate';
 import { LobbyScreen } from './screens/Lobby';
@@ -1613,8 +1614,8 @@ function GameBoard({
         resolved = finishStrikeResolution(resolved);
         resolvedRoundRef.current = state.round;
 
-        // Publish aftermath immediately so peers see the strategy timer
-        // even while this client is still playing cinema / recap.
+        // Publish aftermath board immediately so peers leave the waiting screen,
+        // but do NOT start the strategy timer until cinema / recap finish.
         if (resolved.mode === 'online' && resolved.onlineGameId) {
           try {
             if (resolved.phase === 'gameOver') {
@@ -1635,7 +1636,18 @@ function GameBoard({
           await playStrikeRecap(resolved.roundEvents);
         }
         if (!cancelled) {
-          setState(resolved);
+          let shown = resolved;
+          if (shown.phase === 'roundSummary') {
+            shown = armAftermathTimer(shown);
+            if (shown.mode === 'online' && shown.onlineGameId) {
+              try {
+                await pushGameState(shown.onlineGameId, shown, true);
+              } catch (err) {
+                console.error('failed to publish aftermath timer', err);
+              }
+            }
+          }
+          setState(shown);
         }
         setBusy(false);
       })();
@@ -2200,24 +2212,20 @@ function RoundSummary({
   onContinue: () => void;
   sessionUid?: string | null;
 }) {
-  const endsAtRef = useRef(
-    state.aftermathEndsAt ?? Date.now() + AFTERMATH_THINK_MS,
-  );
-  if (
-    state.aftermathEndsAt != null &&
-    (endsAtRef.current == null || state.aftermathEndsAt < endsAtRef.current)
-  ) {
-    endsAtRef.current = state.aftermathEndsAt;
-  }
+  const endsAt = state.aftermathEndsAt ?? null;
   const [secondsLeft, setSecondsLeft] = useState(() =>
-    Math.max(0, Math.ceil((endsAtRef.current - Date.now()) / 1000)),
+    endsAt == null ? null : Math.max(0, Math.ceil((endsAt - Date.now()) / 1000)),
   );
   const continueOnceRef = useRef(false);
 
   useEffect(() => {
     continueOnceRef.current = false;
+    if (endsAt == null) {
+      setSecondsLeft(null);
+      return;
+    }
     const tick = () => {
-      const left = Math.max(0, Math.ceil((endsAtRef.current - Date.now()) / 1000));
+      const left = Math.max(0, Math.ceil((endsAt - Date.now()) / 1000));
       setSecondsLeft(left);
       if (left > 0 || continueOnceRef.current) return;
       continueOnceRef.current = true;
@@ -2226,7 +2234,7 @@ function RoundSummary({
     tick();
     const id = window.setInterval(tick, 250);
     return () => window.clearInterval(id);
-  }, [state.round, state.aftermathEndsAt, onContinue]);
+  }, [state.round, endsAt, onContinue]);
 
   const destroyedCityIds = state.roundEvents
     .filter((e) => e.kind === 'cityDestroyed' || e.kind === 'shieldDestroyed')
@@ -2251,10 +2259,16 @@ function RoundSummary({
     <div className="screen screen--board screen--round-report">
       <MapBackdrop />
       <div className="aftermath-countdown" role="status" aria-live="polite">
-        {isFinal
-          ? `Final results in ${secondsLeft} ${secondsLeft === 1 ? 'second' : 'seconds'}`
-          : `Next round starts in ${secondsLeft} ${secondsLeft === 1 ? 'second' : 'seconds'}`}
-        <span className="aftermath-countdown__hint">Use this time to plan your strategy</span>
+        {secondsLeft == null
+          ? 'Waiting for strike reports…'
+          : isFinal
+            ? `Final results in ${secondsLeft} ${secondsLeft === 1 ? 'second' : 'seconds'}`
+            : `Next round starts in ${secondsLeft} ${secondsLeft === 1 ? 'second' : 'seconds'}`}
+        <span className="aftermath-countdown__hint">
+          {secondsLeft == null
+            ? 'Strategy timer starts when everyone finishes the launch sequence'
+            : 'Use this time to plan your strategy'}
+        </span>
       </div>
       <div className="board-split round-report__split">
         <section className="board-left round-report__main">
@@ -2710,10 +2724,17 @@ export default function App() {
               ? prev.uidToNation[sessionUid]
               : null;
           const merged = applyRemoteGameSnapshot(prev, doc.state, myId);
+          const readyKey = (r?: Partial<Record<NationId, boolean>>) =>
+            Object.keys(r ?? {})
+              .sort()
+              .map((k) => `${k}:${r?.[k as NationId] ? 1 : 0}`)
+              .join(',');
           if (
             merged.round === prev.round &&
             merged.phase === prev.phase &&
-            merged.planningComplete === prev.planningComplete
+            merged.planningComplete === prev.planningComplete &&
+            merged.aftermathEndsAt === prev.aftermathEndsAt &&
+            readyKey(merged.humanReady) === readyKey(prev.humanReady)
           ) {
             return prev;
           }
@@ -2727,12 +2748,40 @@ export default function App() {
         /* next tick */
       }
     };
+    void pull();
     const id = window.setInterval(() => void pull(), 1500);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void pull();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
     return () => {
       cancelled = true;
       window.clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
     };
   }, [state.mode, state.onlineGameId, state.phase, state.round, sessionUid]);
+
+  // If nobody armed the aftermath timer (cinema holder dropped), arm it so the table can move
+  useEffect(() => {
+    if (state.phase !== 'roundSummary') return;
+    if (state.aftermathEndsAt != null) return;
+    const gameId = state.onlineGameId;
+    const round = state.round;
+    const t = window.setTimeout(() => {
+      setState((cur) => {
+        if (cur.phase !== 'roundSummary' || cur.round !== round) return cur;
+        if (cur.aftermathEndsAt != null) return cur;
+        const next = armAftermathTimer(cur);
+        if (cur.mode === 'online' && gameId) {
+          void pushGameState(gameId, next, true).catch(() => undefined);
+        }
+        return next;
+      });
+    }, 12_000);
+    return () => window.clearTimeout(t);
+  }, [state.phase, state.aftermathEndsAt, state.round, state.onlineGameId]);
 
   const completeSession = async (name: string) => {
     setSessionLoading(true);

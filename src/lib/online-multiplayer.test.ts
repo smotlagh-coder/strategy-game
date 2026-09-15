@@ -6,6 +6,7 @@ import {
   allAliveHumansReady,
   touchHumanActivity,
   finishStrikeResolution,
+  armAftermathTimer,
   nextRound,
   forfeitNation,
   aliveNations,
@@ -558,7 +559,7 @@ describe('3-player online simulation', () => {
       room.nationFor(stuck),
     );
     expect(adopted.phase).toBe('roundSummary');
-    expect(adopted.aftermathEndsAt).toBeTruthy();
+    expect(adopted.aftermathEndsAt == null).toBe(true);
   });
 
   it('peer still resolving adopts published aftermath and shared strategy timer', () => {
@@ -573,6 +574,7 @@ describe('3-player online simulation', () => {
     let summary = room.shared;
     if (summary.phase === 'resolveStrikes') summary = finishStrikeResolution(summary);
     expect(summary.phase).toBe('roundSummary');
+    summary = armAftermathTimer(summary);
     expect(summary.aftermathEndsAt).toBeTruthy();
     room.shared = summary;
 
