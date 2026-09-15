@@ -194,6 +194,16 @@ export interface OnlineLobby {
   gameId?: string | null;
 }
 
+/** Shared table clock — clients follow this event, they do not invent the next round. */
+export type GameSyncKind = 'roundStart' | 'aftermath' | 'gameOver';
+
+export interface GameSyncEvent {
+  seq: number;
+  kind: GameSyncKind;
+  round: number;
+  publishedAt: number;
+}
+
 export interface OnlineGameDoc {
   hostUid: string;
   playerUids: string[];
@@ -201,6 +211,8 @@ export interface OnlineGameDoc {
   nationAssignments: Record<string, NationId>;
   status: 'lobby' | 'active' | 'finished';
   state: GameState;
+  /** Monotonic event every client listens for (round start / aftermath / game over) */
+  sync?: GameSyncEvent;
   aiLock: string | null;
   updatedAt: number;
   /** When host starts Play Again — peers join this new game */

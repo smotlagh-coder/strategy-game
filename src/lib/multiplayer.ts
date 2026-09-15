@@ -20,10 +20,13 @@ import { finishOnlineHumanPlanning, runOnlineAiPlanning } from '../game/ai';
 import { NATIONS, nationDef } from '../data/nations';
 import {
   mergeHumanPlanningWrite,
+  phaseRank,
 } from './onlineSync';
+import { initialGameSync, nextGameSync } from './gameSync';
 import { canJoinLobby, lobbyCodeFromId } from './lobbyInvite';
 import type {
   GameState,
+  GameSyncKind,
   InviteDoc,
   NationId,
   OnlineGameDoc,
@@ -332,6 +335,7 @@ export async function startOnlineGameFromLobby(
     nationAssignments: assignments,
     status: 'active',
     state,
+    sync: initialGameSync(),
     aiLock: null,
     updatedAt: Date.now(),
     lobbyId: lobby.id,
@@ -438,8 +442,49 @@ export async function pushGameState(gameId: string, state: GameState, clearAiLoc
 }
 
 /**
- * Advance past roundSummary in a transaction so EVERY caller gets the new state.
- * First writer runs nextRound; later callers receive the already-advanced doc.
+ * Publish a shared phase (aftermath / game over) and bump the table clock.
+ * Later writers cannot rewind round or phase.
+ */
+export async function publishSharedPhase(
+  gameId: string,
+  local: GameState,
+  kind: Extract<GameSyncKind, 'aftermath' | 'gameOver'>,
+): Promise<GameState | null> {
+  const ref = doc(getDb(), 'games', gameId);
+  return runTransaction(getDb(), async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) return null;
+    const game = snap.data() as OnlineGameDoc;
+    const remote = game.state;
+    if (Number(remote.round) > Number(local.round)) return remote;
+    if (remote.phase === 'gameOver') return remote;
+    if (
+      Number(remote.round) === Number(local.round) &&
+      phaseRank(remote.phase) > phaseRank(local.phase)
+    ) {
+      return remote;
+    }
+    if (
+      Number(remote.round) === Number(local.round) &&
+      remote.phase === local.phase &&
+      (remote.aftermathEndsAt ?? 0) > (local.aftermathEndsAt ?? 0)
+    ) {
+      return remote;
+    }
+    tx.update(ref, {
+      state: stripUndefined(local),
+      sync: nextGameSync(game.sync, kind, local.round),
+      updatedAt: Date.now(),
+      aiLock: null,
+      status: local.phase === 'gameOver' ? 'finished' : 'active',
+    });
+    return local;
+  });
+}
+
+/**
+ * First writer publishes the next-round event. Everyone else listens and adopts it.
+ * Clients must not call nextRound locally for online games.
  */
 export async function advanceOnlineRound(
   gameId: string,
@@ -462,8 +507,10 @@ export async function advanceOnlineRound(
     }
 
     const next = nextRound(remote);
+    const kind: GameSyncKind = next.phase === 'gameOver' ? 'gameOver' : 'roundStart';
     tx.update(ref, {
       state: stripUndefined(next),
+      sync: nextGameSync(game.sync, kind, next.round),
       updatedAt: Date.now(),
       aiLock: null,
       status: next.phase === 'gameOver' ? 'finished' : 'active',
@@ -583,7 +630,7 @@ export async function tryAcquireAiLock(
 }
 
 export async function finishOnlineGame(gameId: string, state: GameState, selfUid?: string) {
-  await pushGameState(gameId, state, true);
+  await publishSharedPhase(gameId, state, 'gameOver');
   // Keep players "in_game" so rematch can start without everyone re-lobbying
   if (selfUid) await setPlayerStatus(selfUid, 'in_game', gameId);
 }

@@ -18,6 +18,7 @@ import {
   mergeHumanPlanningWrite,
   mergeNationPlanning,
 } from './onlineSync';
+import { applyPublishedGame, nextGameSync } from './gameSync';
 import type { GameState, NationId } from '../types';
 
 function makeThreePlayerGame() {
@@ -586,5 +587,48 @@ describe('3-player online simulation', () => {
     );
     expect(adopted.phase).toBe('roundSummary');
     expect(adopted.aftermathEndsAt).toBe(summary.aftermathEndsAt);
+  });
+
+  it('planning write from a locally advanced client cannot publish the next round', () => {
+    const { state, uids } = makeThreePlayerGame();
+    const room = new SimRoom(state, uids);
+    for (const uid of uids) {
+      const local = completeSelections(room.clients[uid], room.nationFor(uid));
+      room.clients[uid] = local;
+      room.push(uid, local);
+    }
+    let summary = room.shared;
+    if (summary.phase === 'resolveStrikes') summary = finishStrikeResolution(summary);
+    expect(summary.phase).toBe('roundSummary');
+
+    const leaked = nextRound(summary);
+    const kept = mergeHumanPlanningWrite(summary, leaked, room.nationFor(uids[0]));
+    expect(kept.round).toBe(1);
+    expect(kept.phase).toBe('roundSummary');
+  });
+
+  it('published roundStart event forces every client onto the new round', () => {
+    const { state, uids } = makeThreePlayerGame();
+    const room = new SimRoom(state, uids);
+    for (const uid of uids) {
+      const local = completeSelections(room.clients[uid], room.nationFor(uid));
+      room.clients[uid] = local;
+      room.push(uid, local);
+    }
+    let summary = room.shared;
+    if (summary.phase === 'resolveStrikes') summary = finishStrikeResolution(summary);
+    const r2 = nextRound(summary);
+    const sync = nextGameSync(undefined, 'roundStart', r2.round);
+
+    for (const uid of uids) {
+      const stuckOnBoard = {
+        ...room.clients[uid],
+        phase: 'buy' as const,
+        planningComplete: false,
+      };
+      const adopted = applyPublishedGame(stuckOnBoard, r2, room.nationFor(uid), sync);
+      expect(adopted.round).toBe(2);
+      expect(adopted.phase).toBe('buy');
+    }
   });
 });

@@ -273,8 +273,8 @@ export function mergeHumanPlanningWrite(
   local: GameState,
   nationId: NationId,
 ): GameState {
-  if (remote.round > local.round) return remote;
-  if (local.round > remote.round) return local;
+  // Planning writes cannot change the shared round — only the published clock can.
+  if (local.round !== remote.round) return remote;
 
   // Never let a stale writer pull the shared doc backwards
   const further = pickFurtherState(remote, local);

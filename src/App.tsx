@@ -54,11 +54,13 @@ import {
   kickIdleHumanFromGame,
   listenGame,
   enqueueHumanPlanningPush,
+  publishSharedPhase,
   pushGameState,
   rematchOnlineGame,
   tryAcquireAiLock,
 } from './lib/multiplayer';
 import { applyRemoteGameSnapshot } from './lib/onlineSync';
+import { applyPublishedGame } from './lib/gameSync';
 import { ROUND_BANNER_MS, ROUND_BRIEFING_SLIDE_MS, SELECTION_IDLE_MS } from './lib/onlineConstants';
 import { aftermathMyCityIds, aftermathWorldIds } from './lib/lobbyInvite';
 import { NameGate } from './screens/NameGate';
@@ -1471,7 +1473,7 @@ function GameBoard({
                     sessionUid && prev.uidToNation?.[sessionUid]
                       ? prev.uidToNation[sessionUid]
                       : null;
-                  return applyRemoteGameSnapshot(prev, doc.state, myId);
+                  return applyPublishedGame(prev, doc.state, myId, doc.sync);
                 });
               };
               void pull();
@@ -1579,7 +1581,7 @@ function GameBoard({
                   sessionUid && prev.uidToNation?.[sessionUid]
                     ? prev.uidToNation[sessionUid]
                     : null;
-                return applyRemoteGameSnapshot(prev, doc.state, myId);
+                return applyPublishedGame(prev, doc.state, myId, doc.sync);
               });
             };
             await pull();
@@ -1621,7 +1623,7 @@ function GameBoard({
             if (resolved.phase === 'gameOver') {
               await finishOnlineGame(resolved.onlineGameId, resolved, sessionUid ?? undefined);
             } else {
-              await pushGameState(resolved.onlineGameId, resolved, true);
+              await publishSharedPhase(resolved.onlineGameId, resolved, 'aftermath');
             }
           } catch (err) {
             console.error('failed to publish aftermath', err);
@@ -1641,7 +1643,7 @@ function GameBoard({
             shown = armAftermathTimer(shown);
             if (shown.mode === 'online' && shown.onlineGameId) {
               try {
-                await pushGameState(shown.onlineGameId, shown, true);
+                await publishSharedPhase(shown.onlineGameId, shown, 'aftermath');
               } catch (err) {
                 console.error('failed to publish aftermath timer', err);
               }
@@ -2577,50 +2579,43 @@ export default function App() {
     const current = appStateRef.current;
     if (current.phase !== 'roundSummary') return;
 
-    const n = nextRound(current);
-    // Leave aftermath immediately so this client cannot sit on "0 seconds"
-    setState((cur) => {
-      if (cur.phase !== 'roundSummary') return cur;
-      if (cur.mode === 'online') return n;
-      if (n.phase === 'gameOver') return n;
-      return advancePastAi(n);
-    });
-
     if (current.mode === 'online' && current.onlineGameId) {
       const gameId = current.onlineGameId;
       const fromRound = current.round;
+      // Do not nextRound locally — publish the clock event and wait for the listener.
       void (async () => {
         try {
           const remote = await advanceOnlineRound(gameId, fromRound);
-          if (
-            remote &&
-            (remote.round > fromRound ||
-              remote.phase === 'gameOver' ||
-              (remote.phase === 'buy' && remote.round !== fromRound))
-          ) {
-            if (remote.phase === 'gameOver') {
-              void finishOnlineGame(gameId, remote, sessionUid ?? undefined);
-            }
-            setState((cur) => {
-              if (cur.onlineGameId !== gameId) return cur;
-              const myId =
-                sessionUid && cur.uidToNation?.[sessionUid]
-                  ? cur.uidToNation[sessionUid]
-                  : null;
-              return applyRemoteGameSnapshot(cur, remote, myId);
+          if (!remote) return;
+          if (remote.phase === 'gameOver') {
+            void finishOnlineGame(gameId, remote, sessionUid ?? undefined);
+          }
+          setState((cur) => {
+            if (cur.onlineGameId !== gameId) return cur;
+            const myId =
+              sessionUid && cur.uidToNation?.[sessionUid]
+                ? cur.uidToNation[sessionUid]
+                : null;
+            return applyPublishedGame(cur, remote, myId, {
+              seq: 0,
+              kind: remote.phase === 'gameOver' ? 'gameOver' : 'roundStart',
+              round: remote.round,
+              publishedAt: Date.now(),
             });
-            return;
-          }
-          await pushGameState(gameId, n, true);
-          if (n.phase === 'gameOver') {
-            void finishOnlineGame(gameId, n, sessionUid ?? undefined);
-          }
+          });
         } catch (err) {
           console.error('advance after aftermath failed', err);
-          void pushGameState(gameId, n, true).catch(() => undefined);
         }
       })();
+      return;
     }
+
+    const n = nextRound(current);
+    setState((cur) => {
+      if (cur.phase !== 'roundSummary') return cur;
+      if (n.phase === 'gameOver') return n;
+      return advancePastAi(n);
+    });
   }, [advancePastAi, sessionUid]);
 
   // Round start overlay: Round X, then personal attacks / sanctions / treasury
@@ -2687,7 +2682,7 @@ export default function App() {
           sessionUid && prev.uidToNation?.[sessionUid]
             ? prev.uidToNation[sessionUid]
             : null;
-        const merged = applyRemoteGameSnapshot(prev, game.state, myId);
+        const merged = applyPublishedGame(prev, game.state, myId, game.sync);
         return {
           ...merged,
           onlineHostUid: game.hostUid ?? merged.onlineHostUid ?? null,
@@ -2723,7 +2718,7 @@ export default function App() {
             sessionUid && prev.uidToNation?.[sessionUid]
               ? prev.uidToNation[sessionUid]
               : null;
-          const merged = applyRemoteGameSnapshot(prev, doc.state, myId);
+          const merged = applyPublishedGame(prev, doc.state, myId, doc.sync);
           const readyKey = (r?: Partial<Record<NationId, boolean>>) =>
             Object.keys(r ?? {})
               .sort()
@@ -2775,7 +2770,7 @@ export default function App() {
         if (cur.aftermathEndsAt != null) return cur;
         const next = armAftermathTimer(cur);
         if (cur.mode === 'online' && gameId) {
-          void pushGameState(gameId, next, true).catch(() => undefined);
+          void publishSharedPhase(gameId, next, 'aftermath').catch(() => undefined);
         }
         return next;
       });

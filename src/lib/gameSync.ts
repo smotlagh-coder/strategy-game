@@ -1,0 +1,71 @@
+import type { GameState, GameSyncEvent, GameSyncKind, NationId } from '../types';
+import { ensureIncome } from '../game/engine';
+import { runOnlineAiPlanning } from '../game/ai';
+import { applyRemoteGameSnapshot } from './onlineSync';
+
+export function initialGameSync(at = Date.now()): GameSyncEvent {
+  return { seq: 1, kind: 'roundStart', round: 1, publishedAt: at };
+}
+
+export function nextGameSync(
+  prev: GameSyncEvent | null | undefined,
+  kind: GameSyncKind,
+  round: number,
+  at = Date.now(),
+): GameSyncEvent {
+  return {
+    seq: (prev?.seq ?? 0) + 1,
+    kind,
+    round,
+    publishedAt: at,
+  };
+}
+
+/** Published clock says this client must drop local phase and follow the room. */
+export function shouldFollowPublishedClock(
+  prev: GameState,
+  remote: GameState,
+  sync?: GameSyncEvent | null,
+): boolean {
+  if (remote.round > prev.round) return true;
+  if (remote.phase === 'gameOver' && prev.phase !== 'gameOver') return true;
+  if (!sync) return false;
+  if (sync.round > prev.round) return true;
+  if (sync.kind === 'gameOver' && remote.phase === 'gameOver') return true;
+  if (
+    sync.kind === 'roundStart' &&
+    remote.round >= prev.round &&
+    prev.phase === 'roundSummary' &&
+    remote.phase !== 'roundSummary'
+  ) {
+    return true;
+  }
+  if (sync.kind === 'aftermath' && prev.phase !== 'roundSummary' && remote.phase === 'roundSummary') {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Apply a published game document. Clock/round jumps replace local state
+ * instead of merging, so every client lands on the same round.
+ */
+export function applyPublishedGame(
+  prev: GameState,
+  remote: GameState,
+  myNationId: NationId | null,
+  sync?: GameSyncEvent | null,
+): GameState {
+  if (shouldFollowPublishedClock(prev, remote, sync)) {
+    let next = remote;
+    if (
+      (next.phase === 'buy' || next.phase === 'action') &&
+      !next.planningComplete &&
+      !next.aiPlanningComplete
+    ) {
+      next = runOnlineAiPlanning(next);
+    }
+    return ensureIncome(next);
+  }
+  return applyRemoteGameSnapshot(prev, remote, myNationId);
+}
