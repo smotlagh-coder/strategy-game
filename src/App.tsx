@@ -134,7 +134,7 @@ interface StrikeShow {
 }
 
 const STRIKE_FLIGHT_MS = 1750;
-const STRIKE_IMPACT_MS = 1000;
+const STRIKE_IMPACT_MS = 1300;
 
 function StrikeCinema({
   strike,
@@ -143,13 +143,17 @@ function StrikeCinema({
   strike: StrikeShow;
   onComplete: () => void;
 }) {
+  const flightRef = useRef<HTMLDivElement>(null);
+  const launcherRef = useRef<HTMLImageElement>(null);
+  const cityRef = useRef<HTMLImageElement>(null);
   const missileRef = useRef<HTMLDivElement>(null);
-  const [impact, setImpact] = useState(false);
+  const pathRef = useRef<SVGPathElement>(null);
+  const [boom, setBoom] = useState<{ x: number; y: number } | null>(null);
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
 
   useEffect(() => {
-    setImpact(false);
+    setBoom(null);
     playSfx(SFX.launch, 0.9);
     let raf = 0;
     let impactTimer = 0;
@@ -167,39 +171,61 @@ function StrikeCinema({
 
     const start = () => {
       const el = missileRef.current;
-      if (!el) {
+      const layer = flightRef.current;
+      const launcher = launcherRef.current;
+      const city = cityRef.current;
+      if (!el || !layer || !launcher || !city) {
         impactTimer = window.setTimeout(finish, STRIKE_FLIGHT_MS + STRIKE_IMPACT_MS);
         return;
       }
 
-      const t0 = performance.now();
-      const x0 = 16;
-      const y0 = 64;
-      const x1 = 50;
-      const y1 = 14;
-      const x2 = 84;
-      const y2 = 60;
+      // Fly between the real elements so the warhead lands on the target city.
+      // The panel is mid enter-pop, so undo its scale to get layout pixels.
+      const layerBox = layer.getBoundingClientRect();
+      const scale = layer.offsetWidth ? layerBox.width / layer.offsetWidth : 1;
+      const center = (box: DOMRect) => ({
+        x: (box.left + box.width / 2 - layerBox.left) / scale,
+        y: (box.top + box.height / 2 - layerBox.top) / scale,
+      });
+      const p0 = center(launcher.getBoundingClientRect());
+      const p2 = center(city.getBoundingClientRect());
+      const dx = p2.x - p0.x;
+      const dy = p2.y - p0.y;
+      // Side-by-side layout arcs over the top; stacked (mobile) arcs out sideways
+      const p1 =
+        Math.abs(dx) >= Math.abs(dy)
+          ? { x: (p0.x + p2.x) / 2, y: Math.min(p0.y, p2.y) - Math.abs(dx) * 0.42 }
+          : { x: Math.max(p0.x, p2.x) + Math.abs(dy) * 0.42, y: (p0.y + p2.y) / 2 };
 
+      if (pathRef.current) {
+        pathRef.current.setAttribute(
+          'd',
+          `M ${p0.x} ${p0.y} Q ${p1.x} ${p1.y} ${p2.x} ${p2.y}`,
+        );
+      }
+
+      const t0 = performance.now();
       const tick = (now: number) => {
         if (finished) return;
         const u = Math.min(1, (now - t0) / STRIKE_FLIGHT_MS);
         const t = u * u * (3 - 2 * u);
         const omt = 1 - t;
-        const x = omt * omt * x0 + 2 * omt * t * x1 + t * t * x2;
-        const y = omt * omt * y0 + 2 * omt * t * y1 + t * t * y2;
-        const dx = 2 * omt * (x1 - x0) + 2 * t * (x2 - x1);
-        const dy = 2 * omt * (y1 - y0) + 2 * t * (y2 - y1);
-        const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
-        el.style.left = `${x}%`;
-        el.style.top = `${y}%`;
-        el.style.transform = `translate(-50%, -50%) rotate(${angle}deg) scale(${0.85 + t * 0.35})`;
+        const x = omt * omt * p0.x + 2 * omt * t * p1.x + t * t * p2.x;
+        const y = omt * omt * p0.y + 2 * omt * t * p1.y + t * t * p2.y;
+        const vx = 2 * omt * (p1.x - p0.x) + 2 * t * (p2.x - p1.x);
+        const vy = 2 * omt * (p1.y - p0.y) + 2 * t * (p2.y - p1.y);
+        const angle = (Math.atan2(vy, vx) * 180) / Math.PI;
+        el.style.left = `${x}px`;
+        el.style.top = `${y}px`;
+        // Shrinks as it dives so it reads as falling onto the city
+        el.style.transform = `translate(-50%, -50%) rotate(${angle}deg) scale(${1 - t * 0.35})`;
         el.style.opacity = u < 0.04 ? String(u / 0.04) : '1';
 
         if (u < 1) {
           raf = requestAnimationFrame(tick);
         } else {
           playSfx(SFX.explosion, 0.95);
-          setImpact(true);
+          setBoom(p2);
           el.style.opacity = '0';
           impactTimer = window.setTimeout(finish, STRIKE_IMPACT_MS);
         }
@@ -229,34 +255,48 @@ function StrikeCinema({
         <div className="strike-cinema__row">
           <div className="strike-cinema__side strike-cinema__side--from">
             <div className="strike-cinema__flag">DEPARTING</div>
-            <img className="strike-cinema__leader" src={ART.leaders[strike.from]} alt="" />
+            <img
+              ref={launcherRef}
+              className="strike-cinema__leader"
+              src={ART.leaders[strike.from]}
+              alt=""
+            />
             <strong>{from.name}</strong>
             <span>{from.leader}</span>
           </div>
 
-          <div className="strike-cinema__arc" aria-hidden>
-            <svg className="strike-cinema__path" viewBox="0 0 100 100" preserveAspectRatio="none">
-              <path d="M 16 64 Q 50 14 84 60" />
+          <div className="strike-cinema__arc" aria-hidden />
+
+          <div className="strike-cinema__side strike-cinema__side--to">
+            <div className="strike-cinema__flag strike-cinema__flag--danger">TARGET</div>
+            <div className={`strike-cinema__target-art ${boom ? 'is-burning' : ''}`}>
+              <img
+                ref={cityRef}
+                className="strike-cinema__city"
+                src={ART.cities[strike.cityId]}
+                alt=""
+              />
+              <img className="strike-cinema__leader-sm" src={ART.leaders[strike.to]} alt="" />
+              {boom && <span className="strike-cinema__fire" aria-hidden />}
+            </div>
+            <strong>{to.name}</strong>
+            <span>{strike.cityName}</span>
+          </div>
+
+          {/* Spans the whole row so the flight path can cross between the cards */}
+          <div ref={flightRef} className="strike-cinema__flight" aria-hidden>
+            <svg className="strike-cinema__path">
+              <path ref={pathRef} d="" />
             </svg>
             <div ref={missileRef} className="strike-cinema__missile">
               <img src={ART.missile} alt="" draggable={false} />
               <span className="strike-cinema__flame" />
             </div>
-            {impact && (
-              <div className="strike-cinema__boom">
+            {boom && (
+              <div className="strike-cinema__boom" style={{ left: boom.x, top: boom.y }}>
                 <img src={ART.explosion} alt="" />
               </div>
             )}
-          </div>
-
-          <div className="strike-cinema__side strike-cinema__side--to">
-            <div className="strike-cinema__flag strike-cinema__flag--danger">TARGET</div>
-            <div className="strike-cinema__target-art">
-              <img className="strike-cinema__city" src={ART.cities[strike.cityId]} alt="" />
-              <img className="strike-cinema__leader-sm" src={ART.leaders[strike.to]} alt="" />
-            </div>
-            <strong>{to.name}</strong>
-            <span>{strike.cityName}</span>
           </div>
         </div>
       </div>

@@ -977,9 +977,11 @@ img { max-width: 100%; display: block; }
 }
 
 .city-tile__research img {
-  width: 128%;
-  height: 128%;
-  object-fit: contain;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* Crop the icon's dark margin so the plant fills the small badge */
+  transform: scale(1.22);
 }
 
 .city-tile.has-shield {
@@ -2023,11 +2025,20 @@ img { max-width: 100%; display: block; }
 }
 
 .strike-cinema__row {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(140px, 1fr) minmax(220px, 1.6fr) minmax(140px, 1fr);
   gap: 0.75rem;
   align-items: center;
   min-height: 240px;
+}
+
+/* Missile / blast layer: sits over both cards so impacts land on the city */
+.strike-cinema__flight {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
 }
 
 .strike-cinema__side {
@@ -2125,14 +2136,15 @@ img { max-width: 100%; display: block; }
 .strike-cinema__path path {
   fill: none;
   stroke: rgba(255, 170, 90, 0.35);
-  stroke-width: 1.2;
-  stroke-dasharray: 3 4;
+  stroke-width: 2.5;
+  stroke-dasharray: 7 8;
 }
 
 .strike-cinema__missile {
   position: absolute;
-  left: 16%;
-  top: 64%;
+  left: 0;
+  top: 0;
+  opacity: 0;
   width: 88px;
   height: 88px;
   transform: translate(-50%, -50%);
@@ -2167,10 +2179,8 @@ img { max-width: 100%; display: block; }
 
 .strike-cinema__boom {
   position: absolute;
-  left: 84%;
-  top: 60%;
-  width: 150px;
-  height: 150px;
+  width: 170px;
+  height: 170px;
   transform: translate(-50%, -50%);
   z-index: 3;
   pointer-events: none;
@@ -2188,6 +2198,50 @@ img { max-width: 100%; display: block; }
   0% { transform: scale(0.25); opacity: 0; }
   25% { transform: scale(1.15); opacity: 1; }
   100% { transform: scale(1.55); opacity: 0; }
+}
+
+/* Struck city: scorched, shaking, still alight when the cinema cuts away */
+.strike-cinema__target-art.is-burning {
+  animation: cityShake 0.5s ease-out 1;
+}
+
+.strike-cinema__target-art.is-burning .strike-cinema__city {
+  border-color: rgba(255, 90, 40, 0.85);
+  box-shadow: 0 0 26px rgba(255, 90, 20, 0.6), inset 0 0 20px rgba(0, 0, 0, 0.7);
+  animation: cityScorch 0.7s ease-out forwards;
+}
+
+.strike-cinema__fire {
+  position: absolute;
+  inset: 0;
+  border-radius: 18px;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse at 30% 95%, rgba(255, 220, 120, 0.95), transparent 42%),
+    radial-gradient(ellipse at 62% 100%, rgba(255, 160, 40, 0.9), transparent 48%),
+    radial-gradient(ellipse at 48% 110%, rgba(255, 70, 20, 0.85), transparent 62%),
+    linear-gradient(0deg, rgba(120, 20, 0, 0.55), transparent 70%);
+  mix-blend-mode: screen;
+  animation: cityBurn 0.55s ease-in-out infinite alternate;
+}
+
+@keyframes cityShake {
+  0%, 100% { transform: translate(0, 0); }
+  15% { transform: translate(-5px, 3px) rotate(-1.5deg); }
+  35% { transform: translate(4px, -3px) rotate(1.5deg); }
+  55% { transform: translate(-3px, 2px) rotate(-1deg); }
+  75% { transform: translate(2px, -1px) rotate(0.5deg); }
+}
+
+@keyframes cityScorch {
+  0% { filter: brightness(2.4) saturate(0.4); }
+  35% { filter: brightness(0.85) saturate(0.6) sepia(0.2); }
+  100% { filter: brightness(0.5) saturate(0.45) sepia(0.45) contrast(1.15); }
+}
+
+@keyframes cityBurn {
+  0% { opacity: 0.72; transform: scaleY(0.94); }
+  100% { opacity: 1; transform: scaleY(1.06); }
 }
 
 @media (max-width: 720px) {
