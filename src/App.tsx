@@ -1455,13 +1455,15 @@ function GameBoard({
     myNationId,
   ]);
 
-  // If we were kicked remotely, leave the board
+  // If we were kicked remotely, leave the board. A forfeit flips our nation to
+  // AI without touching uidToNation, so watch the seat itself.
+  const mySeat = sessionUid ? state.uidToNation?.[sessionUid] : null;
+  const seatAlive = Boolean(
+    mySeat && state.nations[mySeat]?.isHuman && !state.nations[mySeat]?.eliminated,
+  );
   useEffect(() => {
     if (!isOnline || !sessionUid || !onKicked) return;
-    const myId = state.uidToNation?.[sessionUid];
-    const seat = myId ? state.nations[myId] : null;
-    const stillHere = Boolean(seat?.isHuman && !seat.eliminated);
-    if (stillHere) {
+    if (seatAlive) {
       kickingRef.current = false;
       return;
     }
@@ -1476,7 +1478,7 @@ function GameBoard({
     if (kickingRef.current) return;
     kickingRef.current = true;
     onKicked('You left the game — your cities were destroyed.');
-  }, [isOnline, sessionUid, state.uidToNation, state.phase, onKicked]);
+  }, [isOnline, sessionUid, seatAlive, state.phase, onKicked]);
 
   // If we already locked in but the shared room still lists us as waiting, publish again
   useEffect(() => {
