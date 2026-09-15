@@ -430,12 +430,13 @@ export async function advanceOnlineRound(
     if (!snap.exists()) return null;
     const game = snap.data() as OnlineGameDoc;
     const remote = game.state;
+    const remoteRound = Number(remote.round);
 
     // Already past this aftermath — hand every client the authoritative state
-    if (remote.round > fromRound || remote.phase === 'gameOver') {
+    if (remoteRound > fromRound || remote.phase === 'gameOver') {
       return remote;
     }
-    if (remote.phase !== 'roundSummary' || remote.round !== fromRound) {
+    if (remote.phase !== 'roundSummary' || remoteRound !== fromRound) {
       return remote;
     }
 

@@ -2330,6 +2330,7 @@ export default function App() {
   const aftermathEndsAtRef = useRef<number | null>(null);
   const appStateRef = useRef(state);
   appStateRef.current = state;
+  const advanceFromRoundSummaryRef = useRef<() => Promise<boolean>>(async () => false);
   const lastRoundBannerRef = useRef(0);
   const [roundBanner, setRoundBanner] = useState<number | null>(null);
   const [aftermathSecondsLeft, setAftermathSecondsLeft] = useState<number | null>(null);
@@ -2346,12 +2347,44 @@ export default function App() {
       try {
         const remote = await advanceOnlineRound(gameId, fromRound);
         if (!remote) return false;
+        // Server already moved on — adopt it
+        if (remote.round > fromRound || remote.phase === 'gameOver' || remote.phase === 'buy') {
+          if (remote.phase === 'gameOver') {
+            void finishOnlineGame(gameId, remote, sessionUid ?? undefined);
+          }
+          setState((cur) => {
+            if (cur.onlineGameId !== gameId) return cur;
+            const myId =
+              sessionUid && cur.uidToNation?.[sessionUid]
+                ? cur.uidToNation[sessionUid]
+                : null;
+            return applyRemoteGameSnapshot(cur, remote, myId);
+          });
+          return true;
+        }
+        // Still on this aftermath in Firestore — advance locally and push
         if (remote.phase === 'roundSummary' && remote.round === fromRound) {
-          return false;
+          const n = nextRound(remote);
+          try {
+            await pushGameState(gameId, n, true);
+          } catch (err) {
+            console.error('pushGameState after nextRound failed', err);
+            // Still move this client forward so we don't soft-lock at 0s
+          }
+          if (n.phase === 'gameOver') {
+            void finishOnlineGame(gameId, n, sessionUid ?? undefined);
+          }
+          setState((cur) => {
+            if (cur.onlineGameId !== gameId) return cur;
+            const myId =
+              sessionUid && cur.uidToNation?.[sessionUid]
+                ? cur.uidToNation[sessionUid]
+                : null;
+            return applyRemoteGameSnapshot(cur, n, myId);
+          });
+          return true;
         }
-        if (remote.phase === 'gameOver') {
-          void finishOnlineGame(gameId, remote, sessionUid ?? undefined);
-        }
+        // Unexpected phase — adopt whatever the server has
         setState((cur) => {
           if (cur.onlineGameId !== gameId) return cur;
           const myId =
@@ -2360,9 +2393,21 @@ export default function App() {
               : null;
           return applyRemoteGameSnapshot(cur, remote, myId);
         });
+        return remote.phase !== 'roundSummary';
+      } catch (err) {
+        console.error('advanceOnlineRound failed, falling back to local nextRound', err);
+        const n = nextRound(current);
+        try {
+          await pushGameState(gameId, n, true);
+        } catch (pushErr) {
+          console.error('fallback pushGameState failed', pushErr);
+        }
+        setState((cur) => {
+          if (cur.phase !== 'roundSummary') return cur;
+          if (n.phase === 'gameOver') return n;
+          return n;
+        });
         return true;
-      } catch {
-        return false;
       }
     }
 
@@ -2374,6 +2419,7 @@ export default function App() {
     });
     return true;
   }, [advancePastAi, sessionUid]);
+  advanceFromRoundSummaryRef.current = advanceFromRoundSummary;
 
   // Brief "Round X" overlay whenever a new round of play begins
   useEffect(() => {
@@ -2422,9 +2468,14 @@ export default function App() {
       return;
     }
 
-    // Prefer shared server time; pin fallback once so effect churn can't reset the timer
-    if (state.aftermathEndsAt) {
-      aftermathEndsAtRef.current = state.aftermathEndsAt;
+    // Pin endsAt once for this aftermath; prefer shared time, never extend the wait
+    if (state.aftermathEndsAt != null) {
+      if (
+        aftermathEndsAtRef.current == null ||
+        state.aftermathEndsAt < aftermathEndsAtRef.current
+      ) {
+        aftermathEndsAtRef.current = state.aftermathEndsAt;
+      }
     } else if (aftermathEndsAtRef.current == null) {
       aftermathEndsAtRef.current = Date.now() + AFTERMATH_THINK_MS;
     }
@@ -2438,11 +2489,23 @@ export default function App() {
       if (left > 0) return;
       if (advancingRoundRef.current) return;
       advancingRoundRef.current = true;
-      void advanceFromRoundSummary()
+      void advanceFromRoundSummaryRef
+        .current()
         .then((ok) => {
-          if (!ok && !cancelled) {
-            // Retry shortly — transaction may have raced or briefly failed
-            advancingRoundRef.current = false;
+          // Always clear the in-flight lock so a cancelled effect / failed
+          // advance cannot soft-lock the board at "0 seconds"
+          advancingRoundRef.current = false;
+          if (!ok && !cancelled && appStateRef.current.phase === 'roundSummary') {
+            // Last-resort local unstick
+            setState((s) => {
+              if (s.phase !== 'roundSummary') return s;
+              const n = nextRound(s);
+              if (s.mode === 'online' && s.onlineGameId) {
+                void pushGameState(s.onlineGameId, n, true).catch(() => undefined);
+              }
+              if (n.phase === 'gameOver') return n;
+              return s.mode === 'online' ? n : advancePastAi(n);
+            });
           }
         })
         .catch(() => {
@@ -2451,12 +2514,14 @@ export default function App() {
     };
 
     tick();
-    const id = window.setInterval(tick, 250);
+    const id = window.setInterval(tick, 400);
     return () => {
       cancelled = true;
       window.clearInterval(id);
+      // Allow a fresh effect to advance if this one was torn down mid-flight
+      advancingRoundRef.current = false;
     };
-  }, [state.phase, state.aftermathEndsAt, state.round, advanceFromRoundSummary]);
+  }, [state.phase, state.aftermathEndsAt, state.round, advancePastAi]);
 
   // Online game listener — preserve local nation while still planning
   useEffect(() => {
