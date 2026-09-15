@@ -58,6 +58,7 @@ import {
   listenGame,
   enqueueHumanPlanningPush,
   lockInHumanPlanning,
+  markOnlineReady,
   publishPlanningComplete,
   publishSharedPhase,
   rematchOnlineGame,
@@ -1281,6 +1282,10 @@ function GameBoard({
             })
             .catch((err) => {
               console.error('lock-in orders failed', err);
+              // Never let a failed orders write leave peers waiting on us
+              void markOnlineReady(gameId, actor).catch((e) =>
+                console.error('mark ready failed', e),
+              );
               void enqueueHumanPlanningPush(gameId, actor, () => stateRef.current);
             });
           return next;
@@ -1439,7 +1444,7 @@ function GameBoard({
     const gameId = state.onlineGameId;
     const nation = myNationId;
     let cancelled = false;
-    const republish = () => {
+    const republish = async () => {
       const cur = stateRef.current;
       if (
         cancelled ||
@@ -1450,28 +1455,45 @@ function GameBoard({
       ) {
         return;
       }
-      void lockInHumanPlanning(gameId, cur, nation)
-        .then((merged) => {
-          if (cancelled) return;
-          setState((prev) => {
-            if (prev.onlineGameId !== gameId) return prev;
-            return applyPublishedGame(prev, merged, nation, {
-              seq: 0,
-              kind: 'playerReady',
-              round: merged.round,
-              publishedAt: Date.now(),
-              nationId: nation,
-            });
+      try {
+        // Only rewrite when the shared doc really is missing our lock-in
+        const remote = await fetchGame(gameId);
+        if (cancelled || !remote?.state) return;
+        if (remote.state.humanReady?.[nation]) return;
+
+        const merged = await lockInHumanPlanning(gameId, stateRef.current, nation);
+        if (cancelled) return;
+        setState((prev) => {
+          if (prev.onlineGameId !== gameId) return prev;
+          return applyPublishedGame(prev, merged, nation, {
+            seq: 0,
+            kind: 'playerReady',
+            round: merged.round,
+            publishedAt: Date.now(),
+            nationId: nation,
           });
-        })
-        .catch(() => undefined);
+        });
+      } catch (err) {
+        console.error('republish ready failed', err);
+        void markOnlineReady(gameId, nation).catch((e) =>
+          console.error('mark ready failed', e),
+        );
+      }
     };
-    const t = window.setTimeout(republish, 800);
-    const retry = window.setInterval(republish, 2500);
+    const t = window.setTimeout(() => void republish(), 800);
+    const retry = window.setInterval(() => void republish(), 2500);
+    // Mobile browsers freeze timers in background tabs — re-check on resume
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void republish();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
     return () => {
       cancelled = true;
       window.clearTimeout(t);
       window.clearInterval(retry);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
     };
   }, [
     isOnline,

@@ -23,6 +23,7 @@ import {
   phaseRank,
 } from './onlineSync';
 import { initialGameSync, nextGameSync } from './gameSync';
+import { decodeGameState, encodeGameState, stripUndefined } from './firestoreCodec';
 import { canJoinLobby, lobbyCodeFromId } from './lobbyInvite';
 import type {
   GameState,
@@ -38,18 +39,13 @@ export { mergeHumanReadyFlags, mergeNationPlanning } from './onlineSync';
 
 const ONLINE_MS = 60_000;
 
-/** Firestore rejects `undefined` field values — drop them recursively before writes. */
-export function stripUndefined<T>(value: T): T {
-  if (value === null || typeof value !== 'object') return value;
-  if (Array.isArray(value)) {
-    return value.map((item) => stripUndefined(item)) as T;
-  }
-  const out: Record<string, unknown> = {};
-  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-    if (child === undefined) continue;
-    out[key] = stripUndefined(child);
-  }
-  return out as T;
+export { stripUndefined, encodeGameState, decodeGameState } from './firestoreCodec';
+
+/** Every read goes through here so `scoreHistory` comes back as a real array. */
+function readGameDoc(snap: { exists: () => boolean; data: () => unknown }): OnlineGameDoc | null {
+  if (!snap.exists()) return null;
+  const game = snap.data() as OnlineGameDoc;
+  return { ...game, state: decodeGameState(game.state) };
 }
 
 export function isPlayerOnline(p: PlayerDoc, now = Date.now()): boolean {
@@ -357,7 +353,7 @@ export async function startOnlineGameFromLobby(
     lobbyId: lobby.id,
     rematchGameId: null,
   };
-  await setDoc(gameRef, stripUndefined(game));
+  await setDoc(gameRef, stripUndefined({ ...game, state: encodeGameState(game.state) }));
   // Each client updates only their own player doc (rules enforce uid match)
   await updateDoc(doc(getDb(), 'lobbies', lobby.id), {
     status: 'starting',
@@ -413,7 +409,7 @@ export async function rematchOnlineGame(
 
 export async function fetchGame(gameId: string): Promise<OnlineGameDoc | null> {
   const snap = await getDoc(doc(getDb(), 'games', gameId));
-  return snap.exists() ? (snap.data() as OnlineGameDoc) : null;
+  return readGameDoc(snap);
 }
 
 /** Guests discover the match even if they miss the lobby.gameId update. */
@@ -429,7 +425,12 @@ export function listenMyActiveGames(
   return onSnapshot(
     q,
     (snap) => {
-      cb(snap.docs.map((d) => ({ id: d.id, data: d.data() as OnlineGameDoc })));
+      cb(
+        snap.docs.flatMap((d) => {
+          const data = readGameDoc(d);
+          return data ? [{ id: d.id, data }] : [];
+        }),
+      );
     },
     (err) => {
       console.error('listenMyActiveGames', err);
@@ -443,13 +444,13 @@ export function listenGame(
   cb: (game: OnlineGameDoc | null) => void,
 ): Unsubscribe {
   return onSnapshot(doc(getDb(), 'games', gameId), (snap) => {
-    cb(snap.exists() ? (snap.data() as OnlineGameDoc) : null);
+    cb(readGameDoc(snap));
   });
 }
 
 export async function pushGameState(gameId: string, state: GameState, clearAiLock = false) {
   const patch: Record<string, unknown> = {
-    state: stripUndefined(state),
+    state: encodeGameState(state),
     updatedAt: Date.now(),
     status: state.phase === 'gameOver' ? 'finished' : 'active',
   };
@@ -470,7 +471,7 @@ export async function publishSharedPhase(
   return runTransaction(getDb(), async (tx) => {
     const snap = await tx.get(ref);
     if (!snap.exists()) return null;
-    const game = snap.data() as OnlineGameDoc;
+    const game = readGameDoc(snap)!;
     const remote = game.state;
     if (Number(remote.round) > Number(local.round)) return remote;
     if (remote.phase === 'gameOver') return remote;
@@ -488,7 +489,7 @@ export async function publishSharedPhase(
       return remote;
     }
     tx.update(ref, {
-      state: stripUndefined(local),
+      state: encodeGameState(local),
       sync: nextGameSync(game.sync, kind, local.round),
       updatedAt: Date.now(),
       aiLock: null,
@@ -510,7 +511,7 @@ export async function advanceOnlineRound(
   return runTransaction(getDb(), async (tx) => {
     const snap = await tx.get(ref);
     if (!snap.exists()) return null;
-    const game = snap.data() as OnlineGameDoc;
+    const game = readGameDoc(snap)!;
     const remote = game.state;
     const remoteRound = Number(remote.round);
 
@@ -525,7 +526,7 @@ export async function advanceOnlineRound(
     const next = nextRound(remote);
     const kind: GameSyncKind = next.phase === 'gameOver' ? 'gameOver' : 'roundStart';
     tx.update(ref, {
-      state: stripUndefined(next),
+      state: encodeGameState(next),
       sync: nextGameSync(game.sync, kind, next.round),
       updatedAt: Date.now(),
       aiLock: null,
@@ -552,6 +553,18 @@ export function enqueueHumanPlanningPush(
 }
 
 /**
+ * Minimal "I'm done" write — a single field path, no state merge. If a full
+ * state payload ever fails, the room still learns this player locked in.
+ */
+export async function markOnlineReady(gameId: string, nationId: NationId) {
+  await updateDoc(doc(getDb(), 'games', gameId), {
+    [`state.humanReady.${nationId}`]: true,
+    [`state.humanLastActive.${nationId}`]: Date.now(),
+    updatedAt: Date.now(),
+  });
+}
+
+/**
  * Final "orders locked" write. Always sets this nation's ready flag on the
  * shared doc and publishes a playerReady clock event peers listen for.
  */
@@ -563,8 +576,9 @@ export async function lockInHumanPlanning(
   const ref = doc(getDb(), 'games', gameId);
   return runTransaction(getDb(), async (tx) => {
     const snap = await tx.get(ref);
-    const remote = snap.exists() ? (snap.data() as OnlineGameDoc).state : local;
-    const prevSync = snap.exists() ? (snap.data() as OnlineGameDoc).sync : undefined;
+    const existing = readGameDoc(snap);
+    const remote = existing ? existing.state : local;
+    const prevSync = existing?.sync;
     if (Number(remote.round) !== Number(local.round)) return remote;
     if (phaseRank(remote.phase) >= phaseRank('resolveStrikes') || remote.planningComplete) {
       return remote;
@@ -588,7 +602,7 @@ export async function lockInHumanPlanning(
     }
 
     tx.update(ref, {
-      state: stripUndefined(finalState),
+      state: encodeGameState(finalState),
       sync: nextGameSync(prevSync, 'playerReady', finalState.round, Date.now(), {
         nationId,
       }),
@@ -611,7 +625,7 @@ export async function publishPlanningComplete(
   return runTransaction(getDb(), async (tx) => {
     const snap = await tx.get(ref);
     if (!snap.exists()) return null;
-    const game = snap.data() as OnlineGameDoc;
+    const game = readGameDoc(snap)!;
     const remote = game.state;
 
     if (Number(remote.round) !== Number(round)) return remote;
@@ -623,7 +637,7 @@ export async function publishPlanningComplete(
     if (!next.planningComplete) return remote;
 
     tx.update(ref, {
-      state: stripUndefined(next),
+      state: encodeGameState(next),
       sync: nextGameSync(game.sync, 'resolve', next.round),
       updatedAt: Date.now(),
       aiLock: null,
@@ -645,10 +659,10 @@ export async function pushHumanPlanningState(
   const ref = doc(getDb(), 'games', gameId);
   return runTransaction(getDb(), async (tx) => {
     const snap = await tx.get(ref);
-    const remote = snap.exists() ? (snap.data() as OnlineGameDoc).state : local;
+    const remote = readGameDoc(snap)?.state ?? local;
     const finalState = mergeHumanPlanningWrite(remote, local, nationId);
     tx.update(ref, {
-      state: stripUndefined(finalState),
+      state: encodeGameState(finalState),
       updatedAt: Date.now(),
       status: finalState.phase === 'gameOver' ? 'finished' : 'active',
     });
@@ -665,7 +679,7 @@ export async function kickIdleHumanFromGame(
   return runTransaction(getDb(), async (tx) => {
     const snap = await tx.get(ref);
     if (!snap.exists()) return null;
-    const game = snap.data() as OnlineGameDoc;
+    const game = readGameDoc(snap)!;
     if (!game.state.nations[nationId]?.isHuman || game.state.nations[nationId]?.eliminated) {
       return game.state;
     }
@@ -696,7 +710,7 @@ export async function kickIdleHumanFromGame(
     if (ownerUid) delete nationAssignments[ownerUid];
 
     tx.update(ref, {
-      state: stripUndefined(mergedState),
+      state: encodeGameState(mergedState),
       sync: nextGameSync(game.sync, 'dropout', mergedState.round, Date.now(), {
         nationId,
         playerName,
@@ -722,7 +736,7 @@ export async function tryAcquireAiLock(
   return runTransaction(getDb(), async (tx) => {
     const snap = await tx.get(ref);
     if (!snap.exists()) return false;
-    const game = snap.data() as OnlineGameDoc;
+    const game = readGameDoc(snap)!;
     const mine = `${turnKey}:${uid}`;
     if (game.aiLock === mine) return true;
     if (game.aiLock && game.aiLock.startsWith(`${turnKey}:`)) {
