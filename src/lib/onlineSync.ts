@@ -131,8 +131,10 @@ export function applyRemoteGameSnapshot(
   remote: GameState,
   myNationId: NationId | null,
 ): GameState {
-  if (prev.round !== remote.round) {
-    let next = remote.round >= prev.round ? remote : prev;
+  const prevRound = Number(prev.round ?? 0);
+  const remoteRound = Number(remote.round ?? 0);
+  if (prevRound !== remoteRound) {
+    let next = remoteRound >= prevRound ? remote : prev;
     if (
       next === remote &&
       (next.phase === 'buy' || next.phase === 'action') &&
@@ -142,6 +144,20 @@ export function applyRemoteGameSnapshot(
       next = runOnlineAiPlanning(next);
     }
     return next;
+  }
+
+  // Remote already left planning (strikes / aftermath / next phase) — follow it
+  if (phaseRank(remote.phase) > phaseRank(prev.phase)) {
+    return {
+      ...remote,
+      nations: mergeNationMaps(remote, prev),
+      humanReady: mergeHumanReadyFlags(remote.humanReady, prev.humanReady),
+      planningComplete:
+        Boolean(remote.planningComplete) ||
+        phaseRank(remote.phase) >= phaseRank('resolveStrikes'),
+      aftermathEndsAt: remote.aftermathEndsAt ?? prev.aftermathEndsAt ?? null,
+      aiPlanningComplete: Boolean(remote.aiPlanningComplete || prev.aiPlanningComplete),
+    };
   }
 
   // Same round: never go backwards in phase (stops resolveStrikes ↔ summary loops)

@@ -539,6 +539,28 @@ describe('3-player online simulation', () => {
     }
   });
 
+  it('client still on buy adopts remote aftermath instead of staying on the board', () => {
+    const { state, uids } = makeThreePlayerGame();
+    const room = new SimRoom(state, uids);
+    for (const uid of uids) {
+      const local = completeSelections(room.clients[uid], room.nationFor(uid));
+      room.clients[uid] = local;
+      room.push(uid, local);
+    }
+    let summary = room.shared;
+    if (summary.phase === 'resolveStrikes') summary = finishStrikeResolution(summary);
+    expect(summary.phase).toBe('roundSummary');
+
+    const stuck = uids[1];
+    const adopted = applyRemoteGameSnapshot(
+      { ...room.clients[stuck], phase: 'buy', planningComplete: false },
+      summary,
+      room.nationFor(stuck),
+    );
+    expect(adopted.phase).toBe('roundSummary');
+    expect(adopted.aftermathEndsAt).toBeTruthy();
+  });
+
   it('peer still resolving adopts published aftermath and shared strategy timer', () => {
     const { state, uids } = makeThreePlayerGame();
     const room = new SimRoom(state, uids);

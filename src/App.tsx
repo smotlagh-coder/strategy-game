@@ -1273,17 +1273,53 @@ function GameBoard({
       if (state.planningComplete) return;
 
       let cancelled = false;
+      let peerPoll: number | undefined;
       const t = window.setTimeout(() => {
         void (async () => {
           if (cancelled || aiRunningRef.current) return;
           if (stateRef.current.planningComplete) return;
-          if (state.onlineGameId && sessionUid) {
+          const gameId = state.onlineGameId;
+          if (gameId && sessionUid) {
             const got = await tryAcquireAiLock(
-              state.onlineGameId,
+              gameId,
               sessionUid,
               `post-human-${state.round}`,
             );
-            if (!got || cancelled) return;
+            if (!got || cancelled) {
+              // Lock loser: still finish locally so we don't sit on a dead board,
+              // then keep pulling if the holder already published aftermath / R+1.
+              setState((s) => {
+                if (s.phase !== 'buy' && s.phase !== 'action') return s;
+                if (!allAliveHumansReady(s) || s.planningComplete) return s;
+                return finishOnlineHumanPlanning(s);
+              });
+              const pull = async () => {
+                if (cancelled) return;
+                const doc = await fetchGame(gameId);
+                if (!doc?.state || cancelled) return;
+                setState((prev) => {
+                  if (prev.onlineGameId !== gameId) return prev;
+                  const myId =
+                    sessionUid && prev.uidToNation?.[sessionUid]
+                      ? prev.uidToNation[sessionUid]
+                      : null;
+                  return applyRemoteGameSnapshot(prev, doc.state, myId);
+                });
+              };
+              void pull();
+              peerPoll = window.setInterval(() => {
+                const phase = stateRef.current.phase;
+                if (
+                  cancelled ||
+                  (phase !== 'buy' && phase !== 'action' && phase !== 'resolveStrikes')
+                ) {
+                  if (peerPoll) window.clearInterval(peerPoll);
+                  return;
+                }
+                void pull();
+              }, 1000);
+              return;
+            }
           }
           aiRunningRef.current = true;
           setBusy(true);
@@ -1307,6 +1343,7 @@ function GameBoard({
       return () => {
         cancelled = true;
         window.clearTimeout(t);
+        if (peerPoll) window.clearInterval(peerPoll);
       };
     }
 
@@ -1362,7 +1399,7 @@ function GameBoard({
             `resolve-${state.round}`,
           );
           if (!got || cancelled) {
-            // Lock holder owns cinema + push — pull shared state so we don't miss the advance
+            // Follow the holder; if they never publish, resolve locally so we see aftermath
             const gameId = state.onlineGameId;
             const pull = async () => {
               if (cancelled) return;
@@ -1378,14 +1415,22 @@ function GameBoard({
               });
             };
             await pull();
-            // Keep pulling briefly in case the holder is still mid-cinema
+            if (!cancelled && stateRef.current.phase === 'resolveStrikes') {
+              const local = finishStrikeResolution(
+                stateRef.current.pendingStrikes.reduce(
+                  (s, strike) => applyQueuedStrike(s, strike),
+                  stateRef.current,
+                ),
+              );
+              setState(local);
+            }
             peerPoll = window.setInterval(() => {
               if (cancelled || stateRef.current.phase !== 'resolveStrikes') {
                 if (peerPoll) window.clearInterval(peerPoll);
                 return;
               }
               void pull();
-            }, 1200);
+            }, 1000);
             return;
           }
         }
@@ -1900,6 +1945,9 @@ function GameBoard({
                     …
                     {state.aiPlanningComplete ? ' AI orders are locked in.' : ''}
                   </p>
+                )}
+                {isOnline && !isMyHumanTurn && waitingHumans.length === 0 && (
+                  <p className="upgrade-hint">Resolving the round for everyone…</p>
                 )}
                 {isOnline && isMyHumanTurn && (
                   <p className="upgrade-hint">
@@ -2477,6 +2525,55 @@ export default function App() {
     // Intentionally omit uidToNation — resolve myId from prev inside the callback
     // so we don't tear down the listener on every nation merge.
   }, [state.onlineGameId, state.mode, sessionUid]);
+
+  // Safety net: if a snapshot is missed, pull shared state so nobody sits on a dead board
+  useEffect(() => {
+    if (state.mode !== 'online' || !state.onlineGameId) return;
+    if (
+      state.phase !== 'buy' &&
+      state.phase !== 'action' &&
+      state.phase !== 'resolveStrikes' &&
+      state.phase !== 'roundSummary'
+    ) {
+      return;
+    }
+    const gameId = state.onlineGameId;
+    let cancelled = false;
+    const pull = async () => {
+      if (cancelled) return;
+      try {
+        const doc = await fetchGame(gameId);
+        if (!doc?.state || cancelled) return;
+        setState((prev) => {
+          if (prev.onlineGameId !== gameId) return prev;
+          const myId =
+            sessionUid && prev.uidToNation?.[sessionUid]
+              ? prev.uidToNation[sessionUid]
+              : null;
+          const merged = applyRemoteGameSnapshot(prev, doc.state, myId);
+          if (
+            merged.round === prev.round &&
+            merged.phase === prev.phase &&
+            merged.planningComplete === prev.planningComplete
+          ) {
+            return prev;
+          }
+          return {
+            ...merged,
+            onlineHostUid: doc.hostUid ?? merged.onlineHostUid ?? null,
+            onlineLobbyId: doc.lobbyId ?? merged.onlineLobbyId ?? null,
+          };
+        });
+      } catch {
+        /* next tick */
+      }
+    };
+    const id = window.setInterval(() => void pull(), 1500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [state.mode, state.onlineGameId, state.phase, state.round, sessionUid]);
 
   const completeSession = async (name: string) => {
     setSessionLoading(true);
