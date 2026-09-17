@@ -13,7 +13,12 @@ import {
   nationDef,
 } from '../data/nations';
 import { displayNameOnly } from '../lib/session';
-import { AFTERMATH_THINK_MS, SELECTION_IDLE_MS } from '../lib/onlineConstants';
+import {
+  AFTERMATH_THINK_MS,
+  RECAP_AUTO_MS,
+  SELECTION_IDLE_MS,
+  STRIKE_CINEMA_MS,
+} from '../lib/onlineConstants';
 import type {
   GameMode,
   GameState,
@@ -907,7 +912,13 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
 }
 
 export function finishStrikeResolution(state: GameState): GameState {
-  let next: GameState = { ...state, pendingStrikes: [] };
+  // Kept on the summary so a client that never saw the resolveStrikes phase
+  // (slow phone, lagging listener) can still play the launch cinema.
+  let next: GameState = {
+    ...state,
+    pendingStrikes: [],
+    resolvedStrikes: [...state.pendingStrikes],
+  };
   next = checkEliminations(next);
   next = awardRoundSurvival(next);
   const scores = allScores(next);
@@ -926,13 +937,29 @@ export function finishStrikeResolution(state: GameState): GameState {
   return next;
 }
 
-/** Start the shared strategy countdown once strike cinema / recap has finished. */
-export function armAftermathTimer(state: GameState, at = Date.now()): GameState {
+/** How long the launch cinema plus aftermath recap runs on every client. */
+export function cinemaDurationMs(state: GameState): number {
+  const strikes = state.resolvedStrikes?.length ?? 0;
+  if (strikes === 0) return state.previousRoundEvents?.length ? RECAP_AUTO_MS : 0;
+  return strikes * STRIKE_CINEMA_MS + RECAP_AUTO_MS;
+}
+
+/**
+ * Start the shared strategy countdown. Publishers include the cinema runtime so
+ * the clock a peer adopts still leaves a full think window once its own
+ * animation finishes; clients arming after the fact pass includeCinema: false.
+ */
+export function armAftermathTimer(
+  state: GameState,
+  at = Date.now(),
+  { includeCinema = false }: { includeCinema?: boolean } = {},
+): GameState {
   if (state.phase !== 'roundSummary') return state;
-  if (state.aftermathEndsAt != null && state.aftermathEndsAt > at) return state;
+  const endsAt = at + (includeCinema ? cinemaDurationMs(state) : 0) + AFTERMATH_THINK_MS;
+  if (state.aftermathEndsAt != null && state.aftermathEndsAt > endsAt) return state;
   return {
     ...state,
-    aftermathEndsAt: at + AFTERMATH_THINK_MS,
+    aftermathEndsAt: endsAt,
   };
 }
 

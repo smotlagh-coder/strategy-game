@@ -587,7 +587,11 @@ export async function publishStrikeResolution(
       remote,
     );
     next = finishStrikeResolution(next);
-    if (next.phase === 'roundSummary') next = armAftermathTimer(next);
+    // Budget the cinema into the shared clock so a peer adopting this board
+    // still gets a full think window after its animation finishes.
+    if (next.phase === 'roundSummary') {
+      next = armAftermathTimer(next, Date.now(), { includeCinema: true });
+    }
 
     const kind: GameSyncKind = next.phase === 'gameOver' ? 'gameOver' : 'aftermath';
     tx.update(ref, {

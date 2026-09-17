@@ -65,9 +65,15 @@ import {
   tryAcquireAiLock,
   publishStrikeResolution,
 } from './lib/multiplayer';
-import { applyRemoteGameSnapshot, phaseRank } from './lib/onlineSync';
+import { applyRemoteGameSnapshot } from './lib/onlineSync';
 import { applyPublishedGame } from './lib/gameSync';
-import { ROUND_BANNER_MS, ROUND_BRIEFING_SLIDE_MS, SELECTION_IDLE_MS } from './lib/onlineConstants';
+import {
+  RECAP_AUTO_MS,
+  ROUND_BANNER_MS,
+  ROUND_BRIEFING_SLIDE_MS,
+  SELECTION_IDLE_MS,
+  STRIKE_CINEMA_MS,
+} from './lib/onlineConstants';
 import { aftermathMyCityIds, aftermathWorldIds } from './lib/lobbyInvite';
 import { NameGate } from './screens/NameGate';
 import { LobbyScreen } from './screens/Lobby';
@@ -157,9 +163,17 @@ function StrikeCinema({
     setBoom(null);
     playSfx(SFX.launch, 0.9);
     let raf = 0;
+    let startTimer = 0;
+    let fallbackTimer = 0;
+    let frameTimer = 0;
     let impactTimer = 0;
     let safetyTimer = 0;
     let finished = false;
+    // Mobile webviews routinely starve requestAnimationFrame, which used to
+    // leave the missile parked at opacity 0. Fall back to a timer so the
+    // strike always plays.
+    let sawFrame = false;
+    let usingTimer = false;
 
     const finish = () => {
       if (finished) return;
@@ -208,6 +222,7 @@ function StrikeCinema({
       const t0 = performance.now();
       const tick = (now: number) => {
         if (finished) return;
+        sawFrame = true;
         const u = Math.min(1, (now - t0) / STRIKE_FLIGHT_MS);
         const t = u * u * (3 - 2 * u);
         const omt = 1 - t;
@@ -223,8 +238,9 @@ function StrikeCinema({
         el.style.opacity = u < 0.04 ? String(u / 0.04) : '1';
 
         if (u < 1) {
-          raf = requestAnimationFrame(tick);
+          if (!usingTimer) raf = requestAnimationFrame(tick);
         } else {
+          window.clearInterval(frameTimer);
           playSfx(SFX.explosion, 0.95);
           setBoom(p2);
           el.style.opacity = '0';
@@ -233,12 +249,23 @@ function StrikeCinema({
       };
 
       raf = requestAnimationFrame(tick);
+      fallbackTimer = window.setTimeout(() => {
+        if (finished || sawFrame) return;
+        usingTimer = true;
+        cancelAnimationFrame(raf);
+        frameTimer = window.setInterval(() => tick(performance.now()), 33);
+      }, 250);
     };
 
-    raf = requestAnimationFrame(start);
+    // Timer, not rAF: the panel must start flying even in a frame-starved view
+    startTimer = window.setTimeout(start, 32);
 
     return () => {
+      finished = true;
       cancelAnimationFrame(raf);
+      window.clearTimeout(startTimer);
+      window.clearTimeout(fallbackTimer);
+      window.clearInterval(frameTimer);
       window.clearTimeout(impactTimer);
       window.clearTimeout(safetyTimer);
     };
@@ -502,6 +529,14 @@ function StrikeRecap({
 }) {
   const strikes = events.filter((e) => e.kind !== 'nationEliminated');
   const eliminated = events.filter((e) => e.kind === 'nationEliminated');
+  const continueRef = useRef(onContinue);
+  continueRef.current = onContinue;
+
+  // Everyone's clock budgets this long; auto-dismiss keeps the table together
+  useEffect(() => {
+    const t = window.setTimeout(() => continueRef.current(), RECAP_AUTO_MS);
+    return () => window.clearTimeout(t);
+  }, []);
 
   return (
     <div className="strike-cinema" role="dialog" aria-modal="true" aria-label="Strike aftermath">
@@ -531,6 +566,128 @@ function StrikeRecap({
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Owns the launch cinema for the whole app. It is driven by the round summary
+ * rather than the brief resolveStrikes phase, and lives outside the board so it
+ * still runs on the phases where the board is unmounted — otherwise a client
+ * that adopts an already-resolved board never sees a missile.
+ */
+function StrikeTheater({
+  state,
+  setState,
+  cinemaHoldRef,
+}: {
+  state: GameState;
+  setState: React.Dispatch<React.SetStateAction<GameState>>;
+  cinemaHoldRef: React.MutableRefObject<{ round: number; until: number } | null>;
+}) {
+  const [cinema, setCinema] = useState<StrikeShow | null>(null);
+  const [recap, setRecap] = useState<RoundWorldEvent[] | null>(null);
+  const cinemaResolveRef = useRef<(() => void) | null>(null);
+  const recapResolveRef = useRef<(() => void) | null>(null);
+  const playedRoundRef = useRef<number | null>(null);
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
+  const onCinemaComplete = useCallback(() => {
+    setCinema(null);
+    const resolve = cinemaResolveRef.current;
+    cinemaResolveRef.current = null;
+    resolve?.();
+  }, []);
+
+  const onRecapContinue = useCallback(() => {
+    setRecap(null);
+    const resolve = recapResolveRef.current;
+    recapResolveRef.current = null;
+    resolve?.();
+  }, []);
+
+  const phase = state.phase;
+  const round = state.round;
+  const summaryRound = state.previousRoundNumber;
+  const showing = phase === 'roundSummary' || phase === 'gameOver';
+
+  useEffect(() => {
+    if (!showing) return;
+    if (summaryRound !== round) return;
+    if (playedRoundRef.current === round) return;
+    playedRoundRef.current = round;
+
+    const strikes = stateRef.current.resolvedStrikes ?? [];
+    const events = stateRef.current.previousRoundEvents ?? [];
+    let cancelled = false;
+
+    const armClock = () =>
+      setState((cur) => {
+        if (cur.round !== round || cur.phase !== 'roundSummary') return cur;
+        if (cur.aftermathEndsAt != null) return cur;
+        const next = armAftermathTimer(cur);
+        if (cur.mode === 'online' && cur.onlineGameId) {
+          void publishSharedPhase(cur.onlineGameId, next, 'aftermath').catch(() => undefined);
+        }
+        return next;
+      });
+
+    if (strikes.length === 0 && events.length === 0) {
+      armClock();
+      return;
+    }
+
+    // Keep a peer that already moved on from cutting our animation short
+    cinemaHoldRef.current = {
+      round,
+      until: Date.now() + strikes.length * STRIKE_CINEMA_MS + RECAP_AUTO_MS + 4_000,
+    };
+
+    void (async () => {
+      try {
+        for (const strike of strikes) {
+          if (cancelled) break;
+          const cityName =
+            stateRef.current.nations[strike.targetNationId]?.cities.find(
+              (c) => c.id === strike.cityId,
+            )?.name ?? 'city';
+          await new Promise<void>((resolve) => {
+            cinemaResolveRef.current = resolve;
+            setCinema({
+              from: strike.attackerId,
+              to: strike.targetNationId,
+              cityId: strike.cityId,
+              cityName,
+            });
+          });
+        }
+        if (!cancelled && events.length > 0) {
+          await new Promise<void>((resolve) => {
+            recapResolveRef.current = resolve;
+            setRecap(events);
+          });
+        }
+      } finally {
+        cinemaHoldRef.current = null;
+      }
+      if (!cancelled) armClock();
+    })();
+
+    return () => {
+      cancelled = true;
+      cinemaHoldRef.current = null;
+      setCinema(null);
+      setRecap(null);
+      cinemaResolveRef.current = null;
+      recapResolveRef.current = null;
+    };
+  }, [showing, round, summaryRound, setState, cinemaHoldRef]);
+
+  return (
+    <>
+      {cinema && <StrikeCinema strike={cinema} onComplete={onCinemaComplete} />}
+      {recap && <StrikeRecap events={recap} onContinue={onRecapContinue} />}
+    </>
   );
 }
 
@@ -1157,14 +1314,12 @@ function GameBoard({
   sessionUid,
   onKicked,
   roundBriefingActive = false,
-  cinemaHoldRef,
 }: {
   state: GameState;
   setState: React.Dispatch<React.SetStateAction<GameState>>;
   sessionUid?: string | null;
   onKicked?: (message: string) => void;
   roundBriefingActive?: boolean;
-  cinemaHoldRef: React.MutableRefObject<{ round: number; until: number } | null>;
 }) {
   const turnId = currentNationId(state);
   const myNationId =
@@ -1179,26 +1334,16 @@ function GameBoard({
   const [wizardStep, setWizardStep] = useState<WizardStep | null>(null);
   const [fx, setFx] = useState<FxEvent[]>([]);
   const [busy, setBusy] = useState(false);
-  const [cinema, setCinema] = useState<StrikeShow | null>(null);
-  const [strikeRecap, setStrikeRecap] = useState<RoundWorldEvent[] | null>(null);
   const [idleSecondsLeft, setIdleSecondsLeft] = useState<number | null>(null);
   const fxId = useRef(0);
   const stateRef = useRef(state);
   stateRef.current = state;
-  const cinemaResolveRef = useRef<(() => void) | null>(null);
-  const recapResolveRef = useRef<(() => void) | null>(null);
   const aiRunningRef = useRef(false);
   const wizardStartedRoundRef = useRef<number | null>(null);
-  const resolvedRoundRef = useRef<number | null>(null);
   const lastActivityRef = useRef(Date.now());
   const kickingRef = useRef(false);
   const onKickedRef = useRef(onKicked);
   onKickedRef.current = onKicked;
-
-  // Allow a fresh resolve pass when a new round begins
-  useEffect(() => {
-    resolvedRoundRef.current = null;
-  }, [state.round]);
 
   const isResolving = state.phase === 'resolveStrikes';
   const humansPlanning =
@@ -1253,42 +1398,6 @@ function GameBoard({
     window.setTimeout(() => {
       setFx((prev) => prev.filter((f) => f.id !== id));
     }, ms);
-  }, []);
-
-  const playStrikeCinema = useCallback((fromNation: NationId, toNation: NationId, cityId: string) => {
-    const cityName =
-      stateRef.current.nations[toNation]?.cities.find((c) => c.id === cityId)?.name ?? 'city';
-    return new Promise<void>((resolve) => {
-      cinemaResolveRef.current = resolve;
-      setCinema({ from: fromNation, to: toNation, cityId, cityName });
-    });
-  }, []);
-
-  const onCinemaComplete = useCallback(() => {
-    setCinema(null);
-    const resolve = cinemaResolveRef.current;
-    cinemaResolveRef.current = null;
-    resolve?.();
-  }, []);
-
-  const playStrikeRecap = useCallback((events: RoundWorldEvent[]) => {
-    return new Promise<void>((resolve) => {
-      // Empty aftermath — don't trap players in a "nothing happened" Continue loop
-      if (events.length === 0) {
-        setStrikeRecap(null);
-        window.setTimeout(() => resolve(), 350);
-        return;
-      }
-      recapResolveRef.current = resolve;
-      setStrikeRecap(events);
-    });
-  }, []);
-
-  const onRecapContinue = useCallback(() => {
-    setStrikeRecap(null);
-    const resolve = recapResolveRef.current;
-    recapResolveRef.current = null;
-    resolve?.();
   }, []);
 
   const closeHumanTurn = useCallback(
@@ -1669,54 +1778,31 @@ function GameBoard({
     setState,
   ]);
 
-  // Every client animates the same queued strikes, then publishes the outcome
+  // Resolve the round's strikes and publish the board. No animation here: the
+  // cinema runs off the summary instead, so a client that misses this short
+  // phase still sees it.
   useEffect(() => {
     if (state.phase !== 'resolveStrikes') return;
-    if (resolvedRoundRef.current === state.round) return;
 
     let cancelled = false;
     const t = window.setTimeout(() => {
       void (async () => {
         if (cancelled) return;
-        if (resolvedRoundRef.current === state.round) return;
-        setBusy(true);
-        const strikes = [...stateRef.current.pendingStrikes];
-        let resolved = stateRef.current;
-        if (resolved.phase !== 'resolveStrikes') {
-          setBusy(false);
-          return;
-        }
-        for (const strike of strikes) resolved = applyQueuedStrike(resolved, strike);
+        const current = stateRef.current;
+        if (current.phase !== 'resolveStrikes') return;
+
+        let resolved = current.pendingStrikes.reduce(
+          (s, strike) => applyQueuedStrike(s, strike),
+          current,
+        );
         resolved = finishStrikeResolution(resolved);
-        resolvedRoundRef.current = state.round;
 
-        const gameId = resolved.mode === 'online' ? resolved.onlineGameId : null;
-        // Hold off the published aftermath so the launch cinema isn't cut short
-        // by whichever client finishes animating first.
+        const gameId = current.mode === 'online' ? current.onlineGameId : null;
         if (gameId) {
-          cinemaHoldRef.current = {
-            round: state.round,
-            until: Date.now() + strikes.length * 4000 + 20_000,
-          };
-        }
-
-        try {
-          for (const strike of strikes) {
-            if (cancelled) break;
-            await playStrikeCinema(strike.attackerId, strike.targetNationId, strike.cityId);
-          }
-          if (!cancelled) {
-            await playStrikeRecap(resolved.roundEvents);
-          }
-        } finally {
-          cinemaHoldRef.current = null;
-        }
-
-        // Everyone publishes; the transaction is idempotent so the first wins
-        // and the rest simply adopt it — no lock a departed player can hold.
-        if (gameId && !cancelled) {
+          // Idempotent transaction — the first client wins, the rest adopt it,
+          // so no lock a departed player can hold freezes the round.
           try {
-            const published = await publishStrikeResolution(gameId, state.round);
+            const published = await publishStrikeResolution(gameId, current.round);
             if (published) {
               if (published.phase === 'gameOver') {
                 await finishOnlineGame(gameId, published, sessionUid ?? undefined);
@@ -1727,35 +1813,15 @@ function GameBoard({
             console.error('failed to publish strike resolution', err);
           }
         }
-        if (!cancelled) {
-          // Online: the published write already armed the shared countdown
-          const shown = gameId ? resolved : armAftermathTimer(resolved);
-          setState(shown);
-        }
-        setBusy(false);
+        if (!cancelled) setState(resolved);
       })();
     }, 50);
 
     return () => {
       cancelled = true;
       window.clearTimeout(t);
-      cinemaHoldRef.current = null;
-      setStrikeRecap(null);
-      const resolveRecap = recapResolveRef.current;
-      recapResolveRef.current = null;
-      resolveRecap?.();
     };
-  }, [
-    state.phase,
-    state.round,
-    state.onlineGameId,
-    isOnline,
-    sessionUid,
-    setState,
-    playStrikeCinema,
-    playStrikeRecap,
-    cinemaHoldRef,
-  ]);
+  }, [state.phase, state.round, state.onlineGameId, sessionUid, setState]);
 
   const onSelectCity = (nationId: NationId, cityId: string) => {
     if (!strikeSelectMode || busy) return;
@@ -1791,8 +1857,6 @@ function GameBoard({
     <div className={`screen screen--board${strikeSelectMode ? ' is-striking' : ''}`}>
       <MapBackdrop />
       <FxLayer events={fx} />
-      {cinema && <StrikeCinema strike={cinema} onComplete={onCinemaComplete} />}
-      {strikeRecap && <StrikeRecap events={strikeRecap} onContinue={onRecapContinue} />}
 
       {isMyHumanTurn && wizardStep && wizardStep !== 'strike' && (
         <div className="turn-wizard" role="dialog" aria-modal="true">
@@ -2752,10 +2816,8 @@ export default function App() {
     const hold = cinemaHoldRef.current;
     if (!hold) return false;
     if (Date.now() > hold.until) return false;
-    return (
-      Number(remote.round) === hold.round &&
-      phaseRank(remote.phase) > phaseRank('resolveStrikes')
-    );
+    // Only block the next round; summary updates for this round are welcome
+    return Number(remote.round) > hold.round;
   }, []);
 
   const dismissRoundStart = useCallback(() => setRoundStartSlides(null), []);
@@ -3085,7 +3147,6 @@ export default function App() {
           setState={setState}
           sessionUid={sessionUid}
           roundBriefingActive={Boolean(roundStartSlides)}
-          cinemaHoldRef={cinemaHoldRef}
           onKicked={(message) => {
             if (sessionUid) void setPlayerStatus(sessionUid, 'available', null);
             setSessionError(message);
@@ -3093,6 +3154,7 @@ export default function App() {
           }}
         />
       )}
+      <StrikeTheater state={state} setState={setState} cinemaHoldRef={cinemaHoldRef} />
       {state.phase === 'roundSummary' && (
         <RoundSummary
           state={state}

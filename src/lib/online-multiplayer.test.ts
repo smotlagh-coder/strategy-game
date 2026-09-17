@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buyBomb,
   buyResearch,
   buyShield,
+  queueStrike,
   markHumanReady,
   allAliveHumansReady,
   applyQueuedStrike,
+  cinemaDurationMs,
   touchHumanActivity,
   finishStrikeResolution,
   armAftermathTimer,
@@ -662,6 +665,66 @@ describe('3-player online simulation', () => {
     }
   });
 
+  it('firing a bomb spends it for every client', () => {
+    const { state, uids } = makeThreePlayerGame();
+    const me = uids[0];
+    const myNation = state.uidToNation![me] as NationId;
+    const enemy = state.uidToNation![uids[1]] as NationId;
+
+    // Tech bought in an earlier round, so bombs can be stockpiled now
+    const armed: GameState = {
+      ...state,
+      nations: {
+        ...state.nations,
+        [myNation]: {
+          ...state.nations[myNation],
+          money: 30,
+          hasNuclearTech: true,
+          nuclearTechUnlockedRound: state.round - 1,
+        },
+      },
+    };
+    const room = new SimRoom(armed, uids);
+
+    const stocked = buyBomb(room.clients[me], myNation);
+    expect(stocked.nations[myNation].bombs).toBe(1);
+    room.push(me, stocked);
+    for (const uid of uids) {
+      expect(room.clients[uid].nations[myNation].bombs).toBe(1);
+    }
+
+    const target = room.clients[me].nations[enemy].cities[0];
+    const fired = queueStrike(room.clients[me], enemy, target.id, myNation);
+    expect(fired.nations[myNation].bombs).toBe(0);
+    room.push(me, fired);
+
+    // The launched warhead must not come back when the room merges
+    for (const uid of uids) {
+      expect(room.clients[uid].nations[myNation].bombs).toBe(0);
+      expect(room.clients[uid].nations[myNation].bombsUsed).toBe(1);
+    }
+    expect(room.shared.nations[myNation].bombs).toBe(0);
+  });
+
+  it('merged stockpiles follow buys and launches instead of the larger side', () => {
+    const { state, uids } = makeThreePlayerGame();
+    const id = state.uidToNation![uids[0]] as NationId;
+    const base = { ...state.nations[id], bombs: 2, bombsUsed: 4, bombsBoughtThisRound: 0 };
+
+    // A launch the remote doc has not heard about yet
+    const fired = { ...base, bombs: 1, bombsUsed: 5 };
+    expect(mergeNationPlanning(base, fired).bombs).toBe(1);
+    expect(mergeNationPlanning(fired, base).bombs).toBe(1);
+
+    // A buy on one side and a launch on the other both count
+    const bought = { ...base, bombs: 3, bombsBoughtThisRound: 1 };
+    expect(mergeNationPlanning(fired, bought).bombs).toBe(2);
+
+    // Stockpiles never go negative
+    const overspent = { ...base, bombs: 0, bombsUsed: 9 };
+    expect(mergeNationPlanning(base, overspent).bombs).toBe(0);
+  });
+
   it('a dropout event is followed once, so a client that moved on is not yanked back', () => {
     const { state, uids } = makeThreePlayerGame();
     const room = new SimRoom(state, uids);
@@ -746,14 +809,23 @@ describe('3-player online simulation', () => {
     for (const id of nations) s = completeSelections(s, id);
     s = finishOnlineHumanPlanning(s);
 
+    const queued = s.pendingStrikes.length;
+
     // Mirrors the publishStrikeResolution transaction body
     let published = s.pendingStrikes.reduce((acc, strike) => applyQueuedStrike(acc, strike), s);
     published = finishStrikeResolution(published);
-    if (published.phase === 'roundSummary') published = armAftermathTimer(published);
+    if (published.phase === 'roundSummary') {
+      published = armAftermathTimer(published, Date.now(), { includeCinema: true });
+    }
 
     expect(published.pendingStrikes).toEqual([]);
+    // The summary carries the strikes so a client that never saw the
+    // resolveStrikes phase can still play the cinema
+    expect(published.resolvedStrikes?.length).toBe(queued);
     if (published.phase === 'roundSummary') {
-      expect(published.aftermathEndsAt).toBeGreaterThan(Date.now());
+      expect(published.aftermathEndsAt).toBeGreaterThan(
+        Date.now() + cinemaDurationMs(published),
+      );
     }
 
     // A peer still sitting on resolveStrikes adopts the same countdown

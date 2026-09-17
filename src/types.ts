@@ -132,6 +132,8 @@ export interface GameState {
   onlineHostUid?: string | null;
   roundScores: RoundScore[];
   scoreHistory: RoundScore[][];
+  /** Strikes that produced the current summary, so every client can replay them. */
+  resolvedStrikes?: PendingStrike[];
   /** Highest published sync event this client has followed (local only). */
   syncSeq?: number;
   log: LogEntry[];

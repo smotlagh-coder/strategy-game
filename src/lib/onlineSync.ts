@@ -53,6 +53,26 @@ export function mergeHumanReadyFlags(
   return out;
 }
 
+const counter = (value: number | undefined) => (Number.isFinite(value) ? Number(value) : 0);
+
+/**
+ * A stockpile shrinks when a bomb is fired, so the larger side cannot simply
+ * win — that resurrects warheads the nation already launched. Rebuild it from
+ * the round-start stock plus the monotonic buy / launch counters.
+ */
+export function mergeBombStock(remote: NationState, local: NationState): number {
+  const stockAtRoundStart = Math.max(
+    counter(remote.bombs) - counter(remote.bombsBoughtThisRound) + counter(remote.bombsUsed),
+    counter(local.bombs) - counter(local.bombsBoughtThisRound) + counter(local.bombsUsed),
+  );
+  const bought = Math.max(
+    counter(remote.bombsBoughtThisRound),
+    counter(local.bombsBoughtThisRound),
+  );
+  const launched = Math.max(counter(remote.bombsUsed), counter(local.bombsUsed));
+  return Math.max(0, stockAtRoundStart + bought - launched);
+}
+
 /** Union city upgrades so a stale push cannot wipe research/shields. */
 export function mergeNationPlanning(
   remote: NationState | undefined,
@@ -110,7 +130,7 @@ export function mergeNationPlanning(
       local.nuclearTechUnlockedRound ?? remote.nuclearTechUnlockedRound,
     money: eliminated ? 0 : money,
     incomeRound: eliminated ? undefined : incomeRound,
-    bombs: eliminated ? 0 : Math.max(remote.bombs, local.bombs),
+    bombs: eliminated ? 0 : mergeBombStock(remote, local),
     bombsBoughtThisRound: Math.max(remote.bombsBoughtThisRound, local.bombsBoughtThisRound),
     bombsUsed: Math.max(remote.bombsUsed, local.bombsUsed),
     envBoughtThisRound: remote.envBoughtThisRound || local.envBoughtThisRound,
