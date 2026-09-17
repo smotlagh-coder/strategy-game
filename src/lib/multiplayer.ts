@@ -252,23 +252,91 @@ export async function leaveLobby(lobbyId: string, uid: string) {
     const memberUids = lobby.memberUids.filter((id) => id !== uid);
     const memberNames = { ...lobby.memberNames };
     delete memberNames[uid];
+    // Free the country they had claimed
+    const nationPicks = { ...(lobby.nationPicks ?? {}) };
+    delete nationPicks[uid];
     if (memberUids.length === 0 || lobby.hostUid === uid) {
-      tx.update(ref, { status: 'closed', memberUids, memberNames });
+      tx.update(ref, { status: 'closed', memberUids, memberNames, nationPicks });
     } else {
-      tx.update(ref, { memberUids, memberNames });
+      tx.update(ref, { memberUids, memberNames, nationPicks });
     }
   });
 }
 
-/** Assign unique nations to members in order; rest remain AI. */
-export function assignNations(memberUids: string[]): Record<string, NationId> {
-  const unique: Record<string, NationId> = {};
+/** Members holding a country, ignoring claims left behind by players who quit. */
+export function lobbyNationPicks(lobby: OnlineLobby): Record<string, NationId> {
+  const picks: Record<string, NationId> = {};
+  const used = new Set<NationId>();
+  for (const uid of lobby.memberUids) {
+    const pick = lobby.nationPicks?.[uid];
+    if (!pick || used.has(pick)) continue;
+    used.add(pick);
+    picks[uid] = pick;
+  }
+  return picks;
+}
+
+/**
+ * Claim a country in the lobby. First come, first served: the transaction
+ * refuses a nation another member already holds. Pass null to release.
+ */
+export async function claimLobbyNation(
+  lobbyId: string,
+  uid: string,
+  nationId: NationId | null,
+): Promise<void> {
+  const ref = doc(getDb(), 'lobbies', lobbyId);
+  await runTransaction(getDb(), async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new Error('Lobby not found');
+    const lobby = snap.data() as OnlineLobby;
+    if (!lobby.memberUids.includes(uid)) throw new Error('Join the lobby first');
+    if (lobby.gameId || lobby.status !== 'open') {
+      throw new Error('The match already started');
+    }
+
+    const picks = lobbyNationPicks(lobby);
+    if (nationId == null) {
+      delete picks[uid];
+    } else {
+      const heldByOther = Object.entries(picks).some(
+        ([owner, nation]) => nation === nationId && owner !== uid,
+      );
+      if (heldByOther) {
+        throw new Error('Someone just claimed that country — pick another');
+      }
+      picks[uid] = nationId;
+    }
+    tx.update(ref, { nationPicks: picks });
+  });
+}
+
+/** Honour lobby country claims, then fill remaining members; rest stay AI. */
+export function assignNations(
+  memberUids: string[],
+  picks: Record<string, NationId> = {},
+): Record<string, NationId> {
+  const chosen = new Map<string, NationId>();
   const used = new Set<NationId>();
   for (const uid of memberUids) {
+    const pick = picks[uid];
+    if (!pick || used.has(pick)) continue;
+    used.add(pick);
+    chosen.set(uid, pick);
+  }
+  for (const uid of memberUids) {
+    if (chosen.has(uid)) continue;
     const free = NATIONS.find((n) => !used.has(n.id));
     if (!free) break;
     used.add(free.id);
-    unique[uid] = free.id;
+    chosen.set(uid, free.id);
+  }
+
+  // Emit in seating order so player slots stay stable
+  const unique: Record<string, NationId> = {};
+  for (const uid of memberUids) {
+    const nation = chosen.get(uid);
+    if (nation) unique[uid] = nation;
   }
   return unique;
 }
@@ -343,7 +411,7 @@ export async function startOnlineGameFromLobby(
   if (lobby.memberUids.length < 2) throw new Error('Need at least 2 players');
   if (lobby.memberUids.length > 5) throw new Error('Max 5 players');
 
-  const assignments = assignNations(lobby.memberUids);
+  const assignments = assignNations(lobby.memberUids, lobbyNationPicks(lobby));
   const gameRef = doc(collection(getDb(), 'games'));
   const state = buildOnlineGameState(assignments, lobby.memberNames, gameRef.id, {
     lobbyId: lobby.id,
@@ -400,6 +468,8 @@ export async function rematchOnlineGame(
     hostUid: finished.hostUid,
     memberUids: finished.playerUids,
     memberNames: finished.playerNames,
+    // Everyone keeps the country they just played
+    nationPicks: finished.nationAssignments,
     status: 'open',
     createdAt: Date.now(),
     code: lobbyCodeFromId(lobbyRef.id),

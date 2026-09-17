@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ART } from '../data/art';
+import { NATIONS, nationDef } from '../data/nations';
 import {
+  claimLobbyNation,
   createLobby,
   fetchGame,
   fetchLobby,
@@ -12,13 +14,14 @@ import {
   listenMyActiveGames,
   listenOutgoingInvites,
   listenPlayers,
+  lobbyNationPicks,
   respondInvite,
   sendInvite,
   startOnlineGameFromLobby,
 } from '../lib/multiplayer';
 import { heartbeat, formatPlayerLabel, setPlayerStatus } from '../lib/session';
 import { inviteButtonState, isAlreadyInvited, lobbyCodeFromId, pickLobbyMatchGame } from '../lib/lobbyInvite';
-import type { GameState, InviteDoc, OnlineLobby, PlayerDoc } from '../types';
+import type { GameState, InviteDoc, NationId, OnlineLobby, PlayerDoc } from '../types';
 
 export function LobbyScreen({
   uid,
@@ -216,6 +219,26 @@ export function LobbyScreen({
     setLobbyId(null);
   };
 
+  const picks = useMemo(() => (lobby ? lobbyNationPicks(lobby) : {}), [lobby]);
+  const pickOwners = useMemo(() => {
+    const owners: Partial<Record<NationId, string>> = {};
+    for (const [owner, nation] of Object.entries(picks)) owners[nation] = owner;
+    return owners;
+  }, [picks]);
+
+  const onPickNation = async (nationId: NationId | null) => {
+    if (!lobbyId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await claimLobbyNation(lobbyId, uid, nationId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not pick that country');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="screen screen--splash">
       <div className="map-backdrop" style={{ backgroundImage: `url(${ART.map})` }} aria-hidden />
@@ -299,9 +322,51 @@ export function LobbyScreen({
                         {id === lobby?.hostUid ? ' (host)' : ''}
                         {id === uid ? ' · you' : ''}
                       </strong>
+                      <small>
+                        {picks[id] ? nationDef(picks[id]).name : 'No country yet'}
+                      </small>
                     </li>
                   ))}
                 </ul>
+
+                <h3 className="lobby-subhead">Pick your country</h3>
+                <div className="country-row country-row--lobby">
+                  {NATIONS.map((n) => {
+                    const ownerUid = pickOwners[n.id];
+                    const mine = ownerUid === uid;
+                    const takenByOther = Boolean(ownerUid && !mine);
+                    const ownerName = ownerUid
+                      ? formatPlayerLabel(lobby?.memberNames[ownerUid] ?? 'Commander')
+                      : null;
+                    return (
+                      <button
+                        key={n.id}
+                        type="button"
+                        className={`country-pick country-pick--sm ${mine ? 'is-mine' : ''} ${
+                          takenByOther ? 'is-taken' : ''
+                        }`}
+                        disabled={busy || takenByOther || Boolean(lobby?.gameId)}
+                        onClick={() => void onPickNation(mine ? null : n.id)}
+                        title={
+                          takenByOther
+                            ? `${ownerName} picked ${n.name}`
+                            : mine
+                              ? `Release ${n.name}`
+                              : `Play as ${n.name}`
+                        }
+                      >
+                        <img src={ART.leaders[n.id]} alt="" />
+                        <span className="country-pick__name">{n.name}</span>
+                        <span className="country-pick__owner">
+                          {mine ? 'You' : (ownerName ?? 'Open')}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="upgrade-hint">
+                  Unclaimed players are dealt a free country when the match starts.
+                </p>
                 <div className="lobby-actions">
                   {lobby?.hostUid === uid ? (
                     <button

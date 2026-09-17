@@ -18,14 +18,14 @@ import {
   aliveHumanNations,
 } from '../game/engine';
 import { finishOnlineHumanPlanning } from '../game/ai';
-import { assignNations, buildOnlineGameState } from './multiplayer';
+import { assignNations, buildOnlineGameState, lobbyNationPicks } from './multiplayer';
 import {
   applyRemoteGameSnapshot,
   mergeHumanPlanningWrite,
   mergeNationPlanning,
 } from './onlineSync';
 import { applyPublishedGame, nextGameSync } from './gameSync';
-import type { GameState, NationId } from '../types';
+import type { GameState, NationId, OnlineLobby } from '../types';
 
 function makeThreePlayerGame() {
   const uids = ['uid-a', 'uid-b', 'uid-c'];
@@ -725,6 +725,52 @@ describe('3-player online simulation', () => {
     // Stockpiles never go negative
     const overspent = { ...base, bombs: 0, bombsUsed: 9 };
     expect(mergeNationPlanning(base, overspent).bombs).toBe(0);
+  });
+
+  it('lobby country picks are honoured and the rest are dealt free nations', () => {
+    const uids = ['uid-a', 'uid-b', 'uid-c'];
+    const picks = { 'uid-a': 'china' as NationId, 'uid-c': 'france' as NationId };
+
+    const assignments = assignNations(uids, picks);
+    expect(assignments['uid-a']).toBe('china');
+    expect(assignments['uid-c']).toBe('france');
+    // The unclaimed player still gets a country, and never a taken one
+    expect(assignments['uid-b']).toBeDefined();
+    expect(['china', 'france']).not.toContain(assignments['uid-b']);
+    expect(new Set(Object.values(assignments)).size).toBe(3);
+    // Seating order is preserved so player slots stay stable
+    expect(Object.keys(assignments)).toEqual(uids);
+
+    // Nobody picked: falls back to dealing in order
+    expect(new Set(Object.values(assignNations(uids))).size).toBe(3);
+  });
+
+  it('a claim left by a departed member frees the country again', () => {
+    const lobby: OnlineLobby = {
+      id: 'lobby-1',
+      hostUid: 'uid-a',
+      memberUids: ['uid-a', 'uid-b'],
+      memberNames: { 'uid-a': 'Alice', 'uid-b': 'Bob' },
+      status: 'open',
+      createdAt: Date.now(),
+      nationPicks: {
+        'uid-a': 'russia',
+        'uid-b': 'us',
+        'uid-gone': 'china',
+      },
+    };
+
+    const picks = lobbyNationPicks(lobby);
+    expect(picks).toEqual({ 'uid-a': 'russia', 'uid-b': 'us' });
+
+    // Two members cannot end up on the same nation even if the doc says so
+    const doubled = lobbyNationPicks({
+      ...lobby,
+      nationPicks: { 'uid-a': 'russia', 'uid-b': 'russia' },
+    });
+    expect(Object.values(doubled)).toEqual(['russia']);
+    const assignments = assignNations(lobby.memberUids, doubled);
+    expect(new Set(Object.values(assignments)).size).toBe(2);
   });
 
   it('a wiped-out player keeps their seat and spectates instead of being kicked', () => {

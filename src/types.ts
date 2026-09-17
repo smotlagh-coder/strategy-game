@@ -198,6 +198,8 @@ export interface OnlineLobby {
   createdAt: number;
   /** Short unique code shown in the lobby UI */
   code?: string;
+  /** Country claims, first come first served — uid to nation */
+  nationPicks?: Record<string, NationId>;
   /** Set when host starts — members join this game */
   gameId?: string | null;
 }
