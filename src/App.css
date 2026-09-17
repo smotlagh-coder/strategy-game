@@ -2738,12 +2738,20 @@ img { max-width: 100%; display: block; }
     place-items: end stretch;
     align-items: end;
     padding: 0.5rem 0.55rem calc(0.55rem + env(safe-area-inset-bottom, 0px));
-    background: linear-gradient(
-      0deg,
-      rgba(2, 8, 18, 0.94) 0%,
-      rgba(2, 8, 18, 0.72) 42%,
-      transparent 78%
-    );
+    /* No full-height veil: the enemy cities behind the dock must stay legible */
+    background: none;
+  }
+
+  /* Fade only the strip directly behind the docked controls */
+  .turn-wizard--dock::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 11rem;
+    background: linear-gradient(0deg, rgba(2, 8, 18, 0.9) 0%, rgba(2, 8, 18, 0.5) 55%, transparent 100%);
+    pointer-events: none;
   }
 
   .turn-wizard--dock .turn-wizard__panel,

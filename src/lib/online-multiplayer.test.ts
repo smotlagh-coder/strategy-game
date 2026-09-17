@@ -903,6 +903,40 @@ describe('3-player online simulation', () => {
     expect(cinemaDurationMs(threeAtOnce)).toBeLessThan(cinemaDurationMs(oneEach));
   });
 
+  it('a merged aftermath keeps the strike list, so every client can still animate', () => {
+    const { state, uids } = makeThreePlayerGame();
+    const room = new SimRoom(state, uids);
+    const me = uids[0];
+    const myNation = room.nationFor(me);
+    const [a, b] = room.shared.turnOrder;
+    const strikes = [{ attackerId: a, targetNationId: b, cityId: `${b}-1` }];
+
+    // The report reached me first; a later snapshot without it must not wipe it
+    const withReport: GameState = {
+      ...room.clients[me],
+      phase: 'roundSummary',
+      previousRoundNumber: room.shared.round,
+      planningComplete: true,
+      resolvedStrikes: strikes,
+      previousRoundEvents: [],
+    };
+    const bareSummary: GameState = { ...withReport, resolvedStrikes: [] };
+
+    expect(
+      applyRemoteGameSnapshot(withReport, bareSummary, myNation).resolvedStrikes,
+    ).toEqual(strikes);
+
+    // And a client still in planning adopts the report when the summary arrives
+    const planning: GameState = {
+      ...room.clients[me],
+      phase: 'action',
+      resolvedStrikes: [],
+    };
+    expect(
+      applyRemoteGameSnapshot(planning, withReport, myNation).resolvedStrikes,
+    ).toEqual(strikes);
+  });
+
   it('a dropout event is followed once, so a client that moved on is not yanked back', () => {
     const { state, uids } = makeThreePlayerGame();
     const room = new SimRoom(state, uids);

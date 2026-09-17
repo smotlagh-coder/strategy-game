@@ -203,6 +203,10 @@ export function applyRemoteGameSnapshot(
       previousRoundEvents: remote.previousRoundEvents?.length
         ? remote.previousRoundEvents
         : prev.previousRoundEvents,
+      // Losing this list costs the client its strike animation
+      resolvedStrikes: remote.resolvedStrikes?.length
+        ? remote.resolvedStrikes
+        : prev.resolvedStrikes,
       previousRoundNumber: remote.previousRoundNumber ?? prev.previousRoundNumber ?? null,
       aiPlanningComplete: Boolean(remote.aiPlanningComplete || prev.aiPlanningComplete),
     });
@@ -230,6 +234,10 @@ export function applyRemoteGameSnapshot(
       previousRoundEvents: further.previousRoundEvents?.length
         ? further.previousRoundEvents
         : other.previousRoundEvents,
+      // Losing this list costs the client its strike animation
+      resolvedStrikes: further.resolvedStrikes?.length
+        ? further.resolvedStrikes
+        : other.resolvedStrikes,
       previousRoundNumber: further.previousRoundNumber ?? other.previousRoundNumber ?? null,
     });
   }

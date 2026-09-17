@@ -39,7 +39,14 @@ import {
   whoIsSanctioning,
 } from './game/engine';
 import { runAllAiUntilHumanOrSummary, runAiTurn, runOnlineAiPlanning } from './game/ai';
-import type { GameMode, GameState, GameSyncEvent, NationId, RoundWorldEvent } from './types';
+import type {
+  GameMode,
+  GameState,
+  GameSyncEvent,
+  NationId,
+  PendingStrike,
+  RoundWorldEvent,
+} from './types';
 import { isFirebaseConfigured } from './lib/firebase';
 import {
   ensureAuthSession,
@@ -69,7 +76,10 @@ import {
 import { applyRemoteGameSnapshot } from './lib/onlineSync';
 import { applyPublishedGame } from './lib/gameSync';
 import {
+  AFTERMATH_THINK_MS,
   RECAP_AUTO_MS,
+  REPORT_POLL_MS,
+  REPORT_WAIT_MS,
   ROUND_BANNER_MS,
   ROUND_BRIEFING_SLIDE_MS,
   SELECTION_IDLE_MS,
@@ -677,11 +687,9 @@ function StrikeTheater({
     if (!showing) return;
     if (summaryRound !== round) return;
     if (playedRoundRef.current === round) return;
-    playedRoundRef.current = round;
 
-    const strikes = stateRef.current.resolvedStrikes ?? [];
-    const events = stateRef.current.previousRoundEvents ?? [];
     let cancelled = false;
+    let reportTimer = 0;
 
     const armClock = () =>
       setState((cur) => {
@@ -694,19 +702,20 @@ function StrikeTheater({
         return next;
       });
 
-    if (strikes.length === 0 && events.length === 0) {
-      armClock();
-      return;
-    }
+    const play = async (strikes: PendingStrike[], events: RoundWorldEvent[]) => {
+      // Keep a peer that already moved on from cutting our animation short
+      const volleyCount = groupStrikesByAttacker(strikes).length;
+      const runtimeMs = volleyCount * STRIKE_CINEMA_MS + (events.length > 0 ? RECAP_AUTO_MS : 0);
+      cinemaHoldRef.current = { round, until: Date.now() + runtimeMs + 4_000 };
 
-    // Keep a peer that already moved on from cutting our animation short
-    const volleyCount = groupStrikesByAttacker(strikes).length;
-    cinemaHoldRef.current = {
-      round,
-      until: Date.now() + volleyCount * STRIKE_CINEMA_MS + RECAP_AUTO_MS + 4_000,
-    };
+      // A report that arrived late must not be cut off by a clock already ticking
+      setState((cur) => {
+        if (cur.round !== round || cur.phase !== 'roundSummary') return cur;
+        const needUntil = Date.now() + runtimeMs + AFTERMATH_THINK_MS;
+        if (cur.aftermathEndsAt == null || cur.aftermathEndsAt >= needUntil) return cur;
+        return { ...cur, aftermathEndsAt: needUntil };
+      });
 
-    void (async () => {
       try {
         for (const volley of groupStrikesByAttacker(strikes)) {
           if (cancelled) break;
@@ -735,10 +744,33 @@ function StrikeTheater({
         cinemaHoldRef.current = null;
       }
       if (!cancelled) armClock();
-    })();
+    };
+
+    /** The strike report can trail the phase change, so wait for it to land. */
+    const attempt = (waitedMs: number) => {
+      if (cancelled || playedRoundRef.current === round) return;
+      const strikes = stateRef.current.resolvedStrikes ?? [];
+      const events = stateRef.current.previousRoundEvents ?? [];
+
+      if (strikes.length === 0 && events.length === 0) {
+        // Start the countdown so the summary is never stuck waiting on a peer
+        armClock();
+        if (waitedMs >= REPORT_WAIT_MS) return;
+        reportTimer = window.setTimeout(
+          () => attempt(waitedMs + REPORT_POLL_MS),
+          REPORT_POLL_MS,
+        );
+        return;
+      }
+
+      playedRoundRef.current = round;
+      void play(strikes, events);
+    };
+    attempt(0);
 
     return () => {
       cancelled = true;
+      window.clearTimeout(reportTimer);
       cinemaHoldRef.current = null;
       setCinema(null);
       setRecap(null);

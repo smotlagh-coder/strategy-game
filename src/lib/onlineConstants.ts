@@ -16,6 +16,10 @@ export const STRIKE_CINEMA_MS = 3_400;
 /** Aftermath recap dismisses itself so nobody stalls the table. */
 export const RECAP_AUTO_MS = 6_000;
 
+/** A client may enter the summary before the strike report syncs — wait this long for it. */
+export const REPORT_WAIT_MS = 4_000;
+export const REPORT_POLL_MS = 300;
+
 /** Round-start banner duration after advancing. */
 export const ROUND_BANNER_MS = 3_000;
 
