@@ -15,6 +15,7 @@ import {
   nextRound,
   forfeitNation,
   aliveNations,
+  aliveHumanNations,
 } from '../game/engine';
 import { finishOnlineHumanPlanning } from '../game/ai';
 import { assignNations, buildOnlineGameState } from './multiplayer';
@@ -724,6 +725,62 @@ describe('3-player online simulation', () => {
     // Stockpiles never go negative
     const overspent = { ...base, bombs: 0, bombsUsed: 9 };
     expect(mergeNationPlanning(base, overspent).bombs).toBe(0);
+  });
+
+  it('a wiped-out player keeps their seat and spectates instead of being kicked', () => {
+    const { state, uids } = makeThreePlayerGame();
+    const me = uids[0];
+    const myNation = state.uidToNation![me] as NationId;
+
+    const burnt = state.nations[myNation];
+    const dead: GameState = {
+      ...state,
+      nations: {
+        ...state.nations,
+        [myNation]: {
+          ...burnt,
+          cities: burnt.cities.map((c) => ({
+            ...c,
+            destroyed: true,
+            hasShield: false,
+            hasResearch: false,
+          })),
+          eliminated: true,
+        },
+      },
+    };
+
+    // The seat survives the merge, so the client does not eject itself
+    const merged = mergeNationPlanning(dead.nations[myNation], dead.nations[myNation]);
+    expect(merged.eliminated).toBe(true);
+    expect(merged.isHuman).toBe(true);
+    expect(merged.ownerUid).toBe(me);
+
+    const snapshot = applyRemoteGameSnapshot(dead, dead, myNation);
+    expect(snapshot.nations[myNation].isHuman).toBe(true);
+    expect(snapshot.humanNations).toContain(myNation);
+
+    // ...but the room never waits for them again
+    expect(aliveHumanNations(dead)).not.toContain(myNation);
+    let playing = dead;
+    for (const uid of uids.slice(1)) {
+      playing = markHumanReady(playing, playing.uidToNation![uid] as NationId);
+    }
+    expect(allAliveHumansReady(playing)).toBe(true);
+
+    // A live player leaving is still a forfeit: that seat goes to the AI
+    const otherNation = state.uidToNation![uids[1]] as NationId;
+    const left = forfeitNation(dead, otherNation);
+    const afterLeave = mergeNationPlanning(
+      left.nations[otherNation],
+      left.nations[otherNation],
+    );
+    expect(afterLeave.isHuman).toBe(false);
+    expect(afterLeave.ownerUid).toBeUndefined();
+
+    // The spectator's seat is not up for grabs
+    expect(left.nations[myNation].isHuman).toBe(true);
+    expect(left.uidToNation?.[me]).toBe(myNation);
   });
 
   it('one attacker fires a single volley, so the cinema does not drag on', () => {

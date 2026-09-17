@@ -1426,6 +1426,11 @@ function GameBoard({
       )
     : isHumanTurn;
   const strikeSelectMode = isMyHumanTurn && wizardStep === 'strike';
+  /** Wiped out but still seated: watch the match play out to the final scores. */
+  const mySeatId = isOnline
+    ? myNationId
+    : (state.turnOrder.find((id) => state.nations[id].isHuman) ?? null);
+  const isSpectator = Boolean(mySeatId && state.nations[mySeatId].eliminated);
   const inboundSanctions = whoIsSanctioning(state, actorId);
   const waitingHumans = isOnline
     ? aliveHumanNations(state).filter((id) => !state.humanReady?.[id])
@@ -1630,14 +1635,13 @@ function GameBoard({
   ]);
 
   // If we were kicked remotely, leave the board. A forfeit flips our nation to
-  // AI without touching uidToNation, so watch the seat itself.
+  // AI without touching uidToNation, so watch the seat itself. Losing every
+  // city is not a forfeit — that player keeps their seat and spectates.
   const mySeat = sessionUid ? state.uidToNation?.[sessionUid] : null;
-  const seatAlive = Boolean(
-    mySeat && state.nations[mySeat]?.isHuman && !state.nations[mySeat]?.eliminated,
-  );
+  const seatHeld = Boolean(mySeat && state.nations[mySeat]?.isHuman);
   useEffect(() => {
     if (!isOnline || !sessionUid || !onKicked) return;
-    if (seatAlive) {
+    if (seatHeld) {
       kickingRef.current = false;
       return;
     }
@@ -1652,7 +1656,7 @@ function GameBoard({
     if (kickingRef.current) return;
     kickingRef.current = true;
     onKicked('You left the game — your cities were destroyed.');
-  }, [isOnline, sessionUid, seatAlive, state.phase, onKicked]);
+  }, [isOnline, sessionUid, seatHeld, state.phase, onKicked]);
 
   // If we already locked in but the shared room still lists us as waiting, publish again
   useEffect(() => {
@@ -2362,7 +2366,19 @@ function GameBoard({
               </div>
             )}
 
-            {!isHumanTurn && (state.phase === 'buy' || state.phase === 'action') && (
+            {isSpectator && mySeatId && (state.phase === 'buy' || state.phase === 'action') && (
+              <div className="panel panel--ai enter-pop">
+                <img src={ART.leaders[mySeatId]} alt="" />
+                <h2>{nationDef(mySeatId).name} is in ruins</h2>
+                <p>
+                  You are out of the fight, but your score stands — watch the rest of the
+                  match and the final results.
+                </p>
+                <div className="thinking-bar" />
+              </div>
+            )}
+
+            {!isHumanTurn && !isSpectator && (state.phase === 'buy' || state.phase === 'action') && (
               <div className="panel panel--ai enter-pop">
                 <img src={ART.leaders[turnId]} alt="" />
                 <h2>{nationDef(turnId).leader} is acting…</h2>

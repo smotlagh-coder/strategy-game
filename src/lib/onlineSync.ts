@@ -102,6 +102,7 @@ export function mergeNationPlanning(
 
   const eliminated =
     Boolean(remote.eliminated || local.eliminated) || cities.every((c) => c.destroyed);
+  const seatHeld = remote.isHuman && local.isHuman;
 
   const remoteIncome = remote.incomeRound ?? 0;
   const localIncome = local.incomeRound ?? 0;
@@ -146,10 +147,12 @@ export function mergeNationPlanning(
       local.sanctions.length >= remote.sanctions.length ? local.sanctions : remote.sanctions,
     eliminated,
     lockedScore: Math.max(remote.lockedScore ?? 0, local.lockedScore ?? 0),
-    // Forfeit / kick sticks — never revive a dead or AI-converted nation as human
-    isHuman: !eliminated && remote.isHuman && local.isHuman,
-    playerSlot: eliminated ? undefined : (local.playerSlot ?? remote.playerSlot),
-    ownerUid: eliminated ? undefined : (local.ownerUid ?? remote.ownerUid),
+    // Forfeit / kick sticks — never revive an AI-converted nation as human.
+    // Being wiped out is not a forfeit: the seat stays so that player can watch
+    // the rest of the match.
+    isHuman: seatHeld,
+    playerSlot: seatHeld ? (local.playerSlot ?? remote.playerSlot) : undefined,
+    ownerUid: seatHeld ? (local.ownerUid ?? remote.ownerUid) : undefined,
   };
 }
 
