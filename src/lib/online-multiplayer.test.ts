@@ -10,6 +10,7 @@ import {
   cinemaDurationMs,
   touchHumanActivity,
   finishStrikeResolution,
+  groupStrikesByAttacker,
   armAftermathTimer,
   nextRound,
   forfeitNation,
@@ -723,6 +724,40 @@ describe('3-player online simulation', () => {
     // Stockpiles never go negative
     const overspent = { ...base, bombs: 0, bombsUsed: 9 };
     expect(mergeNationPlanning(base, overspent).bombs).toBe(0);
+  });
+
+  it('one attacker fires a single volley, so the cinema does not drag on', () => {
+    const { state } = makeThreePlayerGame();
+    const [a, b, c] = state.turnOrder;
+    const strike = (attackerId: NationId, targetNationId: NationId, cityId: string) => ({
+      attackerId,
+      targetNationId,
+      cityId,
+    });
+
+    const volleys = groupStrikesByAttacker([
+      strike(a, b, 'b-1'),
+      strike(a, c, 'c-1'),
+      strike(b, a, 'a-1'),
+      strike(a, b, 'b-2'),
+    ]);
+
+    // Two panels (one per attacker), not four
+    expect(volleys.map((v) => v.attackerId)).toEqual([a, b]);
+    expect(volleys[0].strikes.map((s) => s.cityId)).toEqual(['b-1', 'c-1', 'b-2']);
+
+    // The shared aftermath clock budgets per volley, not per missile
+    const threeAtOnce: GameState = {
+      ...state,
+      phase: 'roundSummary',
+      resolvedStrikes: [strike(a, b, 'b-1'), strike(a, c, 'c-1'), strike(a, b, 'b-2')],
+      previousRoundEvents: [],
+    };
+    const oneEach: GameState = {
+      ...threeAtOnce,
+      resolvedStrikes: [strike(a, b, 'b-1'), strike(b, a, 'a-1'), strike(c, a, 'a-2')],
+    };
+    expect(cinemaDurationMs(threeAtOnce)).toBeLessThan(cinemaDurationMs(oneEach));
   });
 
   it('a dropout event is followed once, so a client that moved on is not yanked back', () => {

@@ -937,11 +937,27 @@ export function finishStrikeResolution(state: GameState): GameState {
   return next;
 }
 
+/**
+ * One cinema per attacker: a nation that hit several targets launches its whole
+ * volley in a single panel, so a heavy round doesn't drag on.
+ */
+export function groupStrikesByAttacker(
+  strikes: PendingStrike[],
+): { attackerId: NationId; strikes: PendingStrike[] }[] {
+  const volleys: { attackerId: NationId; strikes: PendingStrike[] }[] = [];
+  for (const strike of strikes) {
+    const open = volleys.find((v) => v.attackerId === strike.attackerId);
+    if (open) open.strikes.push(strike);
+    else volleys.push({ attackerId: strike.attackerId, strikes: [strike] });
+  }
+  return volleys;
+}
+
 /** How long the launch cinema plus aftermath recap runs on every client. */
 export function cinemaDurationMs(state: GameState): number {
-  const strikes = state.resolvedStrikes?.length ?? 0;
-  if (strikes === 0) return state.previousRoundEvents?.length ? RECAP_AUTO_MS : 0;
-  return strikes * STRIKE_CINEMA_MS + RECAP_AUTO_MS;
+  const volleys = groupStrikesByAttacker(state.resolvedStrikes ?? []).length;
+  if (volleys === 0) return state.previousRoundEvents?.length ? RECAP_AUTO_MS : 0;
+  return volleys * STRIKE_CINEMA_MS + RECAP_AUTO_MS;
 }
 
 /**

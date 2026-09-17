@@ -20,6 +20,7 @@ import {
   endTurn,
   finishBuyPhase,
   finishStrikeResolution,
+  groupStrikesByAttacker,
   formatMoney,
   markHumanReady,
   markPromptDone,
@@ -133,11 +134,16 @@ function playSfx(src: string, volume = 0.85) {
   }
 }
 
-interface StrikeShow {
-  from: NationId;
+interface StrikeTarget {
   to: NationId;
   cityId: string;
   cityName: string;
+}
+
+/** One attacker's whole volley — every missile flies in the same panel. */
+interface StrikeShow {
+  from: NationId;
+  targets: StrikeTarget[];
 }
 
 const STRIKE_FLIGHT_MS = 1750;
@@ -152,15 +158,18 @@ function StrikeCinema({
 }) {
   const flightRef = useRef<HTMLDivElement>(null);
   const launcherRef = useRef<HTMLImageElement>(null);
-  const cityRef = useRef<HTMLImageElement>(null);
-  const missileRef = useRef<HTMLDivElement>(null);
-  const pathRef = useRef<SVGPathElement>(null);
-  const [boom, setBoom] = useState<{ x: number; y: number } | null>(null);
+  const cityRefs = useRef<(HTMLImageElement | null)[]>([]);
+  const missileRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const pathRefs = useRef<(SVGPathElement | null)[]>([]);
+  const [booms, setBooms] = useState<({ x: number; y: number } | null)[]>([]);
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
 
+  const volleyKey = `${strike.from}:${strike.targets.map((t) => t.cityId).join(',')}`;
+  const count = strike.targets.length;
+
   useEffect(() => {
-    setBoom(null);
+    setBooms([]);
     playSfx(SFX.launch, 0.9);
     let raf = 0;
     let startTimer = 0;
@@ -185,16 +194,22 @@ function StrikeCinema({
     safetyTimer = window.setTimeout(finish, STRIKE_FLIGHT_MS + STRIKE_IMPACT_MS + 800);
 
     const start = () => {
-      const el = missileRef.current;
       const layer = flightRef.current;
       const launcher = launcherRef.current;
-      const city = cityRef.current;
-      if (!el || !layer || !launcher || !city) {
+      // Every target that actually rendered gets a warhead
+      const flights = strike.targets
+        .map((_, i) => ({
+          missile: missileRefs.current[i],
+          city: cityRefs.current[i],
+          path: pathRefs.current[i],
+        }))
+        .filter((f) => f.missile && f.city);
+      if (!layer || !launcher || flights.length === 0) {
         impactTimer = window.setTimeout(finish, STRIKE_FLIGHT_MS + STRIKE_IMPACT_MS);
         return;
       }
 
-      // Fly between the real elements so the warhead lands on the target city.
+      // Fly between the real elements so each warhead lands on its city.
       // The panel is mid enter-pop, so undo its scale to get layout pixels.
       const layerBox = layer.getBoundingClientRect();
       const scale = layer.offsetWidth ? layerBox.width / layer.offsetWidth : 1;
@@ -203,21 +218,20 @@ function StrikeCinema({
         y: (box.top + box.height / 2 - layerBox.top) / scale,
       });
       const p0 = center(launcher.getBoundingClientRect());
-      const p2 = center(city.getBoundingClientRect());
-      const dx = p2.x - p0.x;
-      const dy = p2.y - p0.y;
-      // Side-by-side layout arcs over the top; stacked (mobile) arcs out sideways
-      const p1 =
-        Math.abs(dx) >= Math.abs(dy)
-          ? { x: (p0.x + p2.x) / 2, y: Math.min(p0.y, p2.y) - Math.abs(dx) * 0.42 }
-          : { x: Math.max(p0.x, p2.x) + Math.abs(dy) * 0.42, y: (p0.y + p2.y) / 2 };
 
-      if (pathRef.current) {
-        pathRef.current.setAttribute(
-          'd',
-          `M ${p0.x} ${p0.y} Q ${p1.x} ${p1.y} ${p2.x} ${p2.y}`,
-        );
-      }
+      const arcs = flights.map((flight, i) => {
+        const p2 = center(flight.city!.getBoundingClientRect());
+        const dx = p2.x - p0.x;
+        const dy = p2.y - p0.y;
+        // Fan the volley out so overlapping trails stay readable
+        const spread = flights.length > 1 ? 0.3 + (i / (flights.length - 1)) * 0.34 : 0.42;
+        const p1 =
+          Math.abs(dx) >= Math.abs(dy)
+            ? { x: (p0.x + p2.x) / 2, y: Math.min(p0.y, p2.y) - Math.abs(dx) * spread }
+            : { x: Math.max(p0.x, p2.x) + Math.abs(dy) * spread, y: (p0.y + p2.y) / 2 };
+        flight.path?.setAttribute('d', `M ${p0.x} ${p0.y} Q ${p1.x} ${p1.y} ${p2.x} ${p2.y}`);
+        return { ...flight, p1, p2 };
+      });
 
       const t0 = performance.now();
       const tick = (now: number) => {
@@ -226,24 +240,28 @@ function StrikeCinema({
         const u = Math.min(1, (now - t0) / STRIKE_FLIGHT_MS);
         const t = u * u * (3 - 2 * u);
         const omt = 1 - t;
-        const x = omt * omt * p0.x + 2 * omt * t * p1.x + t * t * p2.x;
-        const y = omt * omt * p0.y + 2 * omt * t * p1.y + t * t * p2.y;
-        const vx = 2 * omt * (p1.x - p0.x) + 2 * t * (p2.x - p1.x);
-        const vy = 2 * omt * (p1.y - p0.y) + 2 * t * (p2.y - p1.y);
-        const angle = (Math.atan2(vy, vx) * 180) / Math.PI;
-        el.style.left = `${x}px`;
-        el.style.top = `${y}px`;
-        // Shrinks as it dives so it reads as falling onto the city
-        el.style.transform = `translate(-50%, -50%) rotate(${angle}deg) scale(${1 - t * 0.35})`;
-        el.style.opacity = u < 0.04 ? String(u / 0.04) : '1';
+        for (const arc of arcs) {
+          const el = arc.missile!;
+          const x = omt * omt * p0.x + 2 * omt * t * arc.p1.x + t * t * arc.p2.x;
+          const y = omt * omt * p0.y + 2 * omt * t * arc.p1.y + t * t * arc.p2.y;
+          const vx = 2 * omt * (arc.p1.x - p0.x) + 2 * t * (arc.p2.x - arc.p1.x);
+          const vy = 2 * omt * (arc.p1.y - p0.y) + 2 * t * (arc.p2.y - arc.p1.y);
+          const angle = (Math.atan2(vy, vx) * 180) / Math.PI;
+          el.style.left = `${x}px`;
+          el.style.top = `${y}px`;
+          // Shrinks as it dives so it reads as falling onto the city
+          el.style.transform = `translate(-50%, -50%) rotate(${angle}deg) scale(${1 - t * 0.35})`;
+          el.style.opacity = u < 0.04 ? String(u / 0.04) : '1';
+        }
 
         if (u < 1) {
           if (!usingTimer) raf = requestAnimationFrame(tick);
         } else {
           window.clearInterval(frameTimer);
           playSfx(SFX.explosion, 0.95);
-          setBoom(p2);
-          el.style.opacity = '0';
+          // Whole volley lands together, so one panel covers every target
+          setBooms(strike.targets.map((_, i) => arcs[i]?.p2 ?? null));
+          for (const arc of arcs) arc.missile!.style.opacity = '0';
           impactTimer = window.setTimeout(finish, STRIKE_IMPACT_MS);
         }
       };
@@ -269,16 +287,18 @@ function StrikeCinema({
       window.clearTimeout(impactTimer);
       window.clearTimeout(safetyTimer);
     };
-  }, [strike.from, strike.to, strike.cityId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [volleyKey]);
 
   const from = nationDef(strike.from);
-  const to = nationDef(strike.to);
 
   return (
     <div className="strike-cinema" role="dialog" aria-modal="true" aria-label="Nuclear strike">
       <div className="strike-cinema__veil" />
       <div className="strike-cinema__panel enter-pop">
-        <header className="strike-cinema__title">NUCLEAR LAUNCH</header>
+        <header className="strike-cinema__title">
+          {count > 1 ? `NUCLEAR LAUNCH — ${count} MISSILES` : 'NUCLEAR LAUNCH'}
+        </header>
 
         <div className="strike-cinema__row">
           <div className="strike-cinema__side strike-cinema__side--from">
@@ -295,35 +315,76 @@ function StrikeCinema({
 
           <div className="strike-cinema__arc" aria-hidden />
 
-          <div className="strike-cinema__side strike-cinema__side--to">
-            <div className="strike-cinema__flag strike-cinema__flag--danger">TARGET</div>
-            <div className={`strike-cinema__target-art ${boom ? 'is-burning' : ''}`}>
-              <img
-                ref={cityRef}
-                className="strike-cinema__city"
-                src={ART.cities[strike.cityId]}
-                alt=""
-              />
-              <img className="strike-cinema__leader-sm" src={ART.leaders[strike.to]} alt="" />
-              {boom && <span className="strike-cinema__fire" aria-hidden />}
+          <div
+            className={`strike-cinema__side strike-cinema__side--to${
+              count > 1 ? ' strike-cinema__side--many' : ''
+            }`}
+          >
+            <div className="strike-cinema__flag strike-cinema__flag--danger">
+              {count > 1 ? 'TARGETS' : 'TARGET'}
             </div>
-            <strong>{to.name}</strong>
-            <span>{strike.cityName}</span>
+            <div className="strike-cinema__targets">
+              {strike.targets.map((target, i) => {
+                const to = nationDef(target.to);
+                return (
+                  <div className="strike-cinema__target" key={`${target.to}-${target.cityId}`}>
+                    <div
+                      className={`strike-cinema__target-art ${booms[i] ? 'is-burning' : ''}`}
+                    >
+                      <img
+                        ref={(el) => {
+                          cityRefs.current[i] = el;
+                        }}
+                        className="strike-cinema__city"
+                        src={ART.cities[target.cityId]}
+                        alt=""
+                      />
+                      <img className="strike-cinema__leader-sm" src={ART.leaders[target.to]} alt="" />
+                      {booms[i] && <span className="strike-cinema__fire" aria-hidden />}
+                    </div>
+                    <strong>{to.name}</strong>
+                    <span>{target.cityName}</span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
-          {/* Spans the whole row so the flight path can cross between the cards */}
+          {/* Spans the whole row so the flight paths can cross between the cards */}
           <div ref={flightRef} className="strike-cinema__flight" aria-hidden>
             <svg className="strike-cinema__path">
-              <path ref={pathRef} d="" />
+              {strike.targets.map((target, i) => (
+                <path
+                  key={`${target.cityId}-path`}
+                  ref={(el) => {
+                    pathRefs.current[i] = el;
+                  }}
+                  d=""
+                />
+              ))}
             </svg>
-            <div ref={missileRef} className="strike-cinema__missile">
-              <img src={ART.missile} alt="" draggable={false} />
-              <span className="strike-cinema__flame" />
-            </div>
-            {boom && (
-              <div className="strike-cinema__boom" style={{ left: boom.x, top: boom.y }}>
-                <img src={ART.explosion} alt="" />
+            {strike.targets.map((target, i) => (
+              <div
+                key={`${target.cityId}-missile`}
+                ref={(el) => {
+                  missileRefs.current[i] = el;
+                }}
+                className="strike-cinema__missile"
+              >
+                <img src={ART.missile} alt="" draggable={false} />
+                <span className="strike-cinema__flame" />
               </div>
+            ))}
+            {booms.map((boom, i) =>
+              boom ? (
+                <div
+                  key={`${strike.targets[i]?.cityId ?? i}-boom`}
+                  className="strike-cinema__boom"
+                  style={{ left: boom.x, top: boom.y }}
+                >
+                  <img src={ART.explosion} alt="" />
+                </div>
+              ) : null,
             )}
           </div>
         </div>
@@ -638,26 +699,28 @@ function StrikeTheater({
     }
 
     // Keep a peer that already moved on from cutting our animation short
+    const volleyCount = groupStrikesByAttacker(strikes).length;
     cinemaHoldRef.current = {
       round,
-      until: Date.now() + strikes.length * STRIKE_CINEMA_MS + RECAP_AUTO_MS + 4_000,
+      until: Date.now() + volleyCount * STRIKE_CINEMA_MS + RECAP_AUTO_MS + 4_000,
     };
 
     void (async () => {
       try {
-        for (const strike of strikes) {
+        for (const volley of groupStrikesByAttacker(strikes)) {
           if (cancelled) break;
-          const cityName =
-            stateRef.current.nations[strike.targetNationId]?.cities.find(
-              (c) => c.id === strike.cityId,
-            )?.name ?? 'city';
           await new Promise<void>((resolve) => {
             cinemaResolveRef.current = resolve;
             setCinema({
-              from: strike.attackerId,
-              to: strike.targetNationId,
-              cityId: strike.cityId,
-              cityName,
+              from: volley.attackerId,
+              targets: volley.strikes.map((strike) => ({
+                to: strike.targetNationId,
+                cityId: strike.cityId,
+                cityName:
+                  stateRef.current.nations[strike.targetNationId]?.cities.find(
+                    (c) => c.id === strike.cityId,
+                  )?.name ?? 'city',
+              })),
             });
           });
         }

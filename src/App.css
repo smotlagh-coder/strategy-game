@@ -2087,10 +2087,48 @@ img { max-width: 100%; display: block; }
   font-size: 0.85rem;
 }
 
+/* A volley against several cities stacks its targets in one panel */
+.strike-cinema__targets {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.strike-cinema__side--many .strike-cinema__targets {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 0.5rem 0.65rem;
+  width: 100%;
+}
+
+.strike-cinema__target {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.strike-cinema__side--many .strike-cinema__target strong {
+  font-size: 0.8rem;
+  margin-top: 0;
+}
+
+.strike-cinema__side--many .strike-cinema__target span {
+  font-size: 0.72rem;
+}
+
 .strike-cinema__target-art {
   position: relative;
   width: min(132px, 28vw);
   height: min(132px, 28vw);
+}
+
+/* Shrink each card as the volley grows so the panel still fits one screen */
+.strike-cinema__side--many .strike-cinema__target-art {
+  width: min(96px, 22vw);
+  height: min(96px, 22vw);
 }
 
 .strike-cinema__city {
@@ -2262,6 +2300,15 @@ img { max-width: 100%; display: block; }
   .strike-cinema__target-art {
     width: 96px;
     height: 96px;
+  }
+
+  .strike-cinema__side--many .strike-cinema__target-art {
+    width: 78px;
+    height: 78px;
+  }
+
+  .strike-cinema__side--many .strike-cinema__targets {
+    grid-template-columns: repeat(auto-fit, minmax(78px, 1fr));
   }
 }
 
