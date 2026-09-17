@@ -2033,6 +2033,11 @@ img { max-width: 100%; display: block; }
   min-height: 240px;
 }
 
+/* Big volley: trade arc space for target space so the panel stays one screen */
+.strike-cinema__row--volley {
+  grid-template-columns: minmax(120px, 0.9fr) minmax(90px, 0.6fr) minmax(200px, 2fr);
+}
+
 /* Missile / blast layer: sits over both cards so impacts land on the city */
 .strike-cinema__flight {
   position: absolute;

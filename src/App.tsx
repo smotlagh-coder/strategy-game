@@ -164,6 +164,8 @@ function StrikeCinema({
   const [booms, setBooms] = useState<({ x: number; y: number } | null)[]>([]);
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
+  const strikeRef = useRef(strike);
+  strikeRef.current = strike;
 
   const volleyKey = `${strike.from}:${strike.targets.map((t) => t.cityId).join(',')}`;
   const count = strike.targets.length;
@@ -197,7 +199,7 @@ function StrikeCinema({
       const layer = flightRef.current;
       const launcher = launcherRef.current;
       // Every target that actually rendered gets a warhead
-      const flights = strike.targets
+      const flights = strikeRef.current.targets
         .map((_, i) => ({
           missile: missileRefs.current[i],
           city: cityRefs.current[i],
@@ -260,7 +262,7 @@ function StrikeCinema({
           window.clearInterval(frameTimer);
           playSfx(SFX.explosion, 0.95);
           // Whole volley lands together, so one panel covers every target
-          setBooms(strike.targets.map((_, i) => arcs[i]?.p2 ?? null));
+          setBooms(strikeRef.current.targets.map((_, i) => arcs[i]?.p2 ?? null));
           for (const arc of arcs) arc.missile!.style.opacity = '0';
           impactTimer = window.setTimeout(finish, STRIKE_IMPACT_MS);
         }
@@ -287,7 +289,6 @@ function StrikeCinema({
       window.clearTimeout(impactTimer);
       window.clearTimeout(safetyTimer);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [volleyKey]);
 
   const from = nationDef(strike.from);
@@ -300,7 +301,7 @@ function StrikeCinema({
           {count > 1 ? `NUCLEAR LAUNCH — ${count} MISSILES` : 'NUCLEAR LAUNCH'}
         </header>
 
-        <div className="strike-cinema__row">
+        <div className={`strike-cinema__row${count > 2 ? ' strike-cinema__row--volley' : ''}`}>
           <div className="strike-cinema__side strike-cinema__side--from">
             <div className="strike-cinema__flag">DEPARTING</div>
             <img
