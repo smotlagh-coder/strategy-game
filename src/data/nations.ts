@@ -76,7 +76,62 @@ export const NATIONS: NationDef[] = [
       { id: 'fr-3', name: 'Marseille', landmark: '🗿' },
     ],
   },
+  {
+    id: 'india',
+    name: 'India',
+    shortName: 'IN',
+    leader: 'PM Raghavan',
+    color: '#ff9933',
+    flagColors: ['#ff9933', '#fff', '#138808'],
+    cities: [
+      { id: 'in-1', name: 'New Delhi', landmark: '🛕' },
+      { id: 'in-2', name: 'Mumbai', landmark: '🌇' },
+      { id: 'in-3', name: 'Bengaluru', landmark: '💻' },
+    ],
+  },
+  {
+    id: 'pakistan',
+    name: 'Pakistan',
+    shortName: 'PK',
+    leader: 'General Rahim',
+    color: '#01411c',
+    flagColors: ['#01411c', '#fff'],
+    cities: [
+      { id: 'pk-1', name: 'Islamabad', landmark: '🕌' },
+      { id: 'pk-2', name: 'Karachi', landmark: '🛳️' },
+      { id: 'pk-3', name: 'Lahore', landmark: '🏰' },
+    ],
+  },
+  {
+    id: 'iran',
+    name: 'Iran',
+    shortName: 'IR',
+    leader: 'President Nasseri',
+    color: '#239f40',
+    flagColors: ['#239f40', '#fff', '#da0000'],
+    cities: [
+      { id: 'ir-1', name: 'Tehran', landmark: '🗼' },
+      { id: 'ir-2', name: 'Isfahan', landmark: '🕌' },
+      { id: 'ir-3', name: 'Bandar Abbas', landmark: '⚓' },
+    ],
+  },
+  {
+    id: 'northkorea',
+    name: 'North Korea',
+    shortName: 'DPRK',
+    leader: 'Marshal Kang',
+    color: '#ed1c27',
+    flagColors: ['#024fa2', '#fff', '#ed1c27'],
+    cities: [
+      { id: 'kp-1', name: 'Pyongyang', landmark: '🚩' },
+      { id: 'kp-2', name: 'Hamhung', landmark: '🏭' },
+      { id: 'kp-3', name: 'Wonsan', landmark: '🚢' },
+    ],
+  },
 ];
+
+/** Nations seated in a single match — the rest of the roster sits it out. */
+export const TABLE_SIZE = 5;
 
 export const COSTS = {
   nuclearTech: 5,

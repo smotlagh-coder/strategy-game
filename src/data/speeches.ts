@@ -56,6 +56,38 @@ export const LEADER_SPEECHES: LeaderSpeech[] = [
       'The United Kingdom prefers alliances and measured responses. Nuclear technology is regrettable insurance, nothing more.',
     trueIntent: 'Buy insurance — then use it. Target whoever threatens London.',
   },
+  {
+    nationId: 'india',
+    voice: 'Rishi',
+    audioSrc: '/sounds/india.wav',
+    publicLine:
+      'India speaks for the many, not the mighty. Our doctrine is no first use, our budget is for science. Respect that, and we stay friends.',
+    trueIntent: 'Out-earn everyone with research, then answer any strike at full force.',
+  },
+  {
+    nationId: 'pakistan',
+    voice: 'Rocko (English (UK))',
+    audioSrc: '/sounds/pakistan.wav',
+    publicLine:
+      'Pakistan wants no war, only security. Our shields go up, never our missiles first. Threaten our cities and that changes in minutes.',
+    trueIntent: 'Shield the cities early, then strike the nearest rival before they grow.',
+  },
+  {
+    nationId: 'iran',
+    voice: 'Reed (English (UK))',
+    audioSrc: '/sounds/iran.wav',
+    publicLine:
+      'Iran has endured every sanction you could write. Our programme is civilian, our patience is long. Lift the pressure and the region breathes.',
+    trueIntent: 'Sanction the leaders, build quietly, and cash in when they overextend.',
+  },
+  {
+    nationId: 'northkorea',
+    voice: 'Fred',
+    audioSrc: '/sounds/northkorea.wav',
+    publicLine:
+      'The Democratic People’s Republic is a peace-loving fortress. Our rockets are for the stars. Do not test the resolve of Pyongyang.',
+    trueIntent: 'Rush nuclear tech, hoard bombs, and fire first at the loudest threat.',
+  },
 ];
 
 export function speechFor(id: NationId): LeaderSpeech {

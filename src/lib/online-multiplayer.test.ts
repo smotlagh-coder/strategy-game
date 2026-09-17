@@ -16,8 +16,10 @@ import {
   forfeitNation,
   aliveNations,
   aliveHumanNations,
+  seatTable,
 } from '../game/engine';
 import { finishOnlineHumanPlanning } from '../game/ai';
+import { NATIONS, TABLE_SIZE } from '../data/nations';
 import { assignNations, buildOnlineGameState, lobbyNationPicks } from './multiplayer';
 import {
   applyRemoteGameSnapshot,
@@ -725,6 +727,44 @@ describe('3-player online simulation', () => {
     // Stockpiles never go negative
     const overspent = { ...base, bombs: 0, bombsUsed: 9 };
     expect(mergeNationPlanning(base, overspent).bombs).toBe(0);
+  });
+
+  it('seats five nations per match, humans first, AI from the unpicked countries', () => {
+    expect(NATIONS).toHaveLength(9);
+
+    const seats = seatTable(['iran', 'northkorea']);
+    expect(seats).toHaveLength(TABLE_SIZE);
+    expect(seats.slice(0, 2)).toEqual(['iran', 'northkorea']);
+    expect(new Set(seats).size).toBe(TABLE_SIZE);
+
+    // A five-human table is all human, with nobody dealt in
+    const full = seatTable(['us', 'uk', 'france', 'india', 'pakistan']);
+    expect(full).toHaveLength(TABLE_SIZE);
+    expect(full.every((id) => id !== 'china')).toBe(true);
+
+    // Chairs already dealt survive another player's pick
+    const first = seatTable(['india']);
+    const second = seatTable(['india', first[3]], { keep: first });
+    expect(second).toHaveLength(TABLE_SIZE);
+    expect(new Set(second)).toEqual(new Set(first));
+  });
+
+  it('an online table seats the picked countries and fills the rest with AI', () => {
+    const assignments = { 'uid-a': 'northkorea' as NationId, 'uid-b': 'iran' as NationId };
+    const state = buildOnlineGameState(
+      assignments,
+      { 'uid-a': 'Kian', 'uid-b': 'Daddy' },
+      'game-seats',
+    );
+
+    expect(state.turnOrder).toHaveLength(TABLE_SIZE);
+    expect(state.turnOrder.slice(0, 2)).toEqual(['northkorea', 'iran']);
+    expect(state.humanNations).toEqual(['northkorea', 'iran']);
+    // Everyone at the table is either a seated human or an AI; nobody else plays
+    for (const id of state.turnOrder) expect(state.nations[id]).toBeDefined();
+    const ai = state.turnOrder.filter((id) => !state.nations[id].isHuman);
+    expect(ai).toHaveLength(TABLE_SIZE - 2);
+    expect(ai).not.toContain('northkorea');
   });
 
   it('lobby country picks are honoured and the rest are dealt free nations', () => {

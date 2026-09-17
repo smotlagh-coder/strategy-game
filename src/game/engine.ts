@@ -7,6 +7,7 @@ import {
   MAX_ROUNDS,
   NATIONS,
   RESEARCH_INCOME,
+  TABLE_SIZE,
   SANCTION_PENALTY,
   SURVIVAL_POINTS_PER_CITY,
   initialNation,
@@ -42,6 +43,34 @@ function worldEvent(
   return { id: `evt-${++eventSeq}`, ...partial };
 }
 
+/**
+ * Seat one match. Every human country plays; the empty chairs are dealt from
+ * the countries nobody picked, so the AI line-up varies between matches.
+ * Chairs listed in `keep` are held on to first, so one player's pick does not
+ * reshuffle a table the others have already seen.
+ */
+export function seatTable(
+  humans: NationId[],
+  opts?: { keep?: NationId[]; size?: number; rng?: () => number },
+): NationId[] {
+  const size = Math.max(opts?.size ?? TABLE_SIZE, humans.length);
+  const seats: NationId[] = [];
+  const take = (id: NationId) => {
+    if (seats.length < size && !seats.includes(id)) seats.push(id);
+  };
+  for (const id of humans) take(id);
+  for (const id of opts?.keep ?? []) take(id);
+
+  const rng = opts?.rng ?? Math.random;
+  const pool = NATIONS.map((n) => n.id).filter((id) => !seats.includes(id));
+  for (let i = pool.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(rng() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  while (seats.length < size && pool.length > 0) seats.push(pool.shift()!);
+  return seats;
+}
+
 export function createInitialState(): GameState {
   const nations = Object.fromEntries(
     NATIONS.map((n) => [n.id, initialNation(n.id)]),
@@ -54,7 +83,7 @@ export function createInitialState(): GameState {
     maxRounds: MAX_ROUNDS,
     environment: 100,
     nations,
-    turnOrder: NATIONS.map((n) => n.id),
+    turnOrder: seatTable([]),
     currentTurnIndex: 0,
     selectingFor: 1,
     humanNations: [],
@@ -457,16 +486,17 @@ export function pickCountry(state: GameState, id: NationId): GameState {
 
   if (state.mode === 'single') {
     const nations = { ...state.nations };
-    for (const nid of state.turnOrder) {
-      nations[nid] = {
-        ...nations[nid],
-        isHuman: nid === id,
-        playerSlot: nid === id ? 1 : undefined,
+    for (const n of NATIONS) {
+      nations[n.id] = {
+        ...nations[n.id],
+        isHuman: n.id === id,
+        playerSlot: n.id === id ? 1 : undefined,
       };
     }
     return {
       ...state,
       nations,
+      turnOrder: seatTable([id], { keep: state.turnOrder }),
       humanNations: [id],
       phase: 'leaders',
       pendingCountryPick: id,
@@ -480,6 +510,7 @@ export function pickCountry(state: GameState, id: NationId): GameState {
     return {
       ...state,
       nations,
+      turnOrder: seatTable([id], { keep: state.turnOrder }),
       humanNations: [id],
       selectingFor: 2,
       pendingCountryPick: id,
@@ -488,10 +519,12 @@ export function pickCountry(state: GameState, id: NationId): GameState {
 
   const nations = { ...state.nations };
   nations[id] = { ...nations[id], isHuman: true, playerSlot: 2 };
+  const humanNations = [...state.humanNations, id];
   return {
     ...state,
     nations,
-    humanNations: [...state.humanNations, id],
+    turnOrder: seatTable(humanNations, { keep: state.turnOrder }),
+    humanNations,
     phase: 'leaders',
     pendingCountryPick: id,
   };

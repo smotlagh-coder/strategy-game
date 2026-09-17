@@ -1,6 +1,6 @@
 # Nuclear War
 
-Strategy game for **Kian** — turn-based nuclear strategy for **1–5 players**. Five nations — **US, UK, France, Russia, China** — with empty seats filled by AI.
+Strategy game for **Kian** — turn-based nuclear strategy for **1–5 players**. Nine countries — **US, UK, France, Russia, China, India, Pakistan, Iran, North Korea** — five seated per match, with empty seats filled by AI.
 
 Repo: [smotlagh-coder/strategy-game](https://github.com/smotlagh-coder/strategy-game)
 

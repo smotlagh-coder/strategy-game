@@ -1036,11 +1036,11 @@ function ModeSelect({ onSelect }: { onSelect: (m: GameMode) => void }) {
       <div className="splash-veil" />
       <div className="splash-content">
         <h1 className="stencil-title title-glow">NUCLEAR WAR</h1>
-        <p className="tagline">5 rounds · 5 nations · one superpower</p>
+        <p className="tagline">5 rounds · 9 countries · one superpower</p>
         <div className="mode-row">
           <button className="btn btn--xl btn--primary" onClick={() => onSelect('single')}>
             Single Player
-            <small>You vs 4 AI nations</small>
+            <small>Pick your country · you vs 4 AI nations</small>
           </button>
           <button className="btn btn--xl btn--primary" onClick={() => onSelect('two')}>
             Two Players
@@ -1165,7 +1165,12 @@ function CountrySelect({
 }
 
 function MeetLeaders({ state, onContinue }: { state: GameState; onContinue: () => void }) {
-  const order = useMemo(() => LEADER_SPEECHES.map((s) => s.nationId), []);
+  // Only the countries seated at this table speak at the summit
+  const seated = state.turnOrder;
+  const order = useMemo(
+    () => LEADER_SPEECHES.map((s) => s.nationId).filter((id) => seated.includes(id)),
+    [seated],
+  );
   const [index, setIndex] = useState(0);
   const [started, setStarted] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -1218,7 +1223,8 @@ function MeetLeaders({ state, onContinue }: { state: GameState; onContinue: () =
         </p>
 
         <div className="leaders-row">
-          {NATIONS.map((n) => {
+          {seated.map((id) => {
+            const n = nationDef(id);
             const human = state.nations[n.id].isHuman;
             const speaking = started && !done && current.nationId === n.id;
             const spoken = started && order.indexOf(n.id) < index;

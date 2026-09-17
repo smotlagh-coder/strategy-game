@@ -1,4 +1,13 @@
-export type NationId = 'us' | 'uk' | 'france' | 'russia' | 'china';
+export type NationId =
+  | 'us'
+  | 'uk'
+  | 'france'
+  | 'russia'
+  | 'china'
+  | 'india'
+  | 'pakistan'
+  | 'iran'
+  | 'northkorea';
 
 export type GameMode = 'single' | 'two' | 'online';
 

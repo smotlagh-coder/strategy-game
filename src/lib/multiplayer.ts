@@ -25,6 +25,7 @@ import {
   finishStrikeResolution,
   nextRound,
   playerDisplayName,
+  seatTable,
 } from '../game/engine';
 import { finishOnlineHumanPlanning, runOnlineAiPlanning } from '../game/ai';
 import { NATIONS, nationDef } from '../data/nations';
@@ -311,10 +312,11 @@ export async function claimLobbyNation(
   });
 }
 
-/** Honour lobby country claims, then fill remaining members; rest stay AI. */
+/** Honour lobby country claims, then deal countries to members who never picked. */
 export function assignNations(
   memberUids: string[],
   picks: Record<string, NationId> = {},
+  rng: () => number = Math.random,
 ): Record<string, NationId> {
   const chosen = new Map<string, NationId>();
   const used = new Set<NationId>();
@@ -324,12 +326,19 @@ export function assignNations(
     used.add(pick);
     chosen.set(uid, pick);
   }
-  for (const uid of memberUids) {
-    if (chosen.has(uid)) continue;
-    const free = NATIONS.find((n) => !used.has(n.id));
-    if (!free) break;
-    used.add(free.id);
-    chosen.set(uid, free.id);
+  const undecided = memberUids.filter((uid) => !chosen.has(uid));
+  if (undecided.length > 0) {
+    // Deal the leftovers at random so the same countries aren't always handed out
+    const pool = seatTable([], {
+      size: NATIONS.length,
+      rng,
+    }).filter((id) => !used.has(id));
+    for (const uid of undecided) {
+      const free = pool.shift();
+      if (!free) break;
+      used.add(free);
+      chosen.set(uid, free);
+    }
   }
 
   // Emit in seating order so player slots stay stable
@@ -376,8 +385,10 @@ export function buildOnlineGameState(
     }
   }
 
-  const humans = state.turnOrder.filter((id) => nations[id].isHuman);
-  const ai = state.turnOrder.filter((id) => !nations[id].isHuman);
+  // Humans always play; AI fills the rest of the table from unpicked countries
+  const seats = seatTable(humanNations);
+  const humans = seats.filter((id) => nations[id].isHuman);
+  const ai = seats.filter((id) => !nations[id].isHuman);
 
   return runOnlineAiPlanning(
     beginHumanPlanning({

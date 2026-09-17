@@ -5,6 +5,7 @@ import {
   createInitialState,
   ensureIncome,
   nextRound,
+  seatTable,
   startGame,
 } from './engine';
 import { mergeNationPlanning } from '../lib/onlineSync';
@@ -23,6 +24,7 @@ describe('applyIncome', () => {
     let s = startGame({
       ...createInitialState(),
       mode: 'single',
+      turnOrder: seatTable(['us']),
       humanNations: ['us'],
       nations: {
         ...createInitialState().nations,
@@ -59,6 +61,7 @@ describe('applyIncome', () => {
       ...base,
       round: 2,
       phase: 'buy',
+      turnOrder: seatTable(['us', 'uk']),
       nations: { ...base.nations, us, uk },
     });
     // gross 3 + 1.5 = 4.5, −10% → 4.05, + previous 1 → 5.05
@@ -71,6 +74,7 @@ describe('applyIncome', () => {
       ...base,
       round: 2,
       phase: 'buy',
+      turnOrder: seatTable(['us']),
       nations: {
         ...base.nations,
         us: { ...base.nations.us, money: 2, incomeRound: undefined },
