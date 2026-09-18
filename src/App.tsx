@@ -1,15 +1,25 @@
 import './App.css';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ART, SFX } from './data/art';
-import { NATIONS, nationDef, COSTS, RESEARCH_INCOME } from './data/nations';
+import {
+  NATIONS,
+  nationDef,
+  COSTS,
+  DRONE_DAMAGE,
+  MAX_DRONES_PER_ROUND,
+  RESEARCH_INCOME,
+} from './data/nations';
 import { LEADER_SPEECHES, speechFor } from './data/speeches';
 import {
   applyQueuedStrike,
+  orderStrikesForResolution,
   aliveHumanNations,
   allAliveHumansReady,
   armAftermathTimer,
   isHumanDisconnected,
+  buyAerospaceTech,
   buyBombs,
+  buyDrones,
   buyEnvironment,
   buyNuclearTech,
   buyResearch,
@@ -25,6 +35,7 @@ import {
   markHumanReady,
   markPromptDone,
   maxBombsPurchasable,
+  maxDronesPurchasable,
   nextRound,
   pickCountry,
   queueStrikes,
@@ -93,20 +104,28 @@ import { LeaderboardScreen } from './screens/Leaderboard';
 type FxKind = 'buy' | 'strike-label';
 type WizardStep =
   | 'tech'
+  | 'aerospace'
   | 'researchAsk'
   | 'researchPick'
   | 'bombs'
+  | 'drones'
   | 'shieldAsk'
   | 'shieldPick'
   | 'env'
   | 'sanctionAsk'
   | 'sanctionPick'
-  | 'strike';
+  | 'strike'
+  | 'droneStrike';
 
 function wizardArt(step: WizardStep): string {
   switch (step) {
     case 'tech':
       return ART.nukeTech;
+    case 'aerospace':
+      return ART.aerospaceTech;
+    case 'drones':
+    case 'droneStrike':
+      return ART.drone;
     case 'researchAsk':
     case 'researchPick':
       return ART.researchLab;
@@ -148,6 +167,8 @@ interface StrikeTarget {
   to: NationId;
   cityId: string;
   cityName: string;
+  /** A city can catch a warhead and a drone swarm in the same volley */
+  weapons: ('nuke' | 'drone')[];
 }
 
 /** One attacker's whole volley — every missile flies in the same panel. */
@@ -177,10 +198,31 @@ function StrikeCinema({
   const strikeRef = useRef(strike);
   strikeRef.current = strike;
 
-  const volleyKey = `${strike.from}:${strike.targets.map((t) => t.cityId).join(',')}`;
+  const volleyKey = `${strike.from}:${strike.targets
+    .map((t) => `${t.cityId}/${t.weapons.join('+')}`)
+    .join(',')}`;
   const count = strike.targets.length;
+  const flightPlan = strike.targets.flatMap((target, targetIndex) =>
+    target.weapons.map((weapon) => ({ targetIndex, weapon })),
+  );
+  const nukeCount = flightPlan.filter((f) => f.weapon === 'nuke').length;
+  const droneCount = flightPlan.length - nukeCount;
+  const title =
+    nukeCount === 0
+      ? droneCount > 1
+        ? `DRONE SWARMS — ${droneCount} PACKS`
+        : 'DRONE SWARM'
+      : droneCount > 0
+        ? 'COMBINED STRIKE — DRONES ESCORT THE WARHEADS'
+        : count > 1
+          ? `NUCLEAR LAUNCH — ${count} MISSILES`
+          : 'NUCLEAR LAUNCH';
+
+  const planRef = useRef(flightPlan);
+  planRef.current = flightPlan;
 
   useEffect(() => {
+    const plan = planRef.current;
     setBooms([]);
     playSfx(SFX.launch, 0.9);
     let raf = 0;
@@ -208,12 +250,14 @@ function StrikeCinema({
     const start = () => {
       const layer = flightRef.current;
       const launcher = launcherRef.current;
-      // Every target that actually rendered gets a warhead
-      const flights = strikeRef.current.targets
-        .map((_, i) => ({
+      // Every craft that actually rendered flies to the card of its own city
+      const flights = plan
+        .map((leg, i) => ({
           missile: missileRefs.current[i],
-          city: cityRefs.current[i],
+          city: cityRefs.current[leg.targetIndex],
           path: pathRefs.current[i],
+          targetIndex: leg.targetIndex,
+          weapon: leg.weapon,
         }))
         .filter((f) => f.missile && f.city);
       if (!layer || !launcher || flights.length === 0) {
@@ -258,7 +302,8 @@ function StrikeCinema({
           const y = omt * omt * p0.y + 2 * omt * t * arc.p1.y + t * t * arc.p2.y;
           const vx = 2 * omt * (arc.p1.x - p0.x) + 2 * t * (arc.p2.x - arc.p1.x);
           const vy = 2 * omt * (arc.p1.y - p0.y) + 2 * t * (arc.p2.y - arc.p1.y);
-          const angle = (Math.atan2(vy, vx) * 180) / Math.PI;
+          // A warhead noses over onto its target; a quadcopter stays level
+          const angle = arc.weapon === 'drone' ? 0 : (Math.atan2(vy, vx) * 180) / Math.PI;
           el.style.left = `${x}px`;
           el.style.top = `${y}px`;
           // Shrinks as it dives so it reads as falling onto the city
@@ -272,7 +317,11 @@ function StrikeCinema({
           window.clearInterval(frameTimer);
           playSfx(SFX.explosion, 0.95);
           // Whole volley lands together, so one panel covers every target
-          setBooms(strikeRef.current.targets.map((_, i) => arcs[i]?.p2 ?? null));
+          const impacts: ({ x: number; y: number } | null)[] = strikeRef.current.targets.map(
+            () => null,
+          );
+          for (const arc of arcs) impacts[arc.targetIndex] = arc.p2;
+          setBooms(impacts);
           for (const arc of arcs) arc.missile!.style.opacity = '0';
           impactTimer = window.setTimeout(finish, STRIKE_IMPACT_MS);
         }
@@ -307,9 +356,7 @@ function StrikeCinema({
     <div className="strike-cinema" role="dialog" aria-modal="true" aria-label="Nuclear strike">
       <div className="strike-cinema__veil" />
       <div className="strike-cinema__panel enter-pop">
-        <header className="strike-cinema__title">
-          {count > 1 ? `NUCLEAR LAUNCH — ${count} MISSILES` : 'NUCLEAR LAUNCH'}
-        </header>
+        <header className="strike-cinema__title">{title}</header>
 
         <div className={`strike-cinema__row${count > 2 ? ' strike-cinema__row--volley' : ''}`}>
           <div className="strike-cinema__side strike-cinema__side--from">
@@ -355,6 +402,13 @@ function StrikeCinema({
                     </div>
                     <strong>{to.name}</strong>
                     <span>{target.cityName}</span>
+                    {target.weapons.includes('drone') && (
+                      <span className="strike-cinema__tag">
+                        {target.weapons.includes('nuke')
+                          ? 'Shield swarmed'
+                          : `−$${DRONE_DAMAGE}M damages`}
+                      </span>
+                    )}
                   </div>
                 );
               })}
@@ -364,9 +418,10 @@ function StrikeCinema({
           {/* Spans the whole row so the flight paths can cross between the cards */}
           <div ref={flightRef} className="strike-cinema__flight" aria-hidden>
             <svg className="strike-cinema__path">
-              {strike.targets.map((target, i) => (
+              {flightPlan.map((leg, i) => (
                 <path
-                  key={`${target.cityId}-path`}
+                  key={`leg-${i}-path`}
+                  className={leg.weapon === 'drone' ? 'is-drone' : undefined}
                   ref={(el) => {
                     pathRefs.current[i] = el;
                   }}
@@ -374,16 +429,18 @@ function StrikeCinema({
                 />
               ))}
             </svg>
-            {strike.targets.map((target, i) => (
+            {flightPlan.map((leg, i) => (
               <div
-                key={`${target.cityId}-missile`}
+                key={`leg-${i}-craft`}
                 ref={(el) => {
                   missileRefs.current[i] = el;
                 }}
-                className="strike-cinema__missile"
+                className={`strike-cinema__missile${
+                  leg.weapon === 'drone' ? ' strike-cinema__missile--drone' : ''
+                }`}
               >
-                <img src={ART.missile} alt="" draggable={false} />
-                <span className="strike-cinema__flame" />
+                <img src={leg.weapon === 'drone' ? ART.drone : ART.missile} alt="" draggable={false} />
+                {leg.weapon === 'nuke' && <span className="strike-cinema__flame" />}
               </div>
             ))}
             {booms.map((boom, i) =>
@@ -408,6 +465,12 @@ function formatRoundEvent(e: RoundWorldEvent): string {
   const nation = nationDef(e.nationId).name;
   const attacker = e.attackerId ? nationDef(e.attackerId).name : null;
   if (e.kind === 'nationEliminated') return `${nation} is out — all cities destroyed.`;
+  if (e.kind === 'droneDamage') {
+    const bill = `$${e.amount ?? DRONE_DAMAGE}M in damages`;
+    return attacker
+      ? `${attacker}'s drones swarmed ${e.cityName} (${nation}) — ${bill}.`
+      : `Drones swarmed ${e.cityName} (${nation}) — ${bill}.`;
+  }
   if (e.kind === 'shieldDestroyed') {
     return attacker
       ? `${attacker} shattered the shield over ${e.cityName} (${nation}).`
@@ -422,7 +485,8 @@ type RoundStartSlide =
   | { kind: 'round'; round: number }
   | { kind: 'attack'; attackers: { id: NationId; cities: string[] }[] }
   | { kind: 'sanction'; from: NationId[] }
-  | { kind: 'money'; amount: number; income?: number };
+  | { kind: 'drones'; attackers: { id: NationId; cities: string[] }[]; bill: number }
+  | { kind: 'money'; amount: number; income?: number; droneDamage?: number };
 
 function buildRoundStartSlides(state: GameState, myId: NationId | null): RoundStartSlide[] {
   const slides: RoundStartSlide[] = [{ kind: 'round', round: state.round }];
@@ -448,6 +512,26 @@ function buildRoundStartSlides(state: GameState, myId: NationId | null): RoundSt
     });
   }
 
+  const swarms = (state.previousRoundEvents ?? []).filter(
+    (e) => e.nationId === myId && e.kind === 'droneDamage' && e.attackerId,
+  );
+  if (swarms.length > 0) {
+    const byAttacker = new Map<NationId, string[]>();
+    let bill = 0;
+    for (const s of swarms) {
+      const attacker = s.attackerId as NationId;
+      const cities = byAttacker.get(attacker) ?? [];
+      if (s.cityName && !cities.includes(s.cityName)) cities.push(s.cityName);
+      byAttacker.set(attacker, cities);
+      bill += s.amount ?? DRONE_DAMAGE;
+    }
+    slides.push({
+      kind: 'drones',
+      attackers: Array.from(byAttacker.entries()).map(([id, cities]) => ({ id, cities })),
+      bill: +bill.toFixed(2),
+    });
+  }
+
   const from = whoIsSanctioning(state, myId);
   if (from.length > 0) slides.push({ kind: 'sanction', from });
 
@@ -456,6 +540,7 @@ function buildRoundStartSlides(state: GameState, myId: NationId | null): RoundSt
     kind: 'money',
     amount: state.nations[myId]?.money ?? 0,
     income: ledger?.revenue,
+    droneDamage: ledger?.droneDamage,
   });
   return slides;
 }
@@ -511,6 +596,30 @@ function RoundStartOverlay({
         ))}
       </ul>
     );
+  } else if (slide.kind === 'drones') {
+    title = 'Drone damage';
+    tone = 'attack';
+    body = (
+      <ul className="round-start__list">
+        {slide.attackers.map((a) => (
+          <li key={a.id} className="round-start__row">
+            <img src={ART.leaders[a.id]} alt="" />
+            <div>
+              <strong>{nationDef(a.id).name}</strong>
+              <span>
+                swarmed {a.cities.length ? a.cities.join(' · ') : 'your cities'} with drones
+              </span>
+            </div>
+          </li>
+        ))}
+        <li className="round-start__row round-start__row--note">
+          <div>
+            <strong>−${formatMoney(slide.bill)}</strong>
+            <span>repair bill taken from this round&apos;s treasury</span>
+          </div>
+        </li>
+      </ul>
+    );
   } else if (slide.kind === 'sanction') {
     title = 'Sanctions';
     tone = 'sanction';
@@ -537,6 +646,9 @@ function RoundStartOverlay({
           {slide.income != null && slide.income > 0
             ? `Including $${formatMoney(slide.income)} income this round`
             : 'Available for this round'}
+          {slide.droneDamage != null && slide.droneDamage > 0
+            ? ` · −$${formatMoney(slide.droneDamage)} drone damage`
+            : ''}
         </p>
       </div>
     );
@@ -719,19 +831,29 @@ function StrikeTheater({
       try {
         for (const volley of groupStrikesByAttacker(strikes)) {
           if (cancelled) break;
+          const targets: StrikeTarget[] = [];
+          for (const strike of volley.strikes) {
+            const weapon = strike.weapon === 'drone' ? 'drone' : 'nuke';
+            const open = targets.find(
+              (t) => t.to === strike.targetNationId && t.cityId === strike.cityId,
+            );
+            if (open) {
+              open.weapons.push(weapon);
+              continue;
+            }
+            targets.push({
+              to: strike.targetNationId,
+              cityId: strike.cityId,
+              cityName:
+                stateRef.current.nations[strike.targetNationId]?.cities.find(
+                  (c) => c.id === strike.cityId,
+                )?.name ?? 'city',
+              weapons: [weapon],
+            });
+          }
           await new Promise<void>((resolve) => {
             cinemaResolveRef.current = resolve;
-            setCinema({
-              from: volley.attackerId,
-              targets: volley.strikes.map((strike) => ({
-                to: strike.targetNationId,
-                cityId: strike.cityId,
-                cityName:
-                  stateRef.current.nations[strike.targetNationId]?.cities.find(
-                    (c) => c.id === strike.cityId,
-                  )?.name ?? 'city',
-              })),
-            });
+            setCinema({ from: volley.attackerId, targets });
           });
         }
         if (!cancelled && events.length > 0) {
@@ -814,10 +936,12 @@ function cityStatusLabel(c: { destroyed: boolean; hasShield: boolean; hasResearc
 function ResourceBar({
   money,
   bombs,
+  drones,
   shields,
 }: {
   money: number;
   bombs: number;
+  drones: number;
   shields: number;
 }) {
   return (
@@ -832,6 +956,10 @@ function ResourceBar({
         <img className="res-bar__img" src={ART.missile} alt="" draggable={false} />
         <span className="res-bar__val">{bombs}</span>
       </div>
+      <div className="res-bar__item" title="Drone packs">
+        <img className="res-bar__img" src={ART.drone} alt="" draggable={false} />
+        <span className="res-bar__val">{drones}</span>
+      </div>
       <div className="res-bar__item" title="Shields">
         <img className="res-bar__img" src={ART.shield} alt="" draggable={false} />
         <span className="res-bar__val">{shields}</span>
@@ -845,6 +973,7 @@ function WizardNationHeader({
   nationId,
   money,
   bombs,
+  drones,
   environment,
   idleSecondsLeft,
   compact = false,
@@ -853,6 +982,7 @@ function WizardNationHeader({
   nationId: NationId;
   money: number;
   bombs: number;
+  drones: number;
   environment: number;
   idleSecondsLeft?: number | null;
   compact?: boolean;
@@ -868,7 +998,12 @@ function WizardNationHeader({
         <h2>
           {playerDisplayName(state, nationId)}
         </h2>
-        <ResourceBar money={money} bombs={bombs} shields={shieldsLeft(state, nationId)} />
+        <ResourceBar
+          money={money}
+          bombs={bombs}
+          drones={drones}
+          shields={shieldsLeft(state, nationId)}
+        />
         <p className="wizard-nation-head__env">Env {environment}%</p>
         {idleSecondsLeft != null && (
           <p className={`idle-timer ${idleSecondsLeft <= 10 ? 'is-urgent' : ''}`}>
@@ -888,6 +1023,8 @@ function NationPod({
   targetable,
   blockedCityIds,
   pendingBombCityIds,
+  pendingDroneCityIds,
+  selectionWeapon = 'nuke',
   highlightCityIds,
   highlight,
   onSelectCity,
@@ -900,6 +1037,10 @@ function NationPod({
   blockedCityIds?: string[];
   /** Cities with locked bombs inbound (pendingStrikes) */
   pendingBombCityIds?: string[];
+  /** Cities with locked drone swarms inbound */
+  pendingDroneCityIds?: string[];
+  /** Which weapon the open targeting step is spending */
+  selectionWeapon?: 'nuke' | 'drone';
   /** Cities to pulse (e.g. destroyed this round) */
   highlightCityIds?: string[];
   highlight?: boolean;
@@ -910,6 +1051,7 @@ function NationPod({
   const score = computeScore(state, id).total;
   const blocked = new Set(blockedCityIds ?? []);
   const bombed = new Set(pendingBombCityIds ?? []);
+  const swarmed = new Set(pendingDroneCityIds ?? []);
   const pulsed = new Set(highlightCityIds ?? []);
   const interactive = Boolean(onSelectCity);
   return (
@@ -929,6 +1071,7 @@ function NationPod({
             {def.name} · ${formatMoney(n.money)}
             {n.hasNuclearTech ? ' · ☢' : ''}
             {n.bombs > 0 ? ` · 💣${n.bombs}` : ''}
+            {n.drones > 0 ? ` · 🛸${n.drones}` : ''}
           </span>
         </div>
       </div>
@@ -937,14 +1080,18 @@ function NationPod({
           const selected = selectedCityIds?.includes(c.id);
           const hitThisRound = blocked.has(c.id);
           const bombLocked = bombed.has(c.id) && !c.destroyed;
+          const droneLocked = swarmed.has(c.id) && !c.destroyed;
+          const droneSelected = Boolean(selected && selectionWeapon === 'drone');
           const justHit = pulsed.has(c.id);
           const canTarget = Boolean(targetable && !c.destroyed && !hitThisRound);
-          const className = `city-tile ${c.destroyed ? 'is-destroyed' : ''} ${c.hasShield ? 'has-shield' : ''} ${c.hasResearch ? 'has-research' : ''} ${selected ? 'is-selected' : ''} ${canTarget ? 'is-targetable' : ''} ${hitThisRound && !c.destroyed && !bombLocked ? 'is-hit-this-round' : ''} ${bombLocked ? 'is-bomb-locked' : ''} ${justHit ? 'is-just-hit' : ''}`;
+          const className = `city-tile ${c.destroyed ? 'is-destroyed' : ''} ${c.hasShield ? 'has-shield' : ''} ${c.hasResearch ? 'has-research' : ''} ${selected ? 'is-selected' : ''} ${canTarget ? 'is-targetable' : ''} ${hitThisRound && !c.destroyed && !bombLocked ? 'is-hit-this-round' : ''} ${bombLocked ? 'is-bomb-locked' : ''} ${droneLocked || droneSelected ? 'is-drone-locked' : ''} ${justHit ? 'is-just-hit' : ''}`;
           const title = bombLocked
             ? `${c.name} — targeted for bombing`
-            : selected
-              ? `${c.name} — selected for bombing`
-              : `${c.name} — ${cityStatusLabel(c)}`;
+            : droneLocked
+              ? `${c.name} — drone swarm inbound`
+              : selected
+                ? `${c.name} — selected for ${selectionWeapon === 'drone' ? 'drones' : 'bombing'}`
+                : `${c.name} — ${cityStatusLabel(c)}`;
           const body = (
             <>
               <img
@@ -961,13 +1108,26 @@ function NationPod({
                   <img src={ART.researchIcon} alt="" draggable={false} />
                 </span>
               )}
-              {(selected || bombLocked) && (
+              {(bombLocked || (selected && selectionWeapon === 'nuke')) && (
                 <span
-                  className={`city-tile__bomb-lock ${selected && !bombLocked ? 'is-pending' : ''}`}
+                  className={`city-tile__bomb-lock ${
+                    selected && selectionWeapon === 'nuke' && !bombLocked ? 'is-pending' : ''
+                  }`}
                   title={bombLocked ? 'Targeted for bombing' : 'Selected for bombing'}
                   aria-label={bombLocked ? 'Targeted for bombing' : 'Selected for bombing'}
                 >
                   <img src={ART.missile} alt="" draggable={false} />
+                </span>
+              )}
+              {(droneLocked || droneSelected) && (
+                <span
+                  className={`city-tile__drone-lock ${
+                    droneSelected && !droneLocked ? 'is-pending' : ''
+                  }`}
+                  title={droneLocked ? 'Drone swarm inbound' : 'Selected for drones'}
+                  aria-label={droneLocked ? 'Drone swarm inbound' : 'Selected for drones'}
+                >
+                  <img src={ART.drone} alt="" draggable={false} />
                 </span>
               )}
               {c.destroyed && (
@@ -1313,6 +1473,15 @@ function canOfferTech(state: GameState, actorId: NationId): boolean {
   return !n.hasNuclearTech && n.money >= COSTS.nuclearTech;
 }
 
+function canOfferAerospace(state: GameState, actorId: NationId): boolean {
+  const n = state.nations[actorId];
+  return !n.hasAerospaceTech && n.money >= COSTS.aerospaceTech;
+}
+
+function canOfferDrones(state: GameState, actorId: NationId): boolean {
+  return maxDronesPurchasable(state, actorId) > 0;
+}
+
 function canOfferResearch(state: GameState, actorId: NationId): boolean {
   const n = state.nations[actorId];
   return (
@@ -1349,6 +1518,10 @@ function canOfferStrike(state: GameState, actorId: NationId): boolean {
   return state.nations[actorId].bombs > 0;
 }
 
+function canOfferDroneStrike(state: GameState, actorId: NationId): boolean {
+  return state.nations[actorId].drones > 0;
+}
+
 /** Next wizard prompt after `from` (null = start of turn). */
 function nextWizardStep(
   state: GameState,
@@ -1357,12 +1530,15 @@ function nextWizardStep(
 ): WizardStep | null {
   const sequence: WizardStep[] = [
     'tech',
+    'aerospace',
     'researchAsk',
     'bombs',
+    'drones',
     'shieldAsk',
     'env',
     'sanctionAsk',
     'strike',
+    'droneStrike',
   ];
   let start = 0;
   if (from === 'researchPick') start = sequence.indexOf('researchAsk') + 1;
@@ -1373,12 +1549,15 @@ function nextWizardStep(
   for (let i = start; i < sequence.length; i += 1) {
     const step = sequence[i];
     if (step === 'tech' && canOfferTech(state, actorId)) return 'tech';
+    if (step === 'aerospace' && canOfferAerospace(state, actorId)) return 'aerospace';
     if (step === 'researchAsk' && canOfferResearch(state, actorId)) return 'researchAsk';
     if (step === 'bombs' && canOfferBombs(state, actorId)) return 'bombs';
+    if (step === 'drones' && canOfferDrones(state, actorId)) return 'drones';
     if (step === 'shieldAsk' && canOfferShield(state, actorId)) return 'shieldAsk';
     if (step === 'env' && canOfferEnv(state, actorId)) return 'env';
     if (step === 'sanctionAsk' && canOfferSanction(state, actorId)) return 'sanctionAsk';
     if (step === 'strike' && canOfferStrike(state, actorId)) return 'strike';
+    if (step === 'droneStrike' && canOfferDroneStrike(state, actorId)) return 'droneStrike';
   }
   return null;
 }
@@ -1406,6 +1585,9 @@ function GameBoard({
   const actorId = isOnline && myNationId ? myNationId : turnId;
   const turn = state.nations[actorId];
   const [targets, setTargets] = useState<{ nationId: NationId; cityId: string }[]>([]);
+  const [droneTargets, setDroneTargets] = useState<
+    { nationId: NationId; cityId: string }[]
+  >([]);
   const [wizardStep, setWizardStep] = useState<WizardStep | null>(null);
   const [fx, setFx] = useState<FxEvent[]>([]);
   const [busy, setBusy] = useState(false);
@@ -1436,7 +1618,8 @@ function GameBoard({
           !state.humanReady?.[myNationId],
       )
     : isHumanTurn;
-  const strikeSelectMode = isMyHumanTurn && wizardStep === 'strike';
+  const droneSelectMode = isMyHumanTurn && wizardStep === 'droneStrike';
+  const strikeSelectMode = (isMyHumanTurn && wizardStep === 'strike') || droneSelectMode;
   /** Wiped out but still seated: watch the match play out to the final scores. */
   const mySeatId = isOnline
     ? myNationId
@@ -1472,6 +1655,10 @@ function GameBoard({
     setTargets((prev) => (prev.length > turn.bombs ? prev.slice(0, turn.bombs) : prev));
   }, [turn.bombs]);
 
+  useEffect(() => {
+    setDroneTargets((prev) => (prev.length > turn.drones ? prev.slice(0, turn.drones) : prev));
+  }, [turn.drones]);
+
   const pushFx = useCallback((event: Omit<FxEvent, 'id'>, ms = 900) => {
     const id = `fx-${++fxId.current}`;
     setFx((prev) => [...prev, { ...event, id }]);
@@ -1481,9 +1668,13 @@ function GameBoard({
   }, []);
 
   const closeHumanTurn = useCallback(
-    (strikeTargets: { nationId: NationId; cityId: string }[]) => {
+    (
+      strikeTargets: { nationId: NationId; cityId: string }[],
+      swarmTargets: { nationId: NationId; cityId: string }[] = [],
+    ) => {
       setWizardStep(null);
       setTargets([]);
+      setDroneTargets([]);
       setState((s) => {
         const actor =
           s.mode === 'online' && sessionUid && s.uidToNation?.[sessionUid]
@@ -1493,6 +1684,7 @@ function GameBoard({
 
         let next = s.phase === 'buy' ? finishBuyPhase(s) : s;
         next = queueStrikes(next, strikeTargets, actor);
+        next = queueStrikes(next, swarmTargets, actor, 'drone');
 
         if (s.mode === 'online' && s.onlineGameId) {
           next = touchHumanActivity(next, actor);
@@ -1572,6 +1764,7 @@ function GameBoard({
     lastActivityRef.current = Date.now();
     setIdleSecondsLeft(Math.ceil(SELECTION_IDLE_MS / 1000));
     setTargets([]);
+    setDroneTargets([]);
     const first = nextWizardStep(stateRef.current, null, actorId);
     if (first == null) {
       const t = window.setTimeout(() => closeHumanTurn([]), 40);
@@ -1870,7 +2063,7 @@ function GameBoard({
         const current = stateRef.current;
         if (current.phase !== 'resolveStrikes') return;
 
-        let resolved = current.pendingStrikes.reduce(
+        let resolved = orderStrikesForResolution(current.pendingStrikes).reduce(
           (s, strike) => applyQueuedStrike(s, strike),
           current,
         );
@@ -1905,24 +2098,48 @@ function GameBoard({
   const onSelectCity = (nationId: NationId, cityId: string) => {
     if (!strikeSelectMode || busy) return;
     if (nationId === actorId) return;
-    if (turn.bombs < 1) return;
-    if (turn.citiesStruckThisRound.includes(cityId)) return;
+    const limit = droneSelectMode ? turn.drones : turn.bombs;
+    if (limit < 1) return;
+    const spent = droneSelectMode ? turn.citiesDronedThisRound : turn.citiesStruckThisRound;
+    if (spent.includes(cityId)) return;
     bumpSelectionActivity();
-    setTargets((prev) => {
+    const pick = droneSelectMode ? setDroneTargets : setTargets;
+    pick((prev) => {
       const exists = prev.find((t) => t.cityId === cityId);
       if (exists) return prev.filter((t) => t.cityId !== cityId);
-      if (prev.length >= turn.bombs) return [...prev.slice(1), { nationId, cityId }];
+      if (prev.length >= limit) return [...prev.slice(1), { nationId, cityId }];
       return [...prev, { nationId, cityId }];
     });
+  };
+
+  /** Targeting runs bombs first, then drones, so the last step locks the turn in. */
+  const finishStrikeStep = (picked: { nationId: NationId; cityId: string }[]) => {
+    bumpSelectionActivity();
+    setTargets(picked);
+    if (canOfferDroneStrike(stateRef.current, actorId)) {
+      setWizardStep('droneStrike');
+      return;
+    }
+    closeHumanTurn(picked);
   };
 
   const unshieldedCities = turn.cities.filter((c) => !c.destroyed && !c.hasShield);
   const researchCities = turn.cities.filter((c) => !c.destroyed && !c.hasResearch);
   const bombMax = maxBombsPurchasable(state, actorId);
-  const selectedCityIds = targets.map((t) => t.cityId);
+  const droneMax = maxDronesPurchasable(state, actorId);
+  const selectedCityIds = droneSelectMode
+    ? droneTargets.map((t) => t.cityId)
+    : targets.map((t) => t.cityId);
   // Fog of war: only show your own locked targets until simultaneous resolve
-  const pendingBombCityIds = state.pendingStrikes
-    .filter((s) => s.attackerId === actorId)
+  const myStrikes = state.pendingStrikes.filter((s) => s.attackerId === actorId);
+  const pendingBombCityIds = [
+    ...myStrikes.filter((s) => s.weapon !== 'drone').map((s) => s.cityId),
+    // Warhead picks stay marked while drone targeting is open, so a player can
+    // see which shield a swarm would tie up
+    ...(droneSelectMode ? targets.map((t) => t.cityId) : []),
+  ];
+  const pendingDroneCityIds = myStrikes
+    .filter((s) => s.weapon === 'drone')
     .map((s) => s.cityId);
 
   const allyIds = isOnline
@@ -1937,7 +2154,7 @@ function GameBoard({
       <MapBackdrop />
       <FxLayer events={fx} />
 
-      {isMyHumanTurn && wizardStep && wizardStep !== 'strike' && (
+      {isMyHumanTurn && wizardStep && !strikeSelectMode && (
         <div className="turn-wizard" role="dialog" aria-modal="true">
           <div className="turn-wizard__panel enter-pop">
             <WizardNationHeader
@@ -1945,6 +2162,7 @@ function GameBoard({
               nationId={actorId}
               money={turn.money}
               bombs={turn.bombs}
+              drones={turn.drones}
               environment={state.environment}
               idleSecondsLeft={isOnline ? idleSecondsLeft : null}
             />
@@ -1974,6 +2192,34 @@ function GameBoard({
                   <button
                     className="btn btn--xl"
                     onClick={() => advanceAfter(stateRef.current, 'tech')}
+                  >
+                    No
+                  </button>
+                </div>
+              </>
+            )}
+
+            {wizardStep === 'aerospace' && (
+              <>
+                <h3 className="turn-wizard__q">Do you want to purchase Aerospace Tech?</h3>
+                <p className="turn-wizard__hint">
+                  Unlocks drone packs next round · {COSTS.aerospaceTech}M
+                </p>
+                <div className="turn-wizard__actions">
+                  <button
+                    className="btn btn--xl btn--primary"
+                    onClick={() => {
+                      pushFx({ kind: 'buy', label: 'Aerospace Tech Unlocked!' }, 700);
+                      const next = buyAerospaceTech(stateRef.current, actorId);
+                      setState(next);
+                      advanceAfter(next, 'aerospace');
+                    }}
+                  >
+                    Yes
+                  </button>
+                  <button
+                    className="btn btn--xl"
+                    onClick={() => advanceAfter(stateRef.current, 'aerospace')}
                   >
                     No
                   </button>
@@ -2063,6 +2309,38 @@ function GameBoard({
                       }}
                     >
                       {n === 0 ? 'No Bomb' : `${n} Bomb${n > 1 ? 's' : ''}`}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {wizardStep === 'drones' && (
+              <>
+                <h3 className="turn-wizard__q">How many drone packs do you want?</h3>
+                <p className="turn-wizard__hint">
+                  {COSTS.drone}M each · max {droneMax} this round (cap {MAX_DRONES_PER_ROUND}) ·
+                  drones cost the target ${DRONE_DAMAGE}M in damages and tie up a city&apos;s
+                  shield so a bomb sent with them lands
+                </p>
+                <div className="turn-wizard__actions turn-wizard__actions--wrap">
+                  {[0, 1, 2, 3].map((n) => (
+                    <button
+                      key={n}
+                      className="btn btn--xl btn--primary"
+                      disabled={n > droneMax}
+                      onClick={() => {
+                        if (n === 0) {
+                          advanceAfter(stateRef.current, 'drones');
+                          return;
+                        }
+                        pushFx({ kind: 'buy', label: `+${n} Drone Pack${n > 1 ? 's' : ''}` }, 700);
+                        const next = buyDrones(stateRef.current, n, actorId);
+                        setState(next);
+                        advanceAfter(next, 'drones');
+                      }}
+                    >
+                      {n === 0 ? 'No Drones' : `${n} Pack${n > 1 ? 's' : ''}`}
                     </button>
                   ))}
                 </div>
@@ -2240,6 +2518,7 @@ function GameBoard({
               nationId={actorId}
               money={turn.money}
               bombs={turn.bombs}
+              drones={turn.drones}
               environment={state.environment}
               idleSecondsLeft={isOnline ? idleSecondsLeft : null}
               compact
@@ -2271,12 +2550,64 @@ function GameBoard({
               <button
                 className="btn btn--xl btn--danger"
                 disabled={targets.length < 1}
-                onClick={() => closeHumanTurn(targets)}
+                onClick={() => finishStrikeStep(targets)}
               >
                 Lock Targets ({targets.length})
               </button>
-              <button className="btn btn--xl" onClick={() => closeHumanTurn([])}>
+              <button className="btn btn--xl" onClick={() => finishStrikeStep([])}>
                 Skip / No Strike
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {droneSelectMode && (
+        <div className="turn-wizard turn-wizard--dock" role="dialog" aria-modal="true">
+          <div className="turn-wizard__panel turn-wizard__panel--strike enter-pop">
+            <WizardNationHeader
+              state={state}
+              nationId={actorId}
+              money={turn.money}
+              bombs={turn.bombs}
+              drones={turn.drones}
+              environment={state.environment}
+              idleSecondsLeft={isOnline ? idleSecondsLeft : null}
+              compact
+            />
+            <div className="turn-wizard__hero turn-wizard__hero--droneStrike">
+              <img src={ART.drone} alt="" draggable={false} />
+            </div>
+            <h3 className="turn-wizard__q">Send your drone swarms?</h3>
+            <p className="turn-wizard__hint">
+              Tap up to {turn.drones} enemy cit{turn.drones === 1 ? 'y' : 'ies'}
+              {droneTargets.length > 0 ? ` · selected ${droneTargets.length}/${turn.drones}` : ''}.
+              Each pack costs that nation ${DRONE_DAMAGE}M in damages. Swarm a city you also
+              bombed and its shield is too busy to stop the warhead.
+            </p>
+            {droneTargets.length > 0 && (
+              <p className="target-label">
+                {droneTargets
+                  .map((t) => {
+                    const name =
+                      state.nations[t.nationId]?.cities.find((c) => c.id === t.cityId)?.name ??
+                      t.cityId;
+                    const paired = targets.some((b) => b.cityId === t.cityId);
+                    return paired ? `${name} (+ bomb)` : name;
+                  })
+                  .join(' · ')}
+              </p>
+            )}
+            <div className="turn-wizard__actions">
+              <button
+                className="btn btn--xl btn--danger"
+                disabled={droneTargets.length < 1}
+                onClick={() => closeHumanTurn(targets, droneTargets)}
+              >
+                Send Drones ({droneTargets.length})
+              </button>
+              <button className="btn btn--xl" onClick={() => closeHumanTurn(targets, [])}>
+                Skip / Hold Drones
               </button>
             </div>
           </div>
@@ -2293,6 +2624,7 @@ function GameBoard({
             <ResourceBar
               money={turn.money}
               bombs={turn.bombs}
+              drones={turn.drones}
               shields={shieldsLeft(state, actorId)}
             />
           </header>
@@ -2430,8 +2762,12 @@ function GameBoard({
                 state={state}
                 selectedCityIds={selectedCityIds}
                 targetable={strikeSelectMode}
-                blockedCityIds={turn.citiesStruckThisRound}
+                blockedCityIds={
+                  droneSelectMode ? turn.citiesDronedThisRound : turn.citiesStruckThisRound
+                }
                 pendingBombCityIds={pendingBombCityIds}
+                pendingDroneCityIds={pendingDroneCityIds}
+                selectionWeapon={droneSelectMode ? 'drone' : 'nuke'}
                 highlight={id === actorId}
                 onSelectCity={strikeSelectMode ? onSelectCity : undefined}
               />
@@ -2574,6 +2910,11 @@ function RoundSummary({
                               Sanctioned by{' '}
                               {e.sanctioners.map((id) => nationDef(id).name).join(' · ')} (−
                               {Math.round(e.sanctionPenalty * 100)}%)
+                            </small>
+                          )}
+                          {(e.droneDamage ?? 0) > 0 && (
+                            <small>
+                              Drone damage repairs −${formatMoney(e.droneDamage ?? 0)}
                             </small>
                           )}
                         </div>

@@ -1,9 +1,11 @@
 import {
   BASE_INCOME,
   COSTS,
+  DRONE_DAMAGE,
   ENV_BOMB_HIT,
   ENV_IMPROVE,
   MAX_BOMBS_PER_ROUND,
+  MAX_DRONES_PER_ROUND,
   MAX_ROUNDS,
   NATIONS,
   RESEARCH_INCOME,
@@ -21,6 +23,7 @@ import {
   STRIKE_CINEMA_MS,
 } from '../lib/onlineConstants';
 import type {
+  City,
   GameMode,
   GameState,
   IncomeLedgerEntry,
@@ -191,7 +194,14 @@ export function forfeitNation(state: GameState, nationId: NationId): GameState {
     hasResearch: false,
   }));
 
-  const forfeited = { ...n, cities, researchCenters: 0, bombs: 0, isHuman: false };
+  const forfeited = {
+    ...n,
+    cities,
+    researchCenters: 0,
+    bombs: 0,
+    drones: 0,
+    isHuman: false,
+  };
   delete forfeited.playerSlot;
   delete forfeited.ownerUid;
 
@@ -388,7 +398,7 @@ function checkEliminations(state: GameState): GameState {
       const bestPrior = priorTotals.length ? Math.max(0, ...priorTotals) : 0;
       // Freeze best known score so a wipeout doesn't erase standings
       const lockedScore = Math.max(bestPrior, n.lockedScore ?? 0);
-      nations[id] = { ...n, eliminated: true, bombs: 0, lockedScore };
+      nations[id] = { ...n, eliminated: true, bombs: 0, drones: 0, lockedScore };
       logEntries.push(log(`${nationDef(id).name} has been eliminated!`, 'attack'));
       roundEvents.push(
         worldEvent({ kind: 'nationEliminated', nationId: id }),
@@ -596,13 +606,19 @@ export function applyIncome(state: GameState): GameState {
     }
 
     const previousBalance = n.money;
-    const balanceAfterIncome = +(previousBalance + revenue).toFixed(2);
+    // Last round's drone swarms come due now, capped at what the treasury holds
+    const droneDamage = Math.min(
+      +(n.pendingDroneDamage ?? 0).toFixed(2),
+      +(previousBalance + revenue).toFixed(2),
+    );
+    const balanceAfterIncome = +(previousBalance + revenue - droneDamage).toFixed(2);
 
     nations[id] = {
       ...n,
       money: balanceAfterIncome,
       researchCenters: n.cities.filter((c) => !c.destroyed && c.hasResearch).length,
       incomeRound: state.round,
+      pendingDroneDamage: 0,
     };
     ledger.push({
       nationId: id,
@@ -611,12 +627,17 @@ export function applyIncome(state: GameState): GameState {
       balanceAfterIncome,
       sanctionPenalty,
       sanctioners,
+      droneDamage,
     });
-    const note =
-      sanctioners.length > 0
-        ? `${nationDef(id).name} receives $${revenue}M (base $${BASE_INCOME}M + research $${researchIncome}M, −${Math.round(sanctionPenalty * 100)}% sanctions).`
-        : `${nationDef(id).name} receives $${revenue}M (base $${BASE_INCOME}M + research $${researchIncome}M).`;
-    logEntries.push(log(note, 'money'));
+    const sanctionNote =
+      sanctioners.length > 0 ? `, −${Math.round(sanctionPenalty * 100)}% sanctions` : '';
+    const droneNote = droneDamage > 0 ? `, −$${droneDamage}M drone damage` : '';
+    logEntries.push(
+      log(
+        `${nationDef(id).name} receives $${revenue}M (base $${BASE_INCOME}M + research $${researchIncome}M${sanctionNote}${droneNote}).`,
+        'money',
+      ),
+    );
   }
 
   return { ...state, nations, log: logEntries, lastIncomeLedger: ledger };
@@ -688,6 +709,85 @@ export function buyNuclearTech(state: GameState, nationId?: NationId): GameState
       ),
     ],
   };
+}
+
+export function canBuyDrones(state: GameState, nationId?: NationId): boolean {
+  const id = nationId ?? currentNationId(state);
+  const n = state.nations[id];
+  return (
+    !n.eliminated &&
+    n.hasAerospaceTech &&
+    n.aerospaceTechUnlockedRound != null &&
+    n.aerospaceTechUnlockedRound < state.round
+  );
+}
+
+export function maxDronesPurchasable(state: GameState, nationId?: NationId): number {
+  const id = nationId ?? currentNationId(state);
+  const n = state.nations[id];
+  if (!canBuyDrones(state, id)) return 0;
+  const byMoney = Math.floor(n.money / COSTS.drone);
+  const byCap = MAX_DRONES_PER_ROUND - n.dronesBoughtThisRound;
+  return Math.max(0, Math.min(byMoney, byCap));
+}
+
+export function buyAerospaceTech(state: GameState, nationId?: NationId): GameState {
+  const id = nationId ?? currentNationId(state);
+  const n = state.nations[id];
+  if (n.hasAerospaceTech || n.money < COSTS.aerospaceTech || n.eliminated) return state;
+  return {
+    ...state,
+    nations: {
+      ...state.nations,
+      [id]: {
+        ...n,
+        money: +(n.money - COSTS.aerospaceTech).toFixed(2),
+        hasAerospaceTech: true,
+        aerospaceTechUnlockedRound: state.round,
+      },
+    },
+    log: [
+      ...state.log,
+      log(
+        `${nationDef(id).name} unlocked Aerospace Tech — drones available next round.`,
+        'money',
+      ),
+    ],
+  };
+}
+
+export function buyDrone(state: GameState, nationId?: NationId): GameState {
+  const id = nationId ?? currentNationId(state);
+  const n = state.nations[id];
+  if (
+    !canBuyDrones(state, id) ||
+    n.money < COSTS.drone ||
+    n.eliminated ||
+    n.dronesBoughtThisRound >= MAX_DRONES_PER_ROUND
+  ) {
+    return state;
+  }
+  return {
+    ...state,
+    nations: {
+      ...state.nations,
+      [id]: {
+        ...n,
+        money: +(n.money - COSTS.drone).toFixed(2),
+        drones: n.drones + 1,
+        dronesBoughtThisRound: n.dronesBoughtThisRound + 1,
+      },
+    },
+    log: [...state.log, log(`${nationDef(id).name} assembled a drone pack.`, 'attack')],
+  };
+}
+
+export function buyDrones(state: GameState, count: number, nationId?: NationId): GameState {
+  let s = state;
+  const id = nationId ?? currentNationId(s);
+  const n = Math.max(0, Math.min(count, maxDronesPurchasable(s, id)));
+  for (let i = 0; i < n; i += 1) s = buyDrone(s, id);
+  return s;
 }
 
 export function buyBomb(state: GameState, nationId?: NationId): GameState {
@@ -813,23 +913,29 @@ export function finishBuyPhase(state: GameState): GameState {
   return { ...state, phase: 'action' };
 }
 
-/** Queue a strike for end-of-round resolution (spends the bomb now). */
+/** Queue a strike for end-of-round resolution (spends the bomb or drone pack now). */
 export function queueStrike(
   state: GameState,
   targetNation: NationId,
   cityId: string,
   attackerId = currentNationId(state),
+  weapon: 'nuke' | 'drone' = 'nuke',
 ): GameState {
   const attacker = state.nations[attackerId];
   const defender = state.nations[targetNation];
+  const drone = weapon === 'drone';
 
   if (
     attacker.eliminated ||
     defender.eliminated ||
     attackerId === targetNation ||
-    attacker.bombs < 1 ||
-    !attacker.hasNuclearTech ||
-    attacker.citiesStruckThisRound.includes(cityId)
+    (drone
+      ? attacker.drones < 1 ||
+        !attacker.hasAerospaceTech ||
+        attacker.citiesDronedThisRound.includes(cityId)
+      : attacker.bombs < 1 ||
+        !attacker.hasNuclearTech ||
+        attacker.citiesStruckThisRound.includes(cityId))
   ) {
     return state;
   }
@@ -841,24 +947,34 @@ export function queueStrike(
     attackerId,
     targetNationId: targetNation,
     cityId,
+    weapon,
   };
+
+  const spend = drone
+    ? {
+        drones: attacker.drones - 1,
+        dronesUsed: attacker.dronesUsed + 1,
+        citiesDronedThisRound: [...attacker.citiesDronedThisRound, cityId],
+      }
+    : {
+        bombs: attacker.bombs - 1,
+        bombsUsed: attacker.bombsUsed + 1,
+        citiesStruckThisRound: [...attacker.citiesStruckThisRound, cityId],
+      };
 
   return {
     ...state,
     pendingStrikes: [...state.pendingStrikes, strike],
     nations: {
       ...state.nations,
-      [attackerId]: {
-        ...attacker,
-        bombs: attacker.bombs - 1,
-        bombsUsed: attacker.bombsUsed + 1,
-        citiesStruckThisRound: [...attacker.citiesStruckThisRound, cityId],
-      },
+      [attackerId]: { ...attacker, ...spend },
     },
     log: [
       ...state.log,
       log(
-        `${nationDef(attackerId).name} locked in strike orders.`,
+        drone
+          ? `${nationDef(attackerId).name} launched a drone swarm.`
+          : `${nationDef(attackerId).name} locked in strike orders.`,
         'attack',
       ),
     ],
@@ -869,21 +985,73 @@ export function queueStrikes(
   state: GameState,
   targets: { nationId: NationId; cityId: string }[],
   attackerId = currentNationId(state),
+  weapon: 'nuke' | 'drone' = 'nuke',
 ): GameState {
   let s = state;
   for (const t of targets) {
-    s = queueStrike(s, t.nationId, t.cityId, attackerId);
+    s = queueStrike(s, t.nationId, t.cityId, attackerId, weapon);
   }
   return s;
 }
 
-/** Apply damage for a previously queued strike (bomb already spent). */
+/** True when drones are swarming this city this round, tying up its shield. */
+export function shieldIsBusy(
+  strikes: PendingStrike[],
+  targetNationId: NationId,
+  cityId: string,
+): boolean {
+  return strikes.some(
+    (s) => s.weapon === 'drone' && s.targetNationId === targetNationId && s.cityId === cityId,
+  );
+}
+
+/** Drone swarms cannot level a city — they run up a repair bill instead. */
+function applyDroneStrike(
+  state: GameState,
+  strike: PendingStrike,
+  city: City,
+): GameState {
+  const defender = state.nations[strike.targetNationId];
+  return {
+    ...state,
+    nations: {
+      ...state.nations,
+      [strike.targetNationId]: {
+        ...defender,
+        pendingDroneDamage: +((defender.pendingDroneDamage ?? 0) + DRONE_DAMAGE).toFixed(2),
+      },
+    },
+    log: [
+      ...state.log,
+      log(
+        `${nationDef(strike.attackerId).name}'s drones hit ${city.name} (${nationDef(strike.targetNationId).name}) — $${DRONE_DAMAGE}M in damages.`,
+        'attack',
+      ),
+    ],
+    roundEvents: [
+      ...state.roundEvents,
+      worldEvent({
+        kind: 'droneDamage',
+        nationId: strike.targetNationId,
+        cityId: city.id,
+        cityName: city.name,
+        attackerId: strike.attackerId,
+        amount: DRONE_DAMAGE,
+      }),
+    ],
+  };
+}
+
+/** Apply damage for a previously queued strike (bomb or drone pack already spent). */
 export function applyQueuedStrike(state: GameState, strike: PendingStrike): GameState {
   const attacker = state.nations[strike.attackerId];
   const defender = state.nations[strike.targetNationId];
   if (attacker.eliminated || defender.eliminated) return state;
 
   const city = defender.cities.find((c) => c.id === strike.cityId);
+  if (city && !city.destroyed && strike.weapon === 'drone') {
+    return applyDroneStrike(state, strike, city);
+  }
   if (!city || city.destroyed) {
     return {
       ...state,
@@ -900,7 +1068,11 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
   let cities = defender.cities;
   let message: string;
   let hitEvent: RoundWorldEvent;
-  if (city.hasShield) {
+  // Drones swarming this city keep its shield occupied, so the warhead lands
+  const shielded =
+    city.hasShield &&
+    !shieldIsBusy(state.pendingStrikes, strike.targetNationId, strike.cityId);
+  if (shielded) {
     cities = cities.map((c) =>
       c.id === strike.cityId ? { ...c, hasShield: false } : c,
     );
@@ -918,7 +1090,9 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
         ? { ...c, destroyed: true, hasShield: false, hasResearch: false }
         : c,
     );
-    message = `${nationDef(strike.attackerId).name} destroyed ${city.name} (${nationDef(strike.targetNationId).name})!`;
+    message = city.hasShield
+      ? `${nationDef(strike.attackerId).name} destroyed ${city.name} (${nationDef(strike.targetNationId).name}) — drones kept the shield busy!`
+      : `${nationDef(strike.attackerId).name} destroyed ${city.name} (${nationDef(strike.targetNationId).name})!`;
     hitEvent = worldEvent({
       kind: 'cityDestroyed',
       nationId: strike.targetNationId,
@@ -968,6 +1142,14 @@ export function finishStrikeResolution(state: GameState): GameState {
     log: [...next.log, log(`Round ${next.round} complete. Standing scores updated.`, 'neutral')],
   });
   return next;
+}
+
+/** Drones go in first; every client resolves the round in this same order. */
+export function orderStrikesForResolution(strikes: PendingStrike[]): PendingStrike[] {
+  return [
+    ...strikes.filter((s) => s.weapon === 'drone'),
+    ...strikes.filter((s) => s.weapon !== 'drone'),
+  ];
 }
 
 /**
@@ -1107,6 +1289,8 @@ export function nextRound(state: GameState): GameState {
       ...clearedNations[id],
       citiesStruckThisRound: [],
       bombsBoughtThisRound: 0,
+      citiesDronedThisRound: [],
+      dronesBoughtThisRound: 0,
       envBoughtThisRound: false,
       promptsDoneThisRound: [],
     };

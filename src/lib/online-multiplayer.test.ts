@@ -447,6 +447,42 @@ describe('3-player online simulation', () => {
     expect(applied.aiPlanningComplete).toBe(true);
   });
 
+  it('keeps a bomb and a drone aimed at the same city through the merge', () => {
+    const { state, uids } = makeThreePlayerGame();
+    const [a] = uids;
+    const nationA = state.uidToNation![a] as NationId;
+    const targetId = state.turnOrder.find((id) => id !== nationA)! as NationId;
+    const city = state.nations[targetId].cities[0];
+
+    let local: GameState = {
+      ...state,
+      nations: {
+        ...state.nations,
+        [nationA]: {
+          ...state.nations[nationA],
+          hasNuclearTech: true,
+          nuclearTechUnlockedRound: 0,
+          bombs: 1,
+          hasAerospaceTech: true,
+          aerospaceTechUnlockedRound: 0,
+          drones: 1,
+        },
+      },
+    };
+    local = queueStrike(local, targetId, city.id, nationA);
+    local = queueStrike(local, targetId, city.id, nationA, 'drone');
+
+    // Both the client-side snapshot apply and the Firestore-side write merge
+    // have to treat the pair as two distinct strikes
+    const applied = applyRemoteGameSnapshot(local, state, nationA);
+    const mine = applied.pendingStrikes.filter((st) => st.attackerId === nationA);
+    expect(mine.map((st) => st.weapon).sort()).toEqual(['drone', 'nuke']);
+
+    const written = mergeHumanPlanningWrite(state, local, nationA);
+    const onServer = written.pendingStrikes.filter((st) => st.attackerId === nationA);
+    expect(onServer.map((st) => st.weapon).sort()).toEqual(['drone', 'nuke']);
+  });
+
   it('late guest finish adopts round 2 when host already advanced', () => {
     const { state, uids } = makeThreePlayerGame();
     const room = new SimRoom(state, uids);

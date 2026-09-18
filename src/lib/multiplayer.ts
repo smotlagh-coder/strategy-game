@@ -21,6 +21,7 @@ import {
   forfeitNation,
   allAliveHumansReady,
   applyQueuedStrike,
+  orderStrikesForResolution,
   armAftermathTimer,
   finishStrikeResolution,
   nextRound,
@@ -663,7 +664,7 @@ export async function publishStrikeResolution(
     if (Number(remote.round) !== Number(round)) return remote;
     if (remote.phase !== 'resolveStrikes') return remote;
 
-    let next = remote.pendingStrikes.reduce(
+    let next = orderStrikesForResolution(remote.pendingStrikes).reduce(
       (s, strike) => applyQueuedStrike(s, strike),
       remote,
     );

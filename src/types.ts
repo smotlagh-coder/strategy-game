@@ -33,6 +33,8 @@ export interface PendingStrike {
   attackerId: NationId;
   targetNationId: NationId;
   cityId: string;
+  /** Missing means a nuke — drones were added later and old docs predate the field */
+  weapon?: 'nuke' | 'drone';
 }
 
 export interface City {
@@ -52,6 +54,10 @@ export interface NationState {
   /** Round when nuclear tech was unlocked; bombs require a later round */
   nuclearTechUnlockedRound: number | null;
   bombs: number;
+  hasAerospaceTech: boolean;
+  /** Round when aerospace tech was unlocked; drones require a later round */
+  aerospaceTechUnlockedRound: number | null;
+  drones: number;
   researchCenters: number;
   eliminated: boolean;
   /** Nations this nation is currently sanctioning */
@@ -66,6 +72,14 @@ export interface NationState {
   citiesStruckThisRound: string[];
   /** Bombs purchased this round (max 3) */
   bombsBoughtThisRound: number;
+  /** Drone packs launched this game */
+  dronesUsed: number;
+  /** Drone packs purchased this round (max 3) */
+  dronesBoughtThisRound: number;
+  /** City ids this nation swarmed with drones this round (separate from bomb targets) */
+  citiesDronedThisRound: string[];
+  /** Drone damage billed to this nation at the next income (see applyIncome) */
+  pendingDroneDamage?: number;
   /** Whether environment was bought this round */
   envBoughtThisRound: boolean;
   /** Buy-wizard prompts already answered this round (survives board remounts) */
@@ -105,11 +119,13 @@ export interface LogEntry {
 /** What happened during the round just completed (shown on aftermath board) */
 export interface RoundWorldEvent {
   id: string;
-  kind: 'cityDestroyed' | 'shieldDestroyed' | 'nationEliminated';
+  kind: 'cityDestroyed' | 'shieldDestroyed' | 'nationEliminated' | 'droneDamage';
   nationId: NationId;
   cityId?: string;
   cityName?: string;
   attackerId?: NationId;
+  /** Drone damage in $M, billed at the next income */
+  amount?: number;
 }
 
 /** Income applied at round start (shown on aftermath) */
@@ -120,6 +136,8 @@ export interface IncomeLedgerEntry {
   balanceAfterIncome: number;
   sanctionPenalty: number;
   sanctioners: NationId[];
+  /** Repair bill for drone damage taken last round */
+  droneDamage?: number;
 }
 
 export interface GameState {

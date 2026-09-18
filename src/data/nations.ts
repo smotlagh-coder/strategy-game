@@ -161,8 +161,10 @@ export const TABLE_SIZE = 5;
 
 export const COSTS = {
   nuclearTech: 5,
+  aerospaceTech: 3,
   shield: 3,
   bomb: 2,
+  drone: 1,
   research: 2,
   environment: 1,
 } as const;
@@ -181,6 +183,10 @@ export const SURVIVAL_POINTS_PER_ROUND = 25;
 export const SURVIVAL_POINTS_PER_CITY = 10;
 /** Max bombs a nation may purchase in a single round */
 export const MAX_BOMBS_PER_ROUND = 3;
+/** Max drone packs a nation may purchase in a single round */
+export const MAX_DRONES_PER_ROUND = 3;
+/** Repair bill a drone pack inflicts on the city it swarms */
+export const DRONE_DAMAGE = 1.5;
 export const MAX_ROUNDS = 5;
 
 export function nationDef(id: NationId): NationDef {
@@ -204,6 +210,9 @@ export function initialNation(id: NationId): NationState {
     hasNuclearTech: false,
     nuclearTechUnlockedRound: null,
     bombs: 0,
+    hasAerospaceTech: false,
+    aerospaceTechUnlockedRound: null,
+    drones: 0,
     researchCenters: 0,
     eliminated: false,
     sanctions: [],
@@ -212,6 +221,10 @@ export function initialNation(id: NationId): NationState {
     environmentBuys: 0,
     citiesStruckThisRound: [],
     bombsBoughtThisRound: 0,
+    dronesUsed: 0,
+    dronesBoughtThisRound: 0,
+    citiesDronedThisRound: [],
+    pendingDroneDamage: 0,
     envBoughtThisRound: false,
     promptsDoneThisRound: [],
     lockedScore: null,

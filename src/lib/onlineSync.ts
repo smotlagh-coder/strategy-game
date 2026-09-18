@@ -1,4 +1,4 @@
-import type { GameState, NationId, NationState, Phase } from '../types';
+import type { GameState, NationId, NationState, PendingStrike, Phase } from '../types';
 import { allAliveHumansReady, ensureIncome } from '../game/engine';
 import { finishOnlineHumanPlanning, runOnlineAiPlanning } from '../game/ai';
 
@@ -73,6 +73,20 @@ export function mergeBombStock(remote: NationState, local: NationState): number 
   return Math.max(0, stockAtRoundStart + bought - launched);
 }
 
+/** Same monotonic reasoning as bombs, for drone packs. */
+export function mergeDroneStock(remote: NationState, local: NationState): number {
+  const stockAtRoundStart = Math.max(
+    counter(remote.drones) - counter(remote.dronesBoughtThisRound) + counter(remote.dronesUsed),
+    counter(local.drones) - counter(local.dronesBoughtThisRound) + counter(local.dronesUsed),
+  );
+  const bought = Math.max(
+    counter(remote.dronesBoughtThisRound),
+    counter(local.dronesBoughtThisRound),
+  );
+  const launched = Math.max(counter(remote.dronesUsed), counter(local.dronesUsed));
+  return Math.max(0, stockAtRoundStart + bought - launched);
+}
+
 /** Union city upgrades so a stale push cannot wipe research/shields. */
 export function mergeNationPlanning(
   remote: NationState | undefined,
@@ -134,6 +148,21 @@ export function mergeNationPlanning(
     bombs: eliminated ? 0 : mergeBombStock(remote, local),
     bombsBoughtThisRound: Math.max(remote.bombsBoughtThisRound, local.bombsBoughtThisRound),
     bombsUsed: Math.max(remote.bombsUsed, local.bombsUsed),
+    hasAerospaceTech: Boolean(remote.hasAerospaceTech || local.hasAerospaceTech),
+    aerospaceTechUnlockedRound:
+      local.aerospaceTechUnlockedRound ?? remote.aerospaceTechUnlockedRound ?? null,
+    drones: eliminated ? 0 : mergeDroneStock(remote, local),
+    dronesBoughtThisRound: Math.max(
+      counter(remote.dronesBoughtThisRound),
+      counter(local.dronesBoughtThisRound),
+    ),
+    dronesUsed: Math.max(counter(remote.dronesUsed), counter(local.dronesUsed)),
+    citiesDronedThisRound: Array.from(
+      new Set([...(remote.citiesDronedThisRound ?? []), ...(local.citiesDronedThisRound ?? [])]),
+    ),
+    pendingDroneDamage: eliminated
+      ? 0
+      : Math.max(counter(remote.pendingDroneDamage), counter(local.pendingDroneDamage)),
     envBoughtThisRound: remote.envBoughtThisRound || local.envBoughtThisRound,
     promptsDoneThisRound: Array.from(
       new Set([...(remote.promptsDoneThisRound ?? []), ...(local.promptsDoneThisRound ?? [])]),
@@ -328,8 +357,10 @@ export function mergeHumanPlanningWrite(
     };
   }
 
-  const strikeKey = (s: { attackerId: string; targetNationId: string; cityId: string }) =>
-    `${s.attackerId}:${s.targetNationId}:${s.cityId}`;
+  // Weapon is part of the identity: one city can take a warhead and a swarm
+  // from the same attacker in one round
+  const strikeKey = (s: PendingStrike) =>
+    `${s.attackerId}:${s.targetNationId}:${s.cityId}:${s.weapon ?? 'nuke'}`;
 
   // Prefer the snapshot that already ran AI so buys/strikes aren't wiped by a stale peer
   const preferred = pickFurtherState(remote, local);

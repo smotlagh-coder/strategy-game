@@ -3,8 +3,10 @@ import type { NationId } from '../types';
 export const ART = {
   map: '/art/map-bg.png',
   missile: '/art/missile.png',
+  drone: '/art/drone.png',
   explosion: '/art/explosion.png',
   nukeTech: '/art/nuke-tech.png',
+  aerospaceTech: '/art/aerospace-tech.png',
   shield: '/art/shield-icon.png',
   researchLab: '/art/research-lab.jpg',
   researchIcon: '/art/research-icon.png',

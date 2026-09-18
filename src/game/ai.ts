@@ -2,7 +2,9 @@ import { COSTS } from '../data/nations';
 import {
   aliveNations,
   allAliveHumansReady,
+  buyAerospaceTech,
   buyBomb,
+  buyDrone,
   buyEnvironment,
   buyNuclearTech,
   buyResearch,
@@ -14,6 +16,7 @@ import {
   endTurn,
   finishBuyPhase,
   maxBombsPurchasable,
+  maxDronesPurchasable,
   queueStrike,
   researchCount,
   toggleSanction,
@@ -53,6 +56,28 @@ export function pickBombTarget(
   return null;
 }
 
+/** Drones cannot level a city, so send them where the repair bill bites hardest. */
+export function pickDroneTarget(
+  state: GameState,
+  attackerId: NationId,
+): { nationId: NationId; cityId: string } | null {
+  const swarmed = new Set(state.nations[attackerId].citiesDronedThisRound);
+  const rivals = aliveNations(state)
+    .filter((id) => id !== attackerId && citiesLeft(state, id) > 0)
+    .map((id) => ({ id, score: computeScore(state, id).total }))
+    .sort((a, b) => b.score - a.score);
+
+  for (const rival of rivals) {
+    const cities = state.nations[rival.id].cities.filter(
+      (c) => !c.destroyed && !swarmed.has(c.id),
+    );
+    const research = cities.find((c) => c.hasResearch);
+    if (research) return { nationId: rival.id, cityId: research.id };
+    if (cities.length > 0) return { nationId: rival.id, cityId: cities[0].id };
+  }
+  return null;
+}
+
 /** AI purchases only — leaves phase on 'action' */
 export function runAiBuyPhase(state: GameState): GameState {
   let s = state;
@@ -87,6 +112,20 @@ export function runAiBuyPhase(state: GameState): GameState {
   for (let i = 0; i < wantBombs; i += 1) {
     if (s.nations[id].money < COSTS.bomb + 1 && s.environment < 40) break;
     s = buyBomb(s);
+  }
+
+  if (!s.nations[id].hasAerospaceTech && s.nations[id].money >= COSTS.aerospaceTech + 2) {
+    s = buyAerospaceTech(s);
+  }
+
+  // Drones are cheap, so buy a pack per warhead to strip shields, plus one raider
+  const wantDrones = Math.min(
+    maxDronesPurchasable(s, id),
+    Math.max(1, s.nations[id].bombs),
+  );
+  for (let i = 0; i < wantDrones; i += 1) {
+    if (s.nations[id].money < COSTS.drone + 1) break;
+    s = buyDrone(s);
   }
 
   if (
@@ -136,6 +175,17 @@ export function runAiNationTurn(state: GameState, nationId: NationId): GameState
     const target = pickBombTarget(s, nationId);
     if (!target) break;
     s = queueStrike(s, target.nationId, target.cityId, nationId);
+    // A shielded target only falls if drones tie the shield up first
+    const city = s.nations[target.nationId].cities.find((c) => c.id === target.cityId);
+    if (city?.hasShield && s.nations[nationId].drones > 0) {
+      s = queueStrike(s, target.nationId, target.cityId, nationId, 'drone');
+    }
+  }
+
+  while (s.nations[nationId].drones > 0) {
+    const target = pickDroneTarget(s, nationId);
+    if (!target) break;
+    s = queueStrike(s, target.nationId, target.cityId, nationId, 'drone');
   }
   return s;
 }
