@@ -161,9 +161,10 @@ export const TABLE_SIZE = 5;
 
 export const COSTS = {
   nuclearTech: 5,
-  aerospaceTech: 3,
+  aerospaceTech: 2,
+  underground: 6,
   shield: 3,
-  bomb: 2,
+  bomb: 2.5,
   drone: 1,
   research: 2,
   environment: 1,
@@ -199,6 +200,7 @@ export function makeCities(id: NationId): City[] {
     destroyed: false,
     hasShield: false,
     hasResearch: false,
+    isUnderground: false,
   }));
 }
 

@@ -9,6 +9,8 @@ import {
   buyNuclearTech,
   buyResearch,
   buyShield,
+  buyUnderground,
+  canBuyUnderground,
   citiesLeft,
   computeScore,
   concludeRoundTurns,
@@ -21,7 +23,7 @@ import {
   researchCount,
   toggleSanction,
 } from './engine';
-import type { GameState, NationId } from '../types';
+import type { City, GameState, NationId } from '../types';
 
 export function pickBombTarget(
   state: GameState,
@@ -36,8 +38,8 @@ export function pickBombTarget(
     .filter((r) => r.cities > 0)
     .sort((a, b) => b.score - a.score);
 
-  const eligible = (c: { id: string; destroyed: boolean }) =>
-    !c.destroyed && !alreadyHit.has(c.id);
+  const eligible = (c: { id: string; destroyed: boolean; isUnderground?: boolean }) =>
+    !c.destroyed && !c.isUnderground && !alreadyHit.has(c.id);
 
   for (const rival of ranked) {
     const cities = state.nations[rival.id].cities.filter(eligible);
@@ -67,13 +69,30 @@ export function pickDroneTarget(
     .map((id) => ({ id, score: computeScore(state, id).total }))
     .sort((a, b) => b.score - a.score);
 
+  // A shield or bunker halves the bill, so undefended cities are worth more —
+  // unless a warhead is already inbound, where the swarm ties up the shield.
+  const nuking = new Set(
+    state.pendingStrikes
+      .filter((s) => s.attackerId === attackerId && s.weapon !== 'drone')
+      .map((s) => `${s.targetNationId}:${s.cityId}`),
+  );
+  const value = (rivalId: NationId, city: City) => {
+    if (nuking.has(`${rivalId}:${city.id}`)) return 3;
+    if (!city.hasShield && !city.isUnderground) return 2;
+    return 1;
+  };
+
   for (const rival of rivals) {
     const cities = state.nations[rival.id].cities.filter(
       (c) => !c.destroyed && !swarmed.has(c.id),
     );
-    const research = cities.find((c) => c.hasResearch);
-    if (research) return { nationId: rival.id, cityId: research.id };
-    if (cities.length > 0) return { nationId: rival.id, cityId: cities[0].id };
+    const best = [...cities].sort(
+      (a, b) =>
+        value(rival.id, b) - value(rival.id, a) ||
+        Number(b.hasResearch) - Number(a.hasResearch) ||
+        cities.indexOf(a) - cities.indexOf(b),
+    )[0];
+    if (best) return { nationId: rival.id, cityId: best.id };
   }
   return null;
 }
@@ -102,20 +121,38 @@ export function runAiBuyPhase(state: GameState): GameState {
     s = buyResearch(s, spot.id);
   }
 
+  if (
+    !s.nations[id].hasAerospaceTech &&
+    s.round <= 3 &&
+    s.nations[id].money >= COSTS.aerospaceTech + 1
+  ) {
+    s = buyAerospaceTech(s);
+  }
+
+  // One city in the rock is a guaranteed seat at the final scores
+  if (canBuyUnderground(s, id) && s.nations[id].money >= COSTS.underground + 1) {
+    const keep =
+      s.nations[id].cities.find((c) => !c.destroyed && c.hasResearch) ??
+      s.nations[id].cities.find((c) => !c.destroyed);
+    if (keep) s = buyUnderground(s, keep.id, id);
+  }
+
   for (const city of s.nations[id].cities) {
-    if (!city.destroyed && !city.hasShield && s.nations[id].money >= COSTS.shield + 2) {
+    if (
+      !city.destroyed &&
+      !city.hasShield &&
+      !city.isUnderground &&
+      s.nations[id].money >= COSTS.shield + 2
+    ) {
       s = buyShield(s, city.id);
     }
   }
 
+  const escort = s.nations[id].hasAerospaceTech ? COSTS.drone : 0;
   const wantBombs = Math.min(3, maxBombsPurchasable(s, id));
   for (let i = 0; i < wantBombs; i += 1) {
-    if (s.nations[id].money < COSTS.bomb + 1 && s.environment < 40) break;
+    if (s.nations[id].money < COSTS.bomb + escort + 1 && s.environment < 40) break;
     s = buyBomb(s);
-  }
-
-  if (!s.nations[id].hasAerospaceTech && s.nations[id].money >= COSTS.aerospaceTech + 2) {
-    s = buyAerospaceTech(s);
   }
 
   // Drones are cheap, so buy a pack per warhead to strip shields, plus one raider
@@ -124,7 +161,7 @@ export function runAiBuyPhase(state: GameState): GameState {
     Math.max(1, s.nations[id].bombs),
   );
   for (let i = 0; i < wantDrones; i += 1) {
-    if (s.nations[id].money < COSTS.drone + 1) break;
+    if (s.nations[id].money < COSTS.drone) break;
     s = buyDrone(s);
   }
 

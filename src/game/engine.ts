@@ -888,11 +888,66 @@ export function buyEnvironment(state: GameState, nationId?: NationId): GameState
   };
 }
 
+/** A nation may bunker one city per match. */
+export function undergroundCity(state: GameState, nationId: NationId): City | null {
+  return state.nations[nationId].cities.find((c) => c.isUnderground) ?? null;
+}
+
+export function canBuyUnderground(state: GameState, nationId?: NationId): boolean {
+  const id = nationId ?? currentNationId(state);
+  const n = state.nations[id];
+  return (
+    !n.eliminated &&
+    n.money >= COSTS.underground &&
+    !undergroundCity(state, id) &&
+    n.cities.some((c) => !c.destroyed)
+  );
+}
+
+export function buyUnderground(
+  state: GameState,
+  cityId: string,
+  nationId?: NationId,
+): GameState {
+  const id = nationId ?? currentNationId(state);
+  const n = state.nations[id];
+  if (!canBuyUnderground(state, id)) return state;
+
+  const target = n.cities.find((c) => c.id === cityId && !c.destroyed && !c.isUnderground);
+  if (!target) return state;
+
+  return {
+    ...state,
+    nations: {
+      ...state.nations,
+      [id]: {
+        ...n,
+        money: +(n.money - COSTS.underground).toFixed(2),
+        cities: n.cities.map((c) => (c.id === cityId ? { ...c, isUnderground: true } : c)),
+      },
+    },
+    log: [
+      ...state.log,
+      log(
+        `${nationDef(id).name} moved ${target.name} underground — the city can no longer be destroyed.`,
+        'money',
+      ),
+    ],
+  };
+}
+
 export function buyShield(state: GameState, cityId: string, nationId?: NationId): GameState {
   const id = nationId ?? currentNationId(state);
   const n = state.nations[id];
   const city = n.cities.find((c) => c.id === cityId);
-  if (!city || city.destroyed || city.hasShield || n.money < COSTS.shield || n.eliminated) {
+  if (
+    !city ||
+    city.destroyed ||
+    city.hasShield ||
+    city.isUnderground ||
+    n.money < COSTS.shield ||
+    n.eliminated
+  ) {
     return state;
   }
   return {
@@ -942,6 +997,8 @@ export function queueStrike(
 
   const city = defender.cities.find((c) => c.id === cityId);
   if (!city || city.destroyed) return state;
+  // Warheads cannot crack a bunker city; drones still run up a repair bill
+  if (city.isUnderground && !drone) return state;
 
   const strike: PendingStrike = {
     attackerId,
@@ -1006,25 +1063,35 @@ export function shieldIsBusy(
 }
 
 /** Drone swarms cannot level a city — they run up a repair bill instead. */
+/**
+ * A shield or a bunker blunts a swarm, so it only runs up half the repair bill.
+ * Shields still count even when the swarm is tying one up for a warhead.
+ */
+export function droneDamageFor(city: Pick<City, 'hasShield' | 'isUnderground'>): number {
+  return city.hasShield || city.isUnderground ? +(DRONE_DAMAGE / 2).toFixed(2) : DRONE_DAMAGE;
+}
+
 function applyDroneStrike(
   state: GameState,
   strike: PendingStrike,
   city: City,
 ): GameState {
   const defender = state.nations[strike.targetNationId];
+  const damage = droneDamageFor(city);
+  const defended = damage < DRONE_DAMAGE;
   return {
     ...state,
     nations: {
       ...state.nations,
       [strike.targetNationId]: {
         ...defender,
-        pendingDroneDamage: +((defender.pendingDroneDamage ?? 0) + DRONE_DAMAGE).toFixed(2),
+        pendingDroneDamage: +((defender.pendingDroneDamage ?? 0) + damage).toFixed(2),
       },
     },
     log: [
       ...state.log,
       log(
-        `${nationDef(strike.attackerId).name}'s drones hit ${city.name} (${nationDef(strike.targetNationId).name}) — $${DRONE_DAMAGE}M in damages.`,
+        `${nationDef(strike.attackerId).name}'s drones hit ${city.name} (${nationDef(strike.targetNationId).name}) — $${damage}M in damages${defended ? ' (defences took the brunt)' : ''}.`,
         'attack',
       ),
     ],
@@ -1036,7 +1103,7 @@ function applyDroneStrike(
         cityId: city.id,
         cityName: city.name,
         attackerId: strike.attackerId,
-        amount: DRONE_DAMAGE,
+        amount: damage,
       }),
     ],
   };
@@ -1051,6 +1118,30 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
   const city = defender.cities.find((c) => c.id === strike.cityId);
   if (city && !city.destroyed && strike.weapon === 'drone') {
     return applyDroneStrike(state, strike, city);
+  }
+  // A player can bunker a city in the same round a warhead was aimed at it
+  if (city && !city.destroyed && city.isUnderground) {
+    return {
+      ...state,
+      environment: Math.max(0, state.environment - ENV_BOMB_HIT),
+      log: [
+        ...state.log,
+        log(
+          `${nationDef(strike.attackerId).name}'s warhead broke against the bunkers under ${city.name} (${nationDef(strike.targetNationId).name}).`,
+          'attack',
+        ),
+      ],
+      roundEvents: [
+        ...state.roundEvents,
+        worldEvent({
+          kind: 'strikeAbsorbed',
+          nationId: strike.targetNationId,
+          cityId: city.id,
+          cityName: city.name,
+          attackerId: strike.attackerId,
+        }),
+      ],
+    };
   }
   if (!city || city.destroyed) {
     return {

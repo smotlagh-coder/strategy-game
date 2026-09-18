@@ -44,6 +44,8 @@ export interface City {
   destroyed: boolean;
   hasShield: boolean;
   hasResearch: boolean;
+  /** Moved underground — cannot be destroyed by nukes or drones */
+  isUnderground?: boolean;
 }
 
 export interface NationState {
@@ -119,7 +121,12 @@ export interface LogEntry {
 /** What happened during the round just completed (shown on aftermath board) */
 export interface RoundWorldEvent {
   id: string;
-  kind: 'cityDestroyed' | 'shieldDestroyed' | 'nationEliminated' | 'droneDamage';
+  kind:
+    | 'cityDestroyed'
+    | 'shieldDestroyed'
+    | 'nationEliminated'
+    | 'droneDamage'
+    | 'strikeAbsorbed';
   nationId: NationId;
   cityId?: string;
   cityName?: string;

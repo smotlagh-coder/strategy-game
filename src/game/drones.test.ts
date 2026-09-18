@@ -7,6 +7,7 @@ import {
   buyDrones,
   canBuyDrones,
   createInitialState,
+  droneDamageFor,
   finishStrikeResolution,
   maxDronesPurchasable,
   nextRound,
@@ -52,9 +53,9 @@ function armed(extra: Partial<GameState['nations']['us']> = {}) {
 }
 
 describe('drone economy', () => {
-  it('prices packs at $1M and the tech at $3M', () => {
+  it('prices packs at $1M and the tech at $2M', () => {
     expect(COSTS.drone).toBe(1);
-    expect(COSTS.aerospaceTech).toBe(3);
+    expect(COSTS.aerospaceTech).toBe(2);
     expect(DRONE_DAMAGE).toBe(1.5);
   });
 
@@ -124,8 +125,46 @@ describe('drone damage', () => {
     const hit = s.nations.uk.cities.find((c) => c.id === city.id)!;
     expect(hit.destroyed).toBe(false);
     expect(hit.hasShield).toBe(true);
-    expect(s.nations.uk.pendingDroneDamage).toBe(DRONE_DAMAGE);
+    // The shield took the brunt, so only half the bill
+    expect(s.nations.uk.pendingDroneDamage).toBe(DRONE_DAMAGE / 2);
     expect(s.roundEvents.some((e) => e.kind === 'droneDamage')).toBe(true);
+  });
+
+  it('bills an undefended city the full amount', () => {
+    let s = armed();
+    const city = s.nations.uk.cities.find((c) => !c.hasShield && !c.isUnderground)!;
+    s = queueStrike(s, 'uk', city.id, 'us', 'drone');
+    s = applyQueuedStrike(s, s.pendingStrikes[0]);
+    expect(s.nations.uk.pendingDroneDamage).toBe(DRONE_DAMAGE);
+    expect(droneDamageFor(city)).toBe(DRONE_DAMAGE);
+  });
+
+  it('halves the bill for a shielded or bunkered city', () => {
+    expect(droneDamageFor({ hasShield: true, isUnderground: false })).toBe(DRONE_DAMAGE / 2);
+    expect(droneDamageFor({ hasShield: false, isUnderground: true })).toBe(DRONE_DAMAGE / 2);
+    expect(droneDamageFor({ hasShield: false, isUnderground: false })).toBe(DRONE_DAMAGE);
+  });
+
+  it('records the halved amount on the round event so recaps read true', () => {
+    let s = armed();
+    const city = s.nations.uk.cities[0];
+    s = {
+      ...s,
+      nations: {
+        ...s.nations,
+        uk: {
+          ...s.nations.uk,
+          cities: s.nations.uk.cities.map((c) =>
+            c.id === city.id ? { ...c, hasShield: true } : c,
+          ),
+        },
+      },
+    };
+    s = queueStrike(s, 'uk', city.id, 'us', 'drone');
+    s = applyQueuedStrike(s, s.pendingStrikes[0]);
+
+    const event = s.roundEvents.find((e) => e.kind === 'droneDamage')!;
+    expect(event.amount).toBe(DRONE_DAMAGE / 2);
   });
 
   it('deducts the repair bill from the next round of income', () => {
@@ -182,7 +221,8 @@ describe('shields busy with drones', () => {
 
     const hit = s.nations.uk.cities.find((c) => c.id === city.id)!;
     expect(hit.destroyed).toBe(true);
-    expect(s.nations.uk.pendingDroneDamage).toBe(DRONE_DAMAGE);
+    // Drones resolve while the shield still stands, so the bill is halved
+    expect(s.nations.uk.pendingDroneDamage).toBe(DRONE_DAMAGE / 2);
   });
 
   it('still only strips the shield when the warhead flies alone', () => {

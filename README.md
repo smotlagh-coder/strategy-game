@@ -18,23 +18,26 @@ Repo: [smotlagh-coder/strategy-game](https://github.com/smotlagh-coder/strategy-
 | Base income / round | **$3M** each living nation (from round 2) |
 | Rounds | **5** |
 | Nuclear Tech | **$5M** once — bombs available the following round |
-| Nuclear bomb | **$2M** each (max 3 purchased per round) |
-| Aerospace Tech | **$3M** once — drone packs available the following round |
+| Nuclear bomb | **$2.5M** each (max 3 purchased per round) |
+| Aerospace Tech | **$2M** once — drone packs available the following round |
 | Drone pack | **$1M** each (max 3 purchased per round) |
 | City shield | **$3M** — blocks one nuke (shield destroyed, city survives) |
+| Underground City | **$6M** — one city per nation, permanently: nukes cannot destroy it and it never needs a shield |
 | Research center | **$2M** — place on a city; that city earns **+$1.5M**/round. Destroyed with the city. |
 | Environment | **$1M** — world health **+10%** (once per round) |
 | Sanction | −**10%** total revenue for the target |
 | Nuke hit | World environment **−5%** |
-| Drone hit | Target owes **$1.5M** in repairs, billed at their next income |
+| Drone hit | Target owes **$1.5M** in repairs, billed at their next income — halved to **$0.75M** if the city has a shield or is underground |
 
 Every match seats **5 of the 12 countries**: each player's chosen country always plays, and the empty chairs are dealt at random from the countries nobody picked. In an online lobby a claimed country is locked to that player and greyed out for everyone else.
 
 Each nation has **3 cities**. Unshielded hit = city destroyed. Lose all 3 cities = eliminated — eliminated nations keep their score on the board but **cannot become the superpower**.
 
+An **Underground City** is the one city nobody can take from you: bombs are not even selectable against it, and a bomb already in the air when it goes underground breaks against the rock. It cannot be eliminated, so the nation holding one is guaranteed a seat at the final scores — but drone swarms still bill it for repairs (at the halved defended rate), and the other two cities remain exposed.
+
 **Mutual Destruction** only when world environment hits **0%**. Otherwise a living nation always becomes the superpower (ties broken by cities / survival points).
 
-Drones cannot level a city or break a shield on their own — they run up a repair bill. Their value is the combo: swarm a city you are also nuking and its shield is too busy to stop the warhead, so the city falls. Targeting runs bombs first, then drones.
+Drones cannot level a city or break a shield on their own — they run up a repair bill, and a shield or bunker blunts the swarm enough to halve it. Their value is the combo: swarm a city you are also nuking and its shield is too busy to stop the warhead, so the city falls. Targeting runs bombs first, then drones.
 
 Strikes are queued during turns and resolve together at round end. Survival score awards **10 pts × cities still standing** each round.
 
@@ -249,7 +252,7 @@ App Engine runs `gcp-build` (`npm run build`) then `npm start` (serves `dist` on
 1. Enter your name (session)
 2. Choose Single, Hot-seat (2P), or Online Multiplayer
 3. Pick nation(s) / invite players
-4. Each turn: answer purchase prompts (nuclear tech, aerospace tech, research, bombs, drones, shield, environment, sanctions), then lock bomb targets and drone targets
+4. Each turn: answer purchase prompts (nuclear tech, aerospace tech, research, bombs, drones, underground city, shield, environment, sanctions), then lock bomb targets and drone targets
 5. After all nations act, watch simultaneous strikes, review treasury + scores on the aftermath board
 
 ---

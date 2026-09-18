@@ -110,6 +110,7 @@ export function mergeNationPlanning(
       ...rc,
       hasShield: Boolean(rc.hasShield || lc.hasShield),
       hasResearch: Boolean(rc.hasResearch || lc.hasResearch),
+      isUnderground: Boolean(rc.isUnderground || lc.isUnderground),
     };
   });
   const researchCenters = cities.filter((c) => !c.destroyed && c.hasResearch).length;

@@ -742,7 +742,6 @@ img { max-width: 100%; display: block; }
   max-height: 100%;
   min-width: 0;
   min-height: 0;
-  border-radius: 10px;
 }
 
 .nation-card--ally .city-tile {
@@ -786,8 +785,8 @@ img { max-width: 100%; display: block; }
 
 .city-tile__bomb-lock {
   position: absolute;
-  top: 4px;
-  left: 4px;
+  top: 7%;
+  left: 7%;
   z-index: 5;
   display: grid;
   place-items: center;
@@ -813,14 +812,47 @@ img { max-width: 100%; display: block; }
   transform: rotate(-28deg);
 }
 
+.city-tile.is-underground .city-tile__art {
+  filter: brightness(0.82) saturate(0.9) contrast(1.05);
+}
+
+.city-tile.is-underground {
+  border-color: rgba(245, 197, 66, 0.5);
+  box-shadow:
+    inset 0 0 0 2px rgba(245, 197, 66, 0.4),
+    0 14px 26px -16px rgba(0, 0, 0, 0.95);
+}
+
+.city-tile__bunker {
+  position: absolute;
+  bottom: 1.45rem;
+  right: 8%;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  width: clamp(1.55rem, 24%, 2.4rem);
+  height: clamp(1.55rem, 24%, 2.4rem);
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(28, 20, 4, 0.9);
+  border: 2px solid rgba(245, 197, 66, 0.9);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55), 0 0 10px rgba(245, 197, 66, 0.3);
+}
+
+.city-tile__bunker img {
+  width: 104%;
+  height: 104%;
+  object-fit: cover;
+}
+
 .city-tile.is-drone-locked .city-tile__art {
   filter: brightness(0.78) saturate(0.9);
 }
 
 .city-tile__drone-lock {
   position: absolute;
-  top: 4px;
-  right: 4px;
+  bottom: 1.45rem;
+  left: 8%;
   z-index: 5;
   display: grid;
   place-items: center;
@@ -899,40 +931,74 @@ img { max-width: 100%; display: block; }
   font-size: 0.9rem;
 }
 
+/* Landmark art is cut out, so the tile itself provides the surface it sits on */
 .city-tile {
+  --tile-edge: rgba(150, 190, 245, 0.18);
   position: relative;
   width: min(100px, 12vw);
   height: min(100px, 12vw);
   padding: 0;
-  border: none;
-  border-radius: 14px;
+  border: 1px solid var(--tile-edge);
+  border-radius: 20px;
   overflow: hidden;
-  background: transparent;
   color: inherit;
-  box-shadow: none;
-  transition: transform 0.15s ease, filter 0.15s ease;
+  background:
+    radial-gradient(85% 62% at 50% 16%, rgba(96, 150, 226, 0.26), transparent 66%),
+    linear-gradient(168deg, rgba(32, 51, 84, 0.96) 0%, rgba(13, 22, 40, 0.98) 70%);
+  box-shadow:
+    0 14px 26px -16px rgba(0, 0, 0, 0.95),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease,
+    filter 0.18s ease;
+}
+
+/* Pool of light the landmark stands in */
+.city-tile::before {
+  content: '';
+  position: absolute;
+  left: 14%;
+  right: 14%;
+  bottom: 1.05rem;
+  height: 18%;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(126, 178, 255, 0.3), transparent 72%);
+  pointer-events: none;
+  z-index: 1;
 }
 
 .city-tile:hover:not(:disabled) {
   transform: translateY(-3px);
-  filter: brightness(1.06);
+  border-color: rgba(180, 214, 255, 0.4);
+  box-shadow:
+    0 18px 30px -16px rgba(0, 0, 0, 0.95),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 0 16px rgba(120, 170, 255, 0.22);
 }
 
 .city-tile.is-selected {
   outline: none;
-  box-shadow: inset 0 0 0 3px rgba(245, 197, 66, 0.98);
+  border-color: rgba(245, 197, 66, 0.95);
+  box-shadow:
+    inset 0 0 0 2px rgba(245, 197, 66, 0.85),
+    0 14px 26px -16px rgba(0, 0, 0, 0.95),
+    0 0 18px rgba(245, 197, 66, 0.35);
 }
 
 .city-tile.is-selected .city-tile__art {
-  filter: brightness(0.82) saturate(1.05);
+  filter: brightness(0.92) saturate(1.08);
 }
 
 .city-tile__art {
+  position: relative;
+  z-index: 2;
   width: 100%;
-  height: calc(100% - 1.45rem);
-  object-fit: cover;
-  object-position: center top;
+  height: calc(100% - 1.02rem);
+  padding: 5% 5% 0;
+  box-sizing: border-box;
+  object-fit: contain;
+  object-position: center bottom;
   display: block;
+  filter: drop-shadow(0 4px 7px rgba(0, 0, 0, 0.6));
 }
 
 .city-tile__name {
@@ -941,11 +1007,13 @@ img { max-width: 100%; display: block; }
   right: 0;
   bottom: 0;
   z-index: 3;
-  padding: 0.2rem 0.25rem;
-  font-size: 0.9rem;
-  font-weight: 800;
+  padding: 0.22rem 0.3rem 0.26rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.015em;
   text-align: center;
-  background: linear-gradient(transparent, rgba(0, 0, 0, 0.88));
+  color: rgba(234, 242, 255, 0.95);
+  background: linear-gradient(transparent, rgba(5, 10, 20, 0.78) 45%, rgba(4, 8, 16, 0.94));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -997,8 +1065,8 @@ img { max-width: 100%; display: block; }
 
 .city-tile__research {
   position: absolute;
-  top: 4px;
-  right: 4px;
+  top: 7%;
+  right: 7%;
   z-index: 4;
   display: grid;
   place-items: center;
@@ -1022,22 +1090,25 @@ img { max-width: 100%; display: block; }
   transform: scale(1.22);
 }
 
-.city-tile.has-shield {
-  border: none;
-  box-shadow: none;
-}
-
 .city-tile.has-research {
-  border: none;
+  border-color: rgba(120, 220, 160, 0.3);
 }
 
 .city-tile.is-destroyed .city-tile__art {
-  filter: grayscale(0.85) brightness(0.55);
+  filter: grayscale(0.9) brightness(0.45);
 }
 
+/* Burnt out: cold ash instead of a lit city */
 .city-tile.is-destroyed {
-  border: none;
-  box-shadow: none;
+  border-color: rgba(120, 90, 80, 0.22);
+  background:
+    radial-gradient(85% 60% at 50% 88%, rgba(120, 48, 24, 0.3), transparent 70%),
+    linear-gradient(168deg, rgba(26, 22, 26, 0.96), rgba(8, 7, 10, 0.98));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.city-tile.is-destroyed::before {
+  background: radial-gradient(ellipse, rgba(255, 120, 50, 0.16), transparent 72%);
 }
 
 .city-smoke {
@@ -1681,8 +1752,13 @@ img { max-width: 100%; display: block; }
 .turn-wizard__city-card img {
   width: 100%;
   aspect-ratio: 1;
-  object-fit: cover;
-  border-radius: 12px;
+  padding: 6%;
+  box-sizing: border-box;
+  object-fit: contain;
+  border-radius: 14px;
+  background:
+    radial-gradient(85% 62% at 50% 16%, rgba(96, 150, 226, 0.24), transparent 66%),
+    linear-gradient(168deg, rgba(32, 51, 84, 0.96) 0%, rgba(13, 22, 40, 0.98) 70%);
 }
 
 .turn-wizard__city-card span {
@@ -2169,8 +2245,13 @@ img { max-width: 100%; display: block; }
 .strike-cinema__city {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  padding: 8%;
+  box-sizing: border-box;
+  object-fit: contain;
   border-radius: 18px;
+  background:
+    radial-gradient(85% 62% at 50% 16%, rgba(96, 150, 226, 0.24), transparent 66%),
+    linear-gradient(168deg, rgba(32, 51, 84, 0.96) 0%, rgba(13, 22, 40, 0.98) 70%);
   border: 2px solid rgba(255, 120, 90, 0.45);
   box-shadow: 0 10px 28px rgba(80, 0, 0, 0.4);
 }
@@ -2297,6 +2378,90 @@ img { max-width: 100%; display: block; }
   0% { transform: scale(0.25); opacity: 0; }
   25% { transform: scale(1.15); opacity: 1; }
   100% { transform: scale(1.55); opacity: 0; }
+}
+
+/* Drone swarm impact: a crackle of sparks and dust, no fireball */
+.strike-cinema__boom--drone {
+  width: 112px;
+  height: 112px;
+}
+
+.strike-cinema__pop {
+  position: absolute;
+  inset: 36%;
+  border-radius: 999px;
+  border: 3px solid rgba(205, 245, 255, 0.95);
+  box-shadow: 0 0 22px rgba(120, 215, 255, 0.75), inset 0 0 12px rgba(150, 230, 255, 0.6);
+  background: radial-gradient(circle, rgba(225, 248, 255, 0.35), rgba(120, 200, 255, 0.1) 52%, transparent 68%);
+  animation: dronePop 0.5s ease-out forwards;
+}
+
+@keyframes dronePop {
+  0% { transform: scale(0.2); opacity: 0; }
+  28% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(2.1); opacity: 0; }
+}
+
+/* Rotate-then-translate keeps each shard flying out along its own spoke */
+.strike-cinema__spark {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 4px;
+  height: 17px;
+  margin: -8.5px 0 0 -2px;
+  border-radius: 2px;
+  background: linear-gradient(rgba(245, 253, 255, 1), rgba(110, 200, 255, 0));
+  box-shadow: 0 0 8px rgba(160, 225, 255, 0.85);
+  animation: droneSpark 0.5s ease-out forwards;
+}
+
+.strike-cinema__spark.spark-0 { --spoke: 8deg; }
+.strike-cinema__spark.spark-1 { --spoke: 62deg; animation-delay: 0.03s; }
+.strike-cinema__spark.spark-2 { --spoke: 121deg; animation-delay: 0.06s; }
+.strike-cinema__spark.spark-3 { --spoke: 186deg; }
+.strike-cinema__spark.spark-4 { --spoke: 244deg; animation-delay: 0.04s; }
+.strike-cinema__spark.spark-5 { --spoke: 302deg; animation-delay: 0.07s; }
+
+@keyframes droneSpark {
+  0% { transform: rotate(var(--spoke, 0deg)) translateY(-8px) scale(0.5); opacity: 0; }
+  30% { transform: rotate(var(--spoke, 0deg)) translateY(-28px) scale(1); opacity: 1; }
+  100% { transform: rotate(var(--spoke, 0deg)) translateY(-56px) scale(0.7); opacity: 0; }
+}
+
+/* Swarmed city: shaken and dusty, but still standing */
+.strike-cinema__target-art.is-rattled {
+  animation: cityRattle 0.4s ease-out 1;
+}
+
+.strike-cinema__target-art.is-rattled .strike-cinema__city {
+  border-color: rgba(150, 215, 255, 0.75);
+  box-shadow: 0 0 18px rgba(110, 190, 255, 0.4), inset 0 0 14px rgba(0, 0, 0, 0.45);
+}
+
+.strike-cinema__dust {
+  position: absolute;
+  inset: 0;
+  border-radius: 18px;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse at 50% 100%, rgba(225, 235, 245, 0.3), transparent 52%),
+    radial-gradient(ellipse at 30% 92%, rgba(190, 205, 220, 0.22), transparent 48%);
+  mix-blend-mode: screen;
+  animation: cityDust 0.9s ease-out forwards;
+}
+
+@keyframes cityDust {
+  0% { opacity: 0; transform: translateY(8px); }
+  30% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-6px); }
+}
+
+@keyframes cityRattle {
+  0%, 100% { transform: translate(0, 0); }
+  25% { transform: translate(-2px, 1px); }
+  55% { transform: translate(2px, -1px); }
+  80% { transform: translate(-1px, 0); }
 }
 
 /* Struck city: scorched, shaking, still alight when the cinema cuts away */
@@ -2600,6 +2765,11 @@ img { max-width: 100%; display: block; }
 
 .round-event--shieldDestroyed {
   border-color: rgba(120, 180, 255, 0.4);
+}
+
+.round-event--strikeAbsorbed {
+  border-color: rgba(245, 197, 66, 0.45);
+  background: rgba(46, 34, 6, 0.75);
 }
 
 .round-event--droneDamage {
