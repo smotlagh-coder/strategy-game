@@ -436,7 +436,7 @@ function StrikeCinema({
                       <span className="strike-cinema__tag">
                         {target.weapons.includes('nuke')
                           ? 'Shield swarmed'
-                          : `−$${formatMoney(target.droneBill ?? DRONE_DAMAGE)}M damages`}
+                          : `−$${target.droneBill ?? DRONE_DAMAGE}M damages`}
                       </span>
                     )}
                   </div>
@@ -2438,7 +2438,7 @@ function GameBoard({
                 <p className="turn-wizard__hint">
                   {COSTS.underground}M · one city per nation, for the whole match · nukes
                   cannot destroy it and it never needs a shield. Drone swarms still cost it
-                  {` $${formatMoney(DRONE_DAMAGE / 2)}M`} in repairs.
+                  {` $${DRONE_DAMAGE / 2}M`} in repairs.
                 </p>
                 <div className="turn-wizard__actions">
                   <button
@@ -2730,7 +2730,7 @@ function GameBoard({
               Tap up to {turn.drones} enemy cit{turn.drones === 1 ? 'y' : 'ies'}
               {droneTargets.length > 0 ? ` · selected ${droneTargets.length}/${turn.drones}` : ''}.
               Each pack costs that nation ${DRONE_DAMAGE}M in damages, or
-              {` $${formatMoney(DRONE_DAMAGE / 2)}M`} if the city has a shield or bunker. Swarm a
+              {` $${DRONE_DAMAGE / 2}M`} if the city has a shield or bunker. Swarm a
               city you also
               bombed and its shield is too busy to stop the warhead.
             </p>
