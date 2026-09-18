@@ -811,32 +811,6 @@ function cityStatusLabel(c: { destroyed: boolean; hasShield: boolean; hasResearc
   return bits.length ? bits.join(' · ') : 'Open';
 }
 
-function NationFlag({
-  nationId,
-  className = '',
-}: {
-  nationId: NationId;
-  className?: string;
-}) {
-  const colors = nationDef(nationId).flagColors;
-  return (
-    <span
-      className={`nation-flag ${className}`.trim()}
-      role="img"
-      aria-label={`${nationDef(nationId).name} flag`}
-      style={{
-        backgroundImage: `linear-gradient(90deg, ${colors
-          .map((c, i) => {
-            const start = (i / colors.length) * 100;
-            const end = ((i + 1) / colors.length) * 100;
-            return `${c} ${start}%, ${c} ${end}%`;
-          })
-          .join(', ')})`,
-      }}
-    />
-  );
-}
-
 function ResourceBar({
   money,
   bombs,
@@ -887,7 +861,6 @@ function WizardNationHeader({
   return (
     <div className={`modal__head wizard-nation-head ${compact ? 'wizard-nation-head--compact' : ''}`}>
       <div className="wizard-nation-head__emblem">
-        <NationFlag nationId={nationId} className="wizard-nation-head__flag" />
         <img className="modal__leader" src={ART.leaders[nationId]} alt="" />
       </div>
       <div>
@@ -1068,7 +1041,7 @@ function ModeSelect({ onSelect }: { onSelect: (m: GameMode) => void }) {
       <div className="splash-veil" />
       <div className="splash-content">
         <h1 className="stencil-title title-glow">NUCLEAR WAR</h1>
-        <p className="tagline">5 rounds · 9 countries · one superpower</p>
+        <p className="tagline">5 rounds · 12 countries · one superpower</p>
         <div className="mode-row">
           <button className="btn btn--xl btn--primary" onClick={() => onSelect('single')}>
             Single Player

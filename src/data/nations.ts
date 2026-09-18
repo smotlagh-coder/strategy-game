@@ -6,7 +6,6 @@ export interface NationDef {
   shortName: string;
   leader: string;
   color: string;
-  flagColors: string[];
   cities: { id: string; name: string; landmark: string }[];
 }
 
@@ -17,7 +16,6 @@ export const NATIONS: NationDef[] = [
     shortName: 'CN',
     leader: 'Premier Zhao',
     color: '#c41e3a',
-    flagColors: ['#de2910', '#ffde00'],
     cities: [
       { id: 'cn-1', name: 'Beijing', landmark: '🏯' },
       { id: 'cn-2', name: 'Shanghai', landmark: '🏙️' },
@@ -30,7 +28,6 @@ export const NATIONS: NationDef[] = [
     shortName: 'RU',
     leader: 'Marshal Volkov',
     color: '#0039a6',
-    flagColors: ['#fff', '#0039a6', '#d52b1e'],
     cities: [
       { id: 'ru-1', name: 'Moscow', landmark: '🕌' },
       { id: 'ru-2', name: 'St. Petersburg', landmark: '🏛️' },
@@ -43,7 +40,6 @@ export const NATIONS: NationDef[] = [
     shortName: 'UK',
     leader: 'PM Harrington',
     color: '#012169',
-    flagColors: ['#012169', '#c8102e', '#fff'],
     cities: [
       { id: 'uk-1', name: 'London', landmark: '🕰️' },
       { id: 'uk-2', name: 'Edinburgh', landmark: '🏰' },
@@ -56,7 +52,6 @@ export const NATIONS: NationDef[] = [
     shortName: 'USA',
     leader: 'President Lane',
     color: '#3c3b6e',
-    flagColors: ['#b22234', '#fff', '#3c3b6e'],
     cities: [
       { id: 'us-1', name: 'New York', landmark: '🗽' },
       { id: 'us-2', name: 'Las Vegas', landmark: '🎰' },
@@ -69,7 +64,6 @@ export const NATIONS: NationDef[] = [
     shortName: 'FR',
     leader: 'Président Dubois',
     color: '#002395',
-    flagColors: ['#002395', '#fff', '#ed2939'],
     cities: [
       { id: 'fr-1', name: 'Paris', landmark: '🗼' },
       { id: 'fr-2', name: 'Lyon', landmark: '⛪' },
@@ -82,7 +76,6 @@ export const NATIONS: NationDef[] = [
     shortName: 'IN',
     leader: 'PM Raghavan',
     color: '#ff9933',
-    flagColors: ['#ff9933', '#fff', '#138808'],
     cities: [
       { id: 'in-1', name: 'New Delhi', landmark: '🛕' },
       { id: 'in-2', name: 'Mumbai', landmark: '🌇' },
@@ -95,7 +88,6 @@ export const NATIONS: NationDef[] = [
     shortName: 'PK',
     leader: 'General Rahim',
     color: '#01411c',
-    flagColors: ['#01411c', '#fff'],
     cities: [
       { id: 'pk-1', name: 'Islamabad', landmark: '🕌' },
       { id: 'pk-2', name: 'Karachi', landmark: '🛳️' },
@@ -108,7 +100,6 @@ export const NATIONS: NationDef[] = [
     shortName: 'IR',
     leader: 'President Nasseri',
     color: '#239f40',
-    flagColors: ['#239f40', '#fff', '#da0000'],
     cities: [
       { id: 'ir-1', name: 'Tehran', landmark: '🗼' },
       { id: 'ir-2', name: 'Isfahan', landmark: '🕌' },
@@ -121,11 +112,46 @@ export const NATIONS: NationDef[] = [
     shortName: 'DPRK',
     leader: 'Marshal Kang',
     color: '#ed1c27',
-    flagColors: ['#024fa2', '#fff', '#ed1c27'],
     cities: [
       { id: 'kp-1', name: 'Pyongyang', landmark: '🚩' },
       { id: 'kp-2', name: 'Hamhung', landmark: '🏭' },
       { id: 'kp-3', name: 'Wonsan', landmark: '🚢' },
+    ],
+  },
+  {
+    id: 'canada',
+    name: 'Canada',
+    shortName: 'CA',
+    leader: 'PM Gagnon',
+    color: '#d52b1e',
+    cities: [
+      { id: 'ca-1', name: 'Ottawa', landmark: '🏛️' },
+      { id: 'ca-2', name: 'Toronto', landmark: '🗼' },
+      { id: 'ca-3', name: 'Vancouver', landmark: '🏔️' },
+    ],
+  },
+  {
+    id: 'brazil',
+    name: 'Brazil',
+    shortName: 'BR',
+    leader: 'President Ferreira',
+    color: '#009c3b',
+    cities: [
+      { id: 'br-1', name: 'Brasília', landmark: '🏛️' },
+      { id: 'br-2', name: 'Rio de Janeiro', landmark: '⛰️' },
+      { id: 'br-3', name: 'São Paulo', landmark: '🌆' },
+    ],
+  },
+  {
+    id: 'australia',
+    name: 'Australia',
+    shortName: 'AU',
+    leader: 'PM Whitlock',
+    color: '#00247d',
+    cities: [
+      { id: 'au-1', name: 'Canberra', landmark: '🏛️' },
+      { id: 'au-2', name: 'Sydney', landmark: '🎭' },
+      { id: 'au-3', name: 'Melbourne', landmark: '🏙️' },
     ],
   },
 ];

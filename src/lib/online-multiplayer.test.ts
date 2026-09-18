@@ -730,7 +730,7 @@ describe('3-player online simulation', () => {
   });
 
   it('seats five nations per match, humans first, AI from the unpicked countries', () => {
-    expect(NATIONS).toHaveLength(9);
+    expect(NATIONS.length).toBeGreaterThan(TABLE_SIZE);
 
     const seats = seatTable(['iran', 'northkorea']);
     expect(seats).toHaveLength(TABLE_SIZE);

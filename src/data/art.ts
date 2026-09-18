@@ -19,6 +19,9 @@ export const ART = {
     pakistan: '/art/leader-pakistan.png',
     iran: '/art/leader-iran.png',
     northkorea: '/art/leader-northkorea.png',
+    canada: '/art/leader-canada.png',
+    brazil: '/art/leader-brazil.png',
+    australia: '/art/leader-australia.png',
   } as Record<NationId, string>,
   cities: {
     'ru-1': '/art/cities/city-ru-cathedral.png',
@@ -48,6 +51,15 @@ export const ART = {
     'kp-1': '/art/cities/city-kp-juche.png',
     'kp-2': '/art/cities/city-kp-hamhung.png',
     'kp-3': '/art/cities/city-kp-wonsan.png',
+    'ca-1': '/art/cities/city-ca-parliament.png',
+    'ca-2': '/art/cities/city-ca-cntower.png',
+    'ca-3': '/art/cities/city-ca-harbour.png',
+    'br-1': '/art/cities/city-br-congress.png',
+    'br-2': '/art/cities/city-br-redeemer.png',
+    'br-3': '/art/cities/city-br-skyline.png',
+    'au-1': '/art/cities/city-au-parliament.png',
+    'au-2': '/art/cities/city-au-opera.png',
+    'au-3': '/art/cities/city-au-trams.png',
   } as Record<string, string>,
 };
 

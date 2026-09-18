@@ -7,7 +7,10 @@ export type NationId =
   | 'india'
   | 'pakistan'
   | 'iran'
-  | 'northkorea';
+  | 'northkorea'
+  | 'canada'
+  | 'brazil'
+  | 'australia';
 
 export type GameMode = 'single' | 'two' | 'online';
 

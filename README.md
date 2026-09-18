@@ -1,6 +1,6 @@
 # Nuclear War
 
-Strategy game for **Kian** — turn-based nuclear strategy for **1–5 players**. Nine countries — **US, UK, France, Russia, China, India, Pakistan, Iran, North Korea** — five seated per match, with empty seats filled by AI.
+Strategy game for **Kian** — turn-based nuclear strategy for **1–5 players**. Twelve countries — **US, UK, France, Russia, China, India, Pakistan, Iran, North Korea, Canada, Brazil, Australia** — five seated per match, with empty seats filled by AI.
 
 Repo: [smotlagh-coder/strategy-game](https://github.com/smotlagh-coder/strategy-game)
 
@@ -25,7 +25,7 @@ Repo: [smotlagh-coder/strategy-game](https://github.com/smotlagh-coder/strategy-
 | Sanction | −**10%** total revenue for the target |
 | Nuke hit | World environment **−5%** |
 
-Every match seats **5 of the 9 countries**: each player's chosen country always plays, and the empty chairs are dealt at random from the countries nobody picked. In an online lobby a claimed country is locked to that player and greyed out for everyone else.
+Every match seats **5 of the 12 countries**: each player's chosen country always plays, and the empty chairs are dealt at random from the countries nobody picked. In an online lobby a claimed country is locked to that player and greyed out for everyone else.
 
 Each nation has **3 cities**. Unshielded hit = city destroyed. Lose all 3 cities = eliminated — eliminated nations keep their score on the board but **cannot become the superpower**.
 
@@ -71,6 +71,17 @@ npm run dev
 Open the URL Vite prints (usually `http://localhost:5173`).
 
 Without Firebase env vars, **Single** and **Hot-seat** still work; **Online Multiplayer** stays disabled. Restart `npm run dev` after changing `.env`.
+
+### Leader voices
+
+The summit speeches in `public/sounds/*.wav` are recorded with OpenAI's speech model. Edit a line in `src/data/speeches.ts`, then re-cut the clip:
+
+```bash
+echo 'OPENAI_API_KEY=sk-...' >> .env.local   # gitignored
+node scripts/record-voices.mjs australia     # or no argument for all twelve
+```
+
+Each leader's voice and accent direction lives in `DELIVERY` inside that script.
 
 ---
 

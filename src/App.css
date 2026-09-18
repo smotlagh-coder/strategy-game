@@ -1074,30 +1074,9 @@ img { max-width: 100%; display: block; }
   border: 2px solid rgba(255, 255, 255, 0.3);
 }
 
-.nation-flag {
-  display: inline-block;
-  width: 1.6rem;
-  height: 1.05rem;
-  border-radius: 3px;
-  border: 1px solid rgba(255, 255, 255, 0.35);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
-  flex-shrink: 0;
-  background-size: 100% 100%;
-}
-
 .wizard-nation-head__emblem {
   position: relative;
   flex-shrink: 0;
-}
-
-.wizard-nation-head__flag {
-  position: absolute;
-  left: -0.2rem;
-  bottom: -0.15rem;
-  z-index: 1;
-  width: 1.85rem;
-  height: 1.2rem;
-  border-width: 1.5px;
 }
 
 .wizard-nation-head__country {
@@ -1128,11 +1107,6 @@ img { max-width: 100%; display: block; }
 
 .wizard-nation-head--compact .wizard-nation-head__country {
   font-size: 0.92rem !important;
-}
-
-.wizard-nation-head--compact .wizard-nation-head__flag {
-  width: 1.55rem;
-  height: 1rem;
 }
 
 .modal__head h2 {
