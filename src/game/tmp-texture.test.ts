@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { allScores, createInitialState, finishStrikeResolution, nextRound, seatTable, startGame } from './engine';
+import { allScores, applyQueuedStrike, createInitialState, finishStrikeResolution, nextRound, orderStrikesForResolution, seatTable, startGame } from './engine';
 import { runAllAiUntilHumanOrSummary } from './ai';
 import type { GameState } from '../types';
+
+const trace: string[] = [];
 
 function play(seed: number): GameState {
   const base = createInitialState();
@@ -9,7 +11,15 @@ function play(seed: number): GameState {
   for (let guard = 0; guard < 40; guard += 1) {
     if (s.phase === 'gameOver') break;
     s = runAllAiUntilHumanOrSummary(s);
-    if (s.phase === 'resolveStrikes') s = finishStrikeResolution(s);
+    trace.push(`r${s.round} ${s.phase} pending=${s.pendingStrikes.length}`);
+    if (s.phase === 'resolveStrikes') {
+      // The UI applies each strike during the cinema, then closes the round
+      for (const strike of orderStrikesForResolution(s.pendingStrikes)) {
+        s = applyQueuedStrike(s, strike);
+      }
+      s = finishStrikeResolution(s);
+    }
+    trace.push(`  after r${s.round} ${s.phase} events=${s.roundEvents.map((e) => e.kind).join(',')}`);
     if (s.phase === 'roundSummary') { if (s.round >= s.maxRounds) break; s = nextRound(s); }
   }
   return s;
@@ -32,6 +42,8 @@ describe('tmp texture', () => {
       }
       void allScores(end);
     }
-    throw new Error(JSON.stringify({ perGame: { destroyed: +(destroyed/games).toFixed(2), bombsUsed: +(bombsUsed/games).toFixed(2), dronesUsed: +(dronesUsed/games).toFixed(2), shields: +(shields/games).toFixed(2), lasers: +(lasers/games).toFixed(2), research: +(research/games).toFixed(2) } }));
+    trace.length = 0;
+    const one = play(1);
+    throw new Error(JSON.stringify({ trace: trace.slice(0, 16), phase: one.phase, round: one.round, events: one.log.filter((l)=>l.tone==='attack').map((l)=>l.text).slice(0,6), perGame: { destroyed: +(destroyed/games).toFixed(2), bombsUsed: +(bombsUsed/games).toFixed(2), dronesUsed: +(dronesUsed/games).toFixed(2), shields: +(shields/games).toFixed(2), lasers: +(lasers/games).toFixed(2), research: +(research/games).toFixed(2) } }));
   });
 });

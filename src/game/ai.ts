@@ -200,12 +200,21 @@ export function runAiBuyPhase(state: GameState): GameState {
     s = buyShield(s, city.id, id);
   }
 
-  // A laser only pays for itself once a rival actually holds a swarm, and never
-  // at the price of the warhead that wins the round.
-  const swarmsInHand = aliveNations(s).some((nid) => nid !== id && s.nations[nid].drones > 0);
-  if (swarmsInHand && canBuyLaser(s, id) && spare() >= COSTS.laser + COSTS.bomb) {
+  // Lasers matter against a rival who actually flies drones — a swarm in hand,
+  // or one they have already sent. A battery on a shielded city is worth far
+  // more than the repair bill it saves: with no swarm left to tie the shield
+  // up, that city stops being killable at all.
+  const swarmThreat = aliveNations(s).some(
+    (nid) => nid !== id && (s.nations[nid].drones > 0 || s.nations[nid].dronesUsed > 0),
+  );
+  const hasBattery = me().cities.some((c) => !c.destroyed && c.hasLaser);
+  if (swarmThreat && !hasBattery && canBuyLaser(s, id) && spare() >= COSTS.laser + COSTS.drone) {
     const exposed = me().cities.filter((c) => !c.destroyed && !c.hasLaser);
-    const pick = exposed.find((c) => c.hasResearch) ?? exposed[0];
+    const pick =
+      exposed.find((c) => c.hasShield && c.hasResearch) ??
+      exposed.find((c) => c.hasShield) ??
+      exposed.find((c) => c.hasResearch) ??
+      exposed[0];
     if (pick) s = buyLaser(s, pick.id, id);
   }
 
