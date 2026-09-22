@@ -193,6 +193,7 @@ export function forfeitNation(state: GameState, nationId: NationId): GameState {
     destroyed: true,
     hasShield: false,
     hasResearch: false,
+    hasLaser: false,
   }));
 
   const forfeited = {
@@ -935,6 +936,7 @@ function raiseFromRubble(n: NationState, cityId: string, round: number): NationS
           destroyed: false,
           hasShield: false,
           hasResearch: false,
+          hasLaser: false,
           isUnderground: false,
           rebuiltRound: round,
         }
@@ -1024,6 +1026,46 @@ export function buyUnderground(
       ...state.log,
       log(
         `${nationDef(id).name} moved ${target.name} underground — the city can no longer be destroyed.`,
+        'money',
+      ),
+    ],
+  };
+}
+
+/** Laser batteries need the aerospace program behind them — no tech, no tracking. */
+export function canBuyLaser(state: GameState, nationId?: NationId): boolean {
+  const id = nationId ?? currentNationId(state);
+  const n = state.nations[id];
+  return (
+    !n.eliminated &&
+    n.hasAerospaceTech &&
+    n.money >= COSTS.laser &&
+    n.cities.some((c) => !c.destroyed && !c.hasLaser)
+  );
+}
+
+export function buyLaser(state: GameState, cityId: string, nationId?: NationId): GameState {
+  const id = nationId ?? currentNationId(state);
+  const n = state.nations[id];
+  if (!canBuyLaser(state, id)) return state;
+
+  const city = n.cities.find((c) => c.id === cityId && !c.destroyed && !c.hasLaser);
+  if (!city) return state;
+
+  return {
+    ...state,
+    nations: {
+      ...state.nations,
+      [id]: {
+        ...n,
+        money: +(n.money - COSTS.laser).toFixed(2),
+        cities: n.cities.map((c) => (c.id === cityId ? { ...c, hasLaser: true } : c)),
+      },
+    },
+    log: [
+      ...state.log,
+      log(
+        `${nationDef(id).name} installed a laser defence battery on ${city.name} — drones will be shot down.`,
         'money',
       ),
     ],
@@ -1145,12 +1187,18 @@ export function queueStrikes(
   return s;
 }
 
-/** True when drones are swarming this city this round, tying up its shield. */
+/**
+ * True when drones are swarming this city this round, tying up its shield.
+ * A laser city never has a busy shield: the swarm is burnt out of the sky
+ * before it can distract anyone.
+ */
 export function shieldIsBusy(
   strikes: PendingStrike[],
   targetNationId: NationId,
   cityId: string,
+  city?: Pick<City, 'hasLaser'>,
 ): boolean {
+  if (city?.hasLaser) return false;
   return strikes.some(
     (s) => s.weapon === 'drone' && s.targetNationId === targetNationId && s.cityId === cityId,
   );
@@ -1158,10 +1206,14 @@ export function shieldIsBusy(
 
 /** Drone swarms cannot level a city — they run up a repair bill instead. */
 /**
- * A shield or a bunker blunts a swarm, so it only runs up half the repair bill.
- * Shields still count even when the swarm is tying one up for a warhead.
+ * A laser battery downs the swarm outright; a shield or a bunker only blunts it,
+ * so it runs up half the repair bill. Shields still count even when the swarm is
+ * tying one up for a warhead.
  */
-export function droneDamageFor(city: Pick<City, 'hasShield' | 'isUnderground'>): number {
+export function droneDamageFor(
+  city: Pick<City, 'hasShield' | 'isUnderground' | 'hasLaser'>,
+): number {
+  if (city.hasLaser) return 0;
   return city.hasShield || city.isUnderground ? +(DRONE_DAMAGE / 2).toFixed(2) : DRONE_DAMAGE;
 }
 
@@ -1171,6 +1223,29 @@ function applyDroneStrike(
   city: City,
 ): GameState {
   const defender = state.nations[strike.targetNationId];
+  if (city.hasLaser) {
+    return {
+      ...state,
+      log: [
+        ...state.log,
+        log(
+          `${nationDef(strike.targetNationId).name}'s laser battery shot down ${nationDef(strike.attackerId).name}'s drone swarm over ${city.name} — no damage.`,
+          'attack',
+        ),
+      ],
+      roundEvents: [
+        ...state.roundEvents,
+        worldEvent({
+          kind: 'dronesIntercepted',
+          nationId: strike.targetNationId,
+          cityId: city.id,
+          cityName: city.name,
+          attackerId: strike.attackerId,
+        }),
+      ],
+    };
+  }
+
   const damage = droneDamageFor(city);
   const defended = damage < DRONE_DAMAGE;
   return {
@@ -1256,7 +1331,7 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
   // Drones swarming this city keep its shield occupied, so the warhead lands
   const shielded =
     city.hasShield &&
-    !shieldIsBusy(state.pendingStrikes, strike.targetNationId, strike.cityId);
+    !shieldIsBusy(state.pendingStrikes, strike.targetNationId, strike.cityId, city);
   if (shielded) {
     cities = cities.map((c) =>
       c.id === strike.cityId ? { ...c, hasShield: false } : c,
@@ -1272,7 +1347,7 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
   } else {
     cities = cities.map((c) =>
       c.id === strike.cityId
-        ? { ...c, destroyed: true, hasShield: false, hasResearch: false }
+        ? { ...c, destroyed: true, hasShield: false, hasResearch: false, hasLaser: false }
         : c,
     );
     message = city.hasShield

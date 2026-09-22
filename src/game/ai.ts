@@ -6,11 +6,13 @@ import {
   buyBomb,
   buyDrone,
   buyEnvironment,
+  buyLaser,
   buyNuclearTech,
   buyResearch,
   buyShield,
   buyRebuild,
   buyUnderground,
+  canBuyLaser,
   canBuyRebuild,
   canBuyUnderground,
   citiesLeft,
@@ -82,10 +84,11 @@ export function pickBombTarget(
   const worth = (c: City) => (c.hasResearch ? 2 : 0) + (c.hasShield ? 0 : 1);
 
   // A warhead only pays for itself if the city actually falls: unshielded, or
-  // shielded with a drone swarm free to tie the shield up this round.
+  // shielded with a drone swarm free to tie the shield up this round — which
+  // lasers rule out, since they burn the escort before it reaches the shield.
   for (const rival of rivals) {
     const killable = state.nations[rival].cities
-      .filter((c) => eligible(c) && (!c.hasShield || escorts > 0))
+      .filter((c) => eligible(c) && (!c.hasShield || (escorts > 0 && !c.hasLaser)))
       .sort((a, b) => worth(b) - worth(a));
     if (killable.length > 0) return { nationId: rival, cityId: killable[0].id };
   }
@@ -122,8 +125,9 @@ export function pickDroneTarget(
   };
 
   for (const rival of rivals) {
+    // Lasers shoot swarms down for nothing, so never send one there
     const cities = state.nations[rival.id].cities.filter(
-      (c) => !c.destroyed && !swarmed.has(c.id),
+      (c) => !c.destroyed && !c.hasLaser && !swarmed.has(c.id),
     );
     const best = [...cities].sort(
       (a, b) =>
@@ -141,7 +145,9 @@ function openTargets(state: GameState, id: NationId): City[] {
   return aliveNations(state)
     .filter((nid) => nid !== id)
     .flatMap((nid) =>
-      state.nations[nid].cities.filter((c) => !c.destroyed && !c.isUnderground),
+      state.nations[nid].cities.filter(
+        (c) => !c.destroyed && !c.isUnderground && !(c.hasShield && c.hasLaser),
+      ),
     );
 }
 
@@ -192,6 +198,15 @@ export function runAiBuyPhase(state: GameState): GameState {
     if (city.destroyed || city.hasShield || city.isUnderground) continue;
     if (spare() < COSTS.shield) break;
     s = buyShield(s, city.id, id);
+  }
+
+  // A laser only pays for itself once a rival actually holds a swarm, and never
+  // at the price of the warhead that wins the round.
+  const swarmsInHand = aliveNations(s).some((nid) => nid !== id && s.nations[nid].drones > 0);
+  if (swarmsInHand && canBuyLaser(s, id) && spare() >= COSTS.laser + COSTS.bomb) {
+    const exposed = me().cities.filter((c) => !c.destroyed && !c.hasLaser);
+    const pick = exposed.find((c) => c.hasResearch) ?? exposed[0];
+    if (pick) s = buyLaser(s, pick.id, id);
   }
 
   // Size the arsenal to what it can kill: open cities, plus shielded ones we
@@ -269,7 +284,7 @@ export function runAiNationTurn(state: GameState, nationId: NationId): GameState
     s = queueStrike(s, target.nationId, target.cityId, nationId);
     // A shielded target only falls if drones tie the shield up first
     const city = s.nations[target.nationId].cities.find((c) => c.id === target.cityId);
-    if (city?.hasShield && s.nations[nationId].drones > 0) {
+    if (city?.hasShield && !city.hasLaser && s.nations[nationId].drones > 0) {
       s = queueStrike(s, target.nationId, target.cityId, nationId, 'drone');
     }
   }

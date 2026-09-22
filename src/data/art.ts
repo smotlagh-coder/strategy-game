@@ -8,6 +8,8 @@ export const ART = {
   nukeTech: '/art/nuke-tech.jpg',
   aerospaceTech: '/art/aerospace-tech.png',
   shield: '/art/shield-icon.png',
+  laserDefence: '/art/laser-defence.jpg',
+  laserIcon: '/art/laser-icon.png',
   undergroundCity: '/art/underground-city.png',
   rebuildCity: '/art/rebuild-city.png',
   undergroundIcon: '/art/underground-icon.png',

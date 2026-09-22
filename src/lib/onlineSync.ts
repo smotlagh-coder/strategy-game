@@ -113,9 +113,17 @@ export function mergeNationPlanning(
           : lc;
     const destroyed = newer ? Boolean(newer.destroyed) : Boolean(rc.destroyed || lc.destroyed);
     if (destroyed) {
-      return { ...rc, destroyed: true, hasShield: false, hasResearch: false, rebuiltRound };
+      return {
+        ...rc,
+        destroyed: true,
+        hasShield: false,
+        hasResearch: false,
+        hasLaser: false,
+        rebuiltRound,
+      };
     }
-    // A rebuild strips the shield, lab and bunker, so don't union them back in
+    // A rebuild strips the shield, lab, lasers and bunker, so don't union them
+    // back in
     // from the side that never saw it.
     if (newer) return { ...newer, destroyed: false, rebuiltRound };
     return {
@@ -125,6 +133,7 @@ export function mergeNationPlanning(
       hasShield: Boolean(rc.hasShield || lc.hasShield),
       hasResearch: Boolean(rc.hasResearch || lc.hasResearch),
       isUnderground: Boolean(rc.isUnderground || lc.isUnderground),
+      hasLaser: Boolean(rc.hasLaser || lc.hasLaser),
     };
   });
   const researchCenters = cities.filter((c) => !c.destroyed && c.hasResearch).length;

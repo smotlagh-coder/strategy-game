@@ -840,6 +840,30 @@ img { max-width: 100%; display: block; }
   object-fit: cover;
 }
 
+/* Sits under the bomb lock: an inbound warhead is the more urgent badge */
+.city-tile__laser {
+  position: absolute;
+  top: 2%;
+  left: 0;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  width: clamp(1.55rem, 24%, 2.4rem);
+  height: clamp(1.55rem, 24%, 2.4rem);
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(4, 22, 36, 0.88);
+  border: 2px solid rgba(96, 214, 255, 0.85);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55), 0 0 10px rgba(96, 214, 255, 0.35);
+  pointer-events: none;
+}
+
+.city-tile__laser img {
+  width: 88%;
+  height: 88%;
+  object-fit: contain;
+}
+
 .city-tile.is-drone-locked .city-tile__art {
   filter: brightness(0.78) saturate(0.9);
 }
