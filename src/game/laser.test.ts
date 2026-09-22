@@ -165,15 +165,21 @@ describe('AI and laser defence', () => {
     expect(pickDroneTarget(allCovered, 'us')).toBeNull();
   });
 
+  /** An AI that already has its tech, so the budget reaches the defences. */
+  function aiTable(usDrones: number): GameState {
+    const base = table({
+      us: { drones: usDrones },
+      uk: { isHuman: false, money: 20, hasNuclearTech: true, nuclearTechUnlockedRound: 0 },
+    });
+    return { ...base, currentTurnIndex: base.turnOrder.indexOf('uk') };
+  }
+
   it('installs a battery once a rival is holding drones', () => {
-    const base = table({ uk: { isHuman: false, money: 20 } });
-    const s = { ...base, currentTurnIndex: base.turnOrder.indexOf('uk') };
+    const s = aiTable(2);
     expect(runAiBuyPhase(s).nations.uk.cities.some((c) => c.hasLaser)).toBe(true);
   });
 
   it('leaves the batteries alone while nobody can field a swarm', () => {
-    const base = table({ us: { drones: 0 }, uk: { isHuman: false, money: 20 } });
-    const s = { ...base, currentTurnIndex: base.turnOrder.indexOf('uk') };
-    expect(runAiBuyPhase(s).nations.uk.cities.some((c) => c.hasLaser)).toBe(false);
+    expect(runAiBuyPhase(aiTable(0)).nations.uk.cities.some((c) => c.hasLaser)).toBe(false);
   });
 });
