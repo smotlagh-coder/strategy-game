@@ -102,12 +102,26 @@ export function mergeNationPlanning(
 
   const cities = remote.cities.map((rc) => {
     const lc = local.cities.find((c) => c.id === rc.id) ?? rc;
-    const destroyed = Boolean(rc.destroyed || lc.destroyed);
+    const rebuiltRound = Math.max(rc.rebuiltRound ?? 0, lc.rebuiltRound ?? 0) || undefined;
+    // Rubble is normally sticky, but the side that has seen the newer rebuild wins:
+    // whoever knows about it also knows whether the city was hit again afterwards.
+    const newer =
+      (rc.rebuiltRound ?? 0) === (lc.rebuiltRound ?? 0)
+        ? null
+        : (rc.rebuiltRound ?? 0) > (lc.rebuiltRound ?? 0)
+          ? rc
+          : lc;
+    const destroyed = newer ? Boolean(newer.destroyed) : Boolean(rc.destroyed || lc.destroyed);
     if (destroyed) {
-      return { ...rc, destroyed: true, hasShield: false, hasResearch: false };
+      return { ...rc, destroyed: true, hasShield: false, hasResearch: false, rebuiltRound };
     }
+    // A rebuild strips the shield, lab and bunker, so don't union them back in
+    // from the side that never saw it.
+    if (newer) return { ...newer, destroyed: false, rebuiltRound };
     return {
       ...rc,
+      destroyed: false,
+      rebuiltRound,
       hasShield: Boolean(rc.hasShield || lc.hasShield),
       hasResearch: Boolean(rc.hasResearch || lc.hasResearch),
       isUnderground: Boolean(rc.isUnderground || lc.isUnderground),

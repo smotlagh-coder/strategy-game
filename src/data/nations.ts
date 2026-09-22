@@ -163,6 +163,7 @@ export const COSTS = {
   nuclearTech: 5,
   aerospaceTech: 2,
   underground: 6,
+  rebuild: 6,
   shield: 3,
   bomb: 2.5,
   drone: 1,

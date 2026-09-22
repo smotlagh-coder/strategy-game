@@ -46,6 +46,8 @@ export interface City {
   hasResearch: boolean;
   /** Moved underground — cannot be destroyed by nukes or drones */
   isUnderground?: boolean;
+  /** Round this city was last raised from rubble; also drives the "new build" shine */
+  rebuiltRound?: number;
 }
 
 export interface NationState {
@@ -126,13 +128,16 @@ export interface RoundWorldEvent {
     | 'shieldDestroyed'
     | 'nationEliminated'
     | 'droneDamage'
-    | 'strikeAbsorbed';
+    | 'strikeAbsorbed'
+    | 'cityRebuilt';
   nationId: NationId;
   cityId?: string;
   cityName?: string;
   attackerId?: NationId;
   /** Drone damage in $M, billed at the next income */
   amount?: number;
+  /** Rebuild the treasury paid for on its own to keep a wiped-out nation alive */
+  automatic?: boolean;
 }
 
 /** Income applied at round start (shown on aftermath) */

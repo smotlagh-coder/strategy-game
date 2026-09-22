@@ -29,6 +29,7 @@ import type {
   IncomeLedgerEntry,
   LogEntry,
   NationId,
+  NationState,
   PendingStrike,
   RoundScore,
   RoundWorldEvent,
@@ -198,6 +199,8 @@ export function forfeitNation(state: GameState, nationId: NationId): GameState {
     ...n,
     cities,
     researchCenters: 0,
+    // Empty the treasury too, or the emergency rebuild would resurrect a leaver
+    money: 0,
     bombs: 0,
     drones: 0,
     isHuman: false,
@@ -383,12 +386,47 @@ function awardRoundSurvival(state: GameState): GameState {
   return { ...state, nations, log: logEntries };
 }
 
+/** The city that just fell, so an emergency rebuild raises the one they lost last. */
+function lastCityLost(state: GameState, n: NationState): City | null {
+  for (let i = state.roundEvents.length - 1; i >= 0; i -= 1) {
+    const e = state.roundEvents[i];
+    if (e.kind !== 'cityDestroyed' || e.nationId !== n.id) continue;
+    const city = n.cities.find((c) => c.id === e.cityId && c.destroyed);
+    if (city) return city;
+  }
+  return n.cities.find((c) => c.destroyed) ?? null;
+}
+
 function checkEliminations(state: GameState): GameState {
   const nations = { ...state.nations };
   const logEntries = [...state.log];
   const roundEvents = [...state.roundEvents];
   for (const id of state.turnOrder) {
     const n = nations[id];
+    // Last city gone but the treasury can cover a rebuild: stay in the game
+    if (!n.eliminated && n.cities.every((c) => c.destroyed) && n.money >= COSTS.rebuild) {
+      const lost = lastCityLost({ ...state, roundEvents }, n);
+      if (lost) {
+        nations[id] = raiseFromRubble(n, lost.id, state.round);
+        logEntries.push(
+          log(
+            `${nationDef(id).name} spent $${COSTS.rebuild}M rebuilding ${lost.name} — the nation survives.`,
+            'money',
+          ),
+        );
+        roundEvents.push(
+          worldEvent({
+            kind: 'cityRebuilt',
+            nationId: id,
+            cityId: lost.id,
+            cityName: lost.name,
+            amount: COSTS.rebuild,
+            automatic: true,
+          }),
+        );
+        continue;
+      }
+    }
     if (!n.eliminated && n.cities.every((c) => c.destroyed)) {
       const priorTotals = state.scoreHistory
         .map((round) => round.find((r) => r.nationId === id)?.total ?? 0)
@@ -884,6 +922,62 @@ export function buyEnvironment(state: GameState, nationId?: NationId): GameState
     log: [
       ...state.log,
       log(`${nationDef(id).name} invested in the environment (+${ENV_IMPROVE}%).`, 'env'),
+    ],
+  };
+}
+
+/** Rubble comes back as a bare city: the shield, the lab and the bunker are gone for good. */
+function raiseFromRubble(n: NationState, cityId: string, round: number): NationState {
+  const cities = n.cities.map((c) =>
+    c.id === cityId
+      ? {
+          ...c,
+          destroyed: false,
+          hasShield: false,
+          hasResearch: false,
+          isUnderground: false,
+          rebuiltRound: round,
+        }
+      : c,
+  );
+  return {
+    ...n,
+    money: +(n.money - COSTS.rebuild).toFixed(2),
+    cities,
+    researchCenters: cities.filter((c) => !c.destroyed && c.hasResearch).length,
+  };
+}
+
+export function canBuyRebuild(state: GameState, nationId?: NationId): boolean {
+  const id = nationId ?? currentNationId(state);
+  const n = state.nations[id];
+  return !n.eliminated && n.money >= COSTS.rebuild && n.cities.some((c) => c.destroyed);
+}
+
+export function buyRebuild(state: GameState, cityId: string, nationId?: NationId): GameState {
+  const id = nationId ?? currentNationId(state);
+  const n = state.nations[id];
+  if (!canBuyRebuild(state, id)) return state;
+
+  const target = n.cities.find((c) => c.id === cityId && c.destroyed);
+  if (!target) return state;
+
+  return {
+    ...state,
+    nations: { ...state.nations, [id]: raiseFromRubble(n, cityId, state.round) },
+    log: [
+      ...state.log,
+      log(`${nationDef(id).name} rebuilt ${target.name} from the rubble.`, 'money'),
+    ],
+    roundEvents: [
+      ...state.roundEvents,
+      worldEvent({
+        kind: 'cityRebuilt',
+        nationId: id,
+        cityId: target.id,
+        cityName: target.name,
+        amount: COSTS.rebuild,
+      }),
     ],
   };
 }

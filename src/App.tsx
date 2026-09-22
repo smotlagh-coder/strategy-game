@@ -19,7 +19,9 @@ import {
   isHumanDisconnected,
   buyAerospaceTech,
   buyBombs,
+  buyRebuild,
   buyUnderground,
+  canBuyRebuild,
   canBuyUnderground,
   droneDamageFor,
   buyDrones,
@@ -114,6 +116,8 @@ type WizardStep =
   | 'drones'
   | 'undergroundAsk'
   | 'undergroundPick'
+  | 'rebuildAsk'
+  | 'rebuildPick'
   | 'shieldAsk'
   | 'shieldPick'
   | 'env'
@@ -140,6 +144,9 @@ function wizardArt(step: WizardStep): string {
     case 'undergroundAsk':
     case 'undergroundPick':
       return ART.undergroundCity;
+    case 'rebuildAsk':
+    case 'rebuildPick':
+      return ART.rebuildCity;
     case 'shieldAsk':
     case 'shieldPick':
       return ART.shield;
@@ -511,6 +518,11 @@ function formatRoundEvent(e: RoundWorldEvent): string {
     return attacker
       ? `${attacker}'s drones swarmed ${e.cityName} (${nation}) — ${bill}.`
       : `Drones swarmed ${e.cityName} (${nation}) — ${bill}.`;
+  }
+  if (e.kind === 'cityRebuilt') {
+    return e.automatic
+      ? `${nation} rebuilt ${e.cityName} with its last $${e.amount ?? COSTS.rebuild}M — the nation survives.`
+      : `${nation} rebuilt ${e.cityName} from the rubble.`;
   }
   if (e.kind === 'strikeAbsorbed') {
     return attacker
@@ -979,9 +991,11 @@ function cityStatusLabel(c: {
   hasShield: boolean;
   hasResearch: boolean;
   isUnderground?: boolean;
+  rebuiltRound?: number;
 }) {
   if (c.destroyed) return 'Destroyed';
   const bits: string[] = [];
+  if (c.rebuiltRound != null) bits.push('Rebuilt');
   if (c.hasResearch) bits.push('Research');
   if (c.isUnderground) bits.push('Underground');
   else if (c.hasShield) bits.push('Shield');
@@ -1141,7 +1155,7 @@ function NationPod({
           // A warhead has nothing to hit in a bunker city; drones still bill it
           const bombProof = Boolean(c.isUnderground && selectionWeapon === 'nuke');
           const canTarget = Boolean(targetable && !c.destroyed && !hitThisRound && !bombProof);
-          const className = `city-tile ${c.destroyed ? 'is-destroyed' : ''} ${c.hasShield ? 'has-shield' : ''} ${c.hasResearch ? 'has-research' : ''} ${selected ? 'is-selected' : ''} ${canTarget ? 'is-targetable' : ''} ${hitThisRound && !c.destroyed && !bombLocked ? 'is-hit-this-round' : ''} ${bombLocked ? 'is-bomb-locked' : ''} ${droneLocked || droneSelected ? 'is-drone-locked' : ''} ${c.isUnderground && !c.destroyed ? 'is-underground' : ''} ${justHit ? 'is-just-hit' : ''}`;
+          const className = `city-tile ${c.destroyed ? 'is-destroyed' : ''} ${c.hasShield ? 'has-shield' : ''} ${c.hasResearch ? 'has-research' : ''} ${selected ? 'is-selected' : ''} ${canTarget ? 'is-targetable' : ''} ${hitThisRound && !c.destroyed && !bombLocked ? 'is-hit-this-round' : ''} ${bombLocked ? 'is-bomb-locked' : ''} ${droneLocked || droneSelected ? 'is-drone-locked' : ''} ${c.isUnderground && !c.destroyed ? 'is-underground' : ''} ${c.rebuiltRound != null && !c.destroyed ? 'is-rebuilt' : ''} ${justHit ? 'is-just-hit' : ''}`;
           const title = c.isUnderground && !c.destroyed
             ? `${c.name} — underground city, cannot be destroyed`
             : bombLocked
@@ -1153,6 +1167,9 @@ function NationPod({
                 : `${c.name} — ${cityStatusLabel(c)}`;
           const body = (
             <>
+              {c.rebuiltRound != null && !c.destroyed && (
+                <span className="city-tile__shine" aria-hidden />
+              )}
               <img
                 className="city-tile__art"
                 src={ART.cities[c.id]}
@@ -1566,6 +1583,10 @@ function canOfferUnderground(state: GameState, actorId: NationId): boolean {
   return canBuyUnderground(state, actorId);
 }
 
+function canOfferRebuild(state: GameState, actorId: NationId): boolean {
+  return canBuyRebuild(state, actorId);
+}
+
 function canOfferShield(state: GameState, actorId: NationId): boolean {
   const n = state.nations[actorId];
   return (
@@ -1608,6 +1629,7 @@ function nextWizardStep(
     'bombs',
     'drones',
     'undergroundAsk',
+    'rebuildAsk',
     'shieldAsk',
     'env',
     'sanctionAsk',
@@ -1617,6 +1639,7 @@ function nextWizardStep(
   let start = 0;
   if (from === 'researchPick') start = sequence.indexOf('researchAsk') + 1;
   else if (from === 'undergroundPick') start = sequence.indexOf('undergroundAsk') + 1;
+  else if (from === 'rebuildPick') start = sequence.indexOf('rebuildAsk') + 1;
   else if (from === 'shieldPick') start = sequence.indexOf('shieldAsk') + 1;
   else if (from === 'sanctionPick') start = sequence.indexOf('sanctionAsk') + 1;
   else if (from != null) start = sequence.indexOf(from) + 1;
@@ -1631,6 +1654,7 @@ function nextWizardStep(
     if (step === 'undergroundAsk' && canOfferUnderground(state, actorId)) {
       return 'undergroundAsk';
     }
+    if (step === 'rebuildAsk' && canOfferRebuild(state, actorId)) return 'rebuildAsk';
     if (step === 'shieldAsk' && canOfferShield(state, actorId)) return 'shieldAsk';
     if (step === 'env' && canOfferEnv(state, actorId)) return 'env';
     if (step === 'sanctionAsk' && canOfferSanction(state, actorId)) return 'sanctionAsk';
@@ -1813,6 +1837,7 @@ function GameBoard({
       if (from === 'undergroundPick') {
         nextState = markPromptDone(nextState, actor, 'undergroundAsk');
       }
+      if (from === 'rebuildPick') nextState = markPromptDone(nextState, actor, 'rebuildAsk');
       if (from === 'shieldPick') nextState = markPromptDone(nextState, actor, 'shieldAsk');
       if (from === 'sanctionPick') nextState = markPromptDone(nextState, actor, 'sanctionAsk');
       if (s.mode === 'online') {
@@ -2208,6 +2233,7 @@ function GameBoard({
     (c) => !c.destroyed && !c.hasShield && !c.isUnderground,
   );
   const surfaceCities = turn.cities.filter((c) => !c.destroyed && !c.isUnderground);
+  const burntCities = turn.cities.filter((c) => c.destroyed);
   const researchCities = turn.cities.filter((c) => !c.destroyed && !c.hasResearch);
   const bombMax = maxBombsPurchasable(state, actorId);
   const droneMax = maxDronesPurchasable(state, actorId);
@@ -2487,6 +2513,65 @@ function GameBoard({
                   <button
                     className="btn btn--xl"
                     onClick={() => advanceAfter(stateRef.current, 'undergroundPick')}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </>
+            )}
+
+            {wizardStep === 'rebuildAsk' && (
+              <>
+                <h3 className="turn-wizard__q">Rebuild a burnt city?</h3>
+                <p className="turn-wizard__hint">
+                  ${COSTS.rebuild}M · the city stands again and scores as normal, but it comes
+                  back bare — no shield, no research, no bunker.
+                </p>
+                <div className="turn-wizard__actions">
+                  <button
+                    className="btn btn--xl btn--primary"
+                    onClick={() => {
+                      bumpSelectionActivity();
+                      setWizardStep('rebuildPick');
+                    }}
+                  >
+                    Yes
+                  </button>
+                  <button
+                    className="btn btn--xl"
+                    onClick={() => advanceAfter(stateRef.current, 'rebuildAsk')}
+                  >
+                    No
+                  </button>
+                </div>
+              </>
+            )}
+
+            {wizardStep === 'rebuildPick' && (
+              <>
+                <h3 className="turn-wizard__q">Which city do you rebuild?</h3>
+                <p className="turn-wizard__hint">Construction finishes before the next strikes</p>
+                <div className="turn-wizard__city-grid">
+                  {burntCities.map((c) => (
+                    <button
+                      key={c.id}
+                      className="turn-wizard__city-card"
+                      onClick={() => {
+                        pushFx({ kind: 'buy', label: `${c.name} rebuilt` }, 700);
+                        const next = buyRebuild(stateRef.current, c.id, actorId);
+                        setState(next);
+                        advanceAfter(next, 'rebuildPick');
+                      }}
+                    >
+                      <img src={ART.cities[c.id]} alt="" draggable={false} />
+                      <span>{c.name}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="turn-wizard__actions">
+                  <button
+                    className="btn btn--xl"
+                    onClick={() => advanceAfter(stateRef.current, 'rebuildPick')}
                   >
                     Cancel
                   </button>
@@ -2961,6 +3046,10 @@ function RoundSummary({
     return () => window.clearInterval(id);
   }, [state.round, endsAt, onContinue]);
 
+  // A city raised again in the same round is standing, so don't flag it as a ruin
+  const rebuiltCityIds = new Set(
+    state.roundEvents.filter((e) => e.kind === 'cityRebuilt').map((e) => e.cityId),
+  );
   const destroyedCityIds = state.roundEvents
     .filter(
       (e) =>
@@ -2969,7 +3058,7 @@ function RoundSummary({
         e.kind === 'strikeAbsorbed',
     )
     .map((e) => e.cityId)
-    .filter((id): id is string => Boolean(id));
+    .filter((id): id is string => Boolean(id) && !rebuiltCityIds.has(id));
   const isOnline = state.mode === 'online';
   const isFinal = state.round >= state.maxRounds;
   const myNationId =

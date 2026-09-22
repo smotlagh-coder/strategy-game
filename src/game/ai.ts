@@ -9,7 +9,9 @@ import {
   buyNuclearTech,
   buyResearch,
   buyShield,
+  buyRebuild,
   buyUnderground,
+  canBuyRebuild,
   canBuyUnderground,
   citiesLeft,
   computeScore,
@@ -127,6 +129,12 @@ export function runAiBuyPhase(state: GameState): GameState {
     s.nations[id].money >= COSTS.aerospaceTech + 1
   ) {
     s = buyAerospaceTech(s);
+  }
+
+  // Rubble scores nothing, so raise a city again once the war chest can spare it
+  if (canBuyRebuild(s, id) && s.nations[id].money >= COSTS.rebuild + 2) {
+    const rubble = s.nations[id].cities.find((c) => c.destroyed);
+    if (rubble) s = buyRebuild(s, rubble.id, id);
   }
 
   // One city in the rock is a guaranteed seat at the final scores

@@ -23,6 +23,7 @@ Repo: [smotlagh-coder/strategy-game](https://github.com/smotlagh-coder/strategy-
 | Drone pack | **$1M** each (max 3 purchased per round) |
 | City shield | **$3M** — blocks one nuke (shield destroyed, city survives) |
 | Underground City | **$6M** — one city per nation, permanently: nukes cannot destroy it and it never needs a shield |
+| Rebuild city | **$6M** — raise a burnt city from the rubble, bare (no shield, research or bunker) |
 | Research center | **$2M** — place on a city; that city earns **+$1.5M**/round. Destroyed with the city. |
 | Environment | **$1M** — world health **+10%** (once per round) |
 | Sanction | −**10%** total revenue for the target |
@@ -32,6 +33,8 @@ Repo: [smotlagh-coder/strategy-game](https://github.com/smotlagh-coder/strategy-
 Every match seats **5 of the 12 countries**: each player's chosen country always plays, and the empty chairs are dealt at random from the countries nobody picked. In an online lobby a claimed country is locked to that player and greyed out for everyone else.
 
 Each nation has **3 cities**. Unshielded hit = city destroyed. Lose all 3 cities = eliminated — eliminated nations keep their score on the board but **cannot become the superpower**.
+
+Rubble is not final: any burnt city can be **rebuilt for $6M** on a later turn, and it comes back bare — the shield, research center and bunker are gone with the old city. A rebuilt city carries a golden shine so everyone can see it is new. If a nation's *last* city falls while its treasury still holds $6M, the rebuild happens automatically out of that money: the nation loses the cash instead of the war and plays on into the next round.
 
 An **Underground City** is the one city nobody can take from you: bombs are not even selectable against it, and a bomb already in the air when it goes underground breaks against the rock. It cannot be eliminated, so the nation holding one is guaranteed a seat at the final scores — but drone swarms still bill it for repairs (at the halved defended rate), and the other two cities remain exposed.
 
@@ -252,7 +255,7 @@ App Engine runs `gcp-build` (`npm run build`) then `npm start` (serves `dist` on
 1. Enter your name (session)
 2. Choose Single, Hot-seat (2P), or Online Multiplayer
 3. Pick nation(s) / invite players
-4. Each turn: answer purchase prompts (nuclear tech, aerospace tech, research, bombs, drones, underground city, shield, environment, sanctions), then lock bomb targets and drone targets
+4. Each turn: answer purchase prompts (nuclear tech, aerospace tech, research, bombs, drones, underground city, rebuild, shield, environment, sanctions), then lock bomb targets and drone targets
 5. After all nations act, watch simultaneous strikes, review treasury + scores on the aftermath board
 
 ---

@@ -9,6 +9,7 @@ export const ART = {
   aerospaceTech: '/art/aerospace-tech.png',
   shield: '/art/shield-icon.png',
   undergroundCity: '/art/underground-city.png',
+  rebuildCity: '/art/rebuild-city.png',
   undergroundIcon: '/art/underground-icon.png',
   researchLab: '/art/research-lab.jpg',
   researchIcon: '/art/research-icon.png',

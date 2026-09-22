@@ -941,6 +941,56 @@ img { max-width: 100%; display: block; }
   transition: transform 0.18s ease, filter 0.18s ease;
 }
 
+/* Freshly rebuilt: a clean halo behind the new construction, plus a twinkle */
+.city-tile__shine {
+  position: absolute;
+  inset: -4% -4% 6%;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 44% 40% at 50% 58%, rgba(255, 250, 225, 0.4), transparent 68%),
+    radial-gradient(ellipse 64% 58% at 50% 60%, rgba(255, 198, 96, 0.2), transparent 74%);
+  animation: cityShine 2.8s ease-in-out infinite;
+}
+
+.city-tile__shine::before,
+.city-tile__shine::after {
+  content: '';
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgba(255, 252, 235, 0.95);
+  box-shadow: 0 0 6px 2px rgba(255, 226, 150, 0.9);
+  animation: cityTwinkle 2.4s ease-in-out infinite;
+}
+
+.city-tile__shine::before {
+  top: 22%;
+  left: 24%;
+}
+
+.city-tile__shine::after {
+  top: 34%;
+  right: 22%;
+  animation-delay: 1.2s;
+}
+
+@keyframes cityShine {
+  0%, 100% { opacity: 0.65; transform: scale(0.97); }
+  50% { opacity: 1; transform: scale(1.04); }
+}
+
+@keyframes cityTwinkle {
+  0%, 100% { opacity: 0; transform: scale(0.4); }
+  45% { opacity: 1; transform: scale(1); }
+}
+
+.city-tile.is-rebuilt .city-tile__art {
+  filter: drop-shadow(0 4px 7px rgba(0, 0, 0, 0.65))
+    drop-shadow(0 0 9px rgba(255, 219, 140, 0.6));
+}
+
 /* Contact shadow so the landmark reads as standing on the map, not floating */
 .city-tile::before {
   content: '';
@@ -2740,6 +2790,11 @@ img { max-width: 100%; display: block; }
 .round-event--strikeAbsorbed {
   border-color: rgba(245, 197, 66, 0.45);
   background: rgba(46, 34, 6, 0.75);
+}
+
+.round-event--cityRebuilt {
+  border-color: rgba(120, 220, 160, 0.5);
+  background: rgba(10, 40, 28, 0.8);
 }
 
 .round-event--droneDamage {
