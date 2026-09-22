@@ -172,7 +172,7 @@ export const COSTS = {
   environment: 1,
 } as const;
 
-export const STARTING_MONEY = 10;
+export const STARTING_MONEY = 14;
 /** Flat income every living nation receives each round (from round 2) */
 export const BASE_INCOME = 3;
 export const RESEARCH_INCOME = 1.5;

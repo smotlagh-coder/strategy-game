@@ -1,6 +1,9 @@
 # Nuclear War
 
-Strategy game for **Kian** — turn-based nuclear strategy for **1–5 players**. Twelve countries — **US, UK, France, Russia, China, India, Pakistan, Iran, North Korea, Canada, Brazil, Australia** — five seated per match, with empty seats filled by AI.
+> I dedicate this game to my son, **Kian**, whom I love more than anything in this world.
+> I made it for him, to learn about strategy and planning.
+
+Turn-based nuclear strategy for **1–5 players**. Twelve countries — **US, UK, France, Russia, China, India, Pakistan, Iran, North Korea, Canada, Brazil, Australia** — five seated per match, with empty seats filled by AI.
 
 Repo: [smotlagh-coder/strategy-game](https://github.com/smotlagh-coder/strategy-game)
 
@@ -14,7 +17,7 @@ Repo: [smotlagh-coder/strategy-game](https://github.com/smotlagh-coder/strategy-
 
 | Item | Cost / Effect |
 |---|---|
-| Starting capital | **$10M** each |
+| Starting capital | **$14M** each |
 | Base income / round | **$3M** each living nation (from round 2) |
 | Rounds | **5** |
 | Nuclear Tech | **$5M** once — bombs available the following round |
@@ -260,7 +263,7 @@ App Engine runs `gcp-build` (`npm run build`) then `npm start` (serves `dist` on
 1. Enter your name (session)
 2. Choose Single, Hot-seat (2P), or Online Multiplayer
 3. Pick nation(s) / invite players
-4. Each turn: answer purchase prompts (nuclear tech, aerospace tech, research, bombs, drones, underground city, rebuild, shield, environment, sanctions), then lock bomb targets and drone targets
+4. Each turn: answer purchase prompts (nuclear tech, aerospace tech, research, bombs, drones, underground city, rebuild, shield, laser defence, environment, sanctions), then lock bomb targets and drone targets
 5. After all nations act, watch simultaneous strikes, review treasury + scores on the aftermath board
 
 ---

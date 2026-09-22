@@ -3277,7 +3277,7 @@ function RoundSummary({
               </div>
 
               <div className="round-report__world-mobile">
-                <h2 className="round-report__panel-title">World — shields, research, ruins</h2>
+                <h2 className="round-report__panel-title">World — shields, research, lasers, ruins</h2>
                 <p className="round-report__legend">
                   <span>🛡 Shield</span>
                   <span>
@@ -3288,6 +3288,15 @@ function RoundSummary({
                       draggable={false}
                     />{' '}
                     Research
+                  </span>
+                  <span>
+                    <img
+                      className="legend-icon"
+                      src={ART.laserIcon}
+                      alt=""
+                      draggable={false}
+                    />{' '}
+                    Lasers
                   </span>
                   <span className="round-report__legend-burnt">Burnt = destroyed</span>
                 </p>
@@ -3317,12 +3326,15 @@ function RoundSummary({
         </section>
 
         <section className="board-right round-report__world-desktop">
-          <h3 className="board-section-title">World — shields, research, ruins</h3>
+          <h3 className="board-section-title">World — shields, research, lasers, ruins</h3>
           <p className="round-report__legend">
             <span>🛡 Shield</span>
             <span>
               <img className="legend-icon" src={ART.researchIcon} alt="" draggable={false} />{' '}
               Research
+            </span>
+            <span>
+              <img className="legend-icon" src={ART.laserIcon} alt="" draggable={false} /> Lasers
             </span>
             <span className="round-report__legend-burnt">Burnt = destroyed</span>
           </p>
