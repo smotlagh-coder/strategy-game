@@ -1871,6 +1871,19 @@ img { max-width: 100%; display: block; }
   animation: none;
 }
 
+/* The assembly hall is a scene, so it fills the frame like the lab does */
+.turn-wizard__hero--tech {
+  width: min(420px, 92%);
+}
+
+.turn-wizard__hero--tech img {
+  width: 100%;
+  height: min(190px, 40vw);
+  object-fit: cover;
+  border-radius: 14px;
+  animation: none;
+}
+
 .turn-wizard__hero--sanctionAsk,
 .turn-wizard__hero--sanctionPick {
   background:
@@ -1902,14 +1915,46 @@ img { max-width: 100%; display: block; }
     grid-column: 1;
   }
 
+  /* Phones: the art bleeds to both edges of the card instead of sitting in a frame */
   .turn-wizard__hero {
-    min-height: 140px;
-    width: min(220px, 78%);
+    width: auto;
+    min-height: 0;
+    /* Cancels the panel's side padding so the art touches the card edges */
+    margin: 0.5rem -1.4rem 0.45rem;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
   }
 
-  .turn-wizard__hero img {
-    width: min(140px, 40vw);
-    height: min(140px, 40vw);
+  .turn-wizard__hero img,
+  .turn-wizard__hero--drones img,
+  .turn-wizard__hero--droneStrike img,
+  .turn-wizard__hero--shieldAsk img,
+  .turn-wizard__hero--shieldPick img {
+    width: 100%;
+    height: auto;
+    max-height: 40dvh;
+    object-fit: contain;
+  }
+
+  /* Scene art keeps its crop so it still reaches both edges */
+  .turn-wizard__hero--tech,
+  .turn-wizard__hero--researchAsk,
+  .turn-wizard__hero--researchPick {
+    width: auto;
+  }
+
+  .turn-wizard__hero--tech img,
+  .turn-wizard__hero--researchAsk img,
+  .turn-wizard__hero--researchPick img,
+  .turn-wizard__hero--env img {
+    height: auto;
+    aspect-ratio: 4 / 3;
+    max-height: 40dvh;
+    border-radius: 0;
+    object-fit: cover;
   }
 }
 

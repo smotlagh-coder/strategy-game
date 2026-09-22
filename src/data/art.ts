@@ -5,7 +5,7 @@ export const ART = {
   missile: '/art/missile.png',
   drone: '/art/drone.png',
   explosion: '/art/explosion.png',
-  nukeTech: '/art/nuke-tech.png',
+  nukeTech: '/art/nuke-tech.jpg',
   aerospaceTech: '/art/aerospace-tech.png',
   shield: '/art/shield-icon.png',
   undergroundCity: '/art/underground-city.png',

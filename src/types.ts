@@ -46,6 +46,8 @@ export interface City {
   hasResearch: boolean;
   /** Moved underground — cannot be destroyed by nukes or drones */
   isUnderground?: boolean;
+  /** Laser battery — shoots down every drone swarm sent at this city */
+  hasLaser?: boolean;
   /** Round this city was last raised from rubble; also drives the "new build" shine */
   rebuiltRound?: number;
 }
@@ -128,6 +130,7 @@ export interface RoundWorldEvent {
     | 'shieldDestroyed'
     | 'nationEliminated'
     | 'droneDamage'
+    | 'dronesIntercepted'
     | 'strikeAbsorbed'
     | 'cityRebuilt';
   nationId: NationId;

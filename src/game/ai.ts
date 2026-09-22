@@ -1,4 +1,4 @@
-import { COSTS } from '../data/nations';
+import { COSTS, MAX_BOMBS_PER_ROUND, SURVIVAL_POINTS_PER_CITY } from '../data/nations';
 import {
   aliveNations,
   allAliveHumansReady,
@@ -27,35 +27,72 @@ import {
 } from './engine';
 import type { City, GameState, NationId } from '../types';
 
+/**
+ * How dangerous a rival looks at the *end* of the match, not today: the score
+ * they already hold, the survival points their cities will keep banking, the
+ * research paying for it, and the arsenal pointed back at us.
+ */
+export function threatScore(state: GameState, id: NationId): number {
+  const n = state.nations[id];
+  if (n.eliminated) return -1;
+  const cities = citiesLeft(state, id);
+  const roundsLeft = Math.max(0, state.maxRounds - state.round);
+  const arsenal = (n.hasNuclearTech ? 8 : 0) + n.bombs * 12 + n.drones * 3;
+  return (
+    computeScore(state, id).total +
+    cities * SURVIVAL_POINTS_PER_CITY * roundsLeft +
+    researchCount(state, id) * 8 +
+    arsenal
+  );
+}
+
+/** Drones already committed this round cannot escort another warhead. */
+function freeDrones(state: GameState, attackerId: NationId): number {
+  const queued = state.pendingStrikes.filter(
+    (s) => s.attackerId === attackerId && s.weapon === 'drone',
+  ).length;
+  return Math.max(0, state.nations[attackerId].drones - queued);
+}
+
+/** Rivals worth shooting at, most dangerous first. */
+function rankedRivals(state: GameState, attackerId: NationId): NationId[] {
+  return aliveNations(state)
+    .filter((id) => id !== attackerId && citiesLeft(state, id) > 0)
+    .map((id) => {
+      // Taking a rival's last city puts them out of the running entirely,
+      // unless their treasury can pay for the automatic rebuild.
+      const finishable =
+        citiesLeft(state, id) === 1 && state.nations[id].money < COSTS.rebuild ? 120 : 0;
+      return { id, weight: threatScore(state, id) + finishable };
+    })
+    .sort((a, b) => b.weight - a.weight)
+    .map((r) => r.id);
+}
+
 export function pickBombTarget(
   state: GameState,
   attackerId: NationId,
 ): { nationId: NationId; cityId: string } | null {
-  const rivals = aliveNations(state).filter((id) => id !== attackerId);
-  if (rivals.length === 0) return null;
   const alreadyHit = new Set(state.nations[attackerId].citiesStruckThisRound);
+  const escorts = freeDrones(state, attackerId);
+  const rivals = rankedRivals(state, attackerId);
 
-  const ranked = rivals
-    .map((id) => ({ id, score: computeScore(state, id).total, cities: citiesLeft(state, id) }))
-    .filter((r) => r.cities > 0)
-    .sort((a, b) => b.score - a.score);
+  const eligible = (c: City) => !c.destroyed && !c.isUnderground && !alreadyHit.has(c.id);
+  // A research city is worth 12 pts and $1.5M a round on top of the city itself
+  const worth = (c: City) => (c.hasResearch ? 2 : 0) + (c.hasShield ? 0 : 1);
 
-  const eligible = (c: { id: string; destroyed: boolean; isUnderground?: boolean }) =>
-    !c.destroyed && !c.isUnderground && !alreadyHit.has(c.id);
-
-  for (const rival of ranked) {
-    const cities = state.nations[rival.id].cities.filter(eligible);
-    const researchOpen = cities.find((c) => c.hasResearch && !c.hasShield);
-    if (researchOpen) return { nationId: rival.id, cityId: researchOpen.id };
+  // A warhead only pays for itself if the city actually falls: unshielded, or
+  // shielded with a drone swarm free to tie the shield up this round.
+  for (const rival of rivals) {
+    const killable = state.nations[rival].cities
+      .filter((c) => eligible(c) && (!c.hasShield || escorts > 0))
+      .sort((a, b) => worth(b) - worth(a));
+    if (killable.length > 0) return { nationId: rival, cityId: killable[0].id };
   }
-  for (const rival of ranked) {
-    const cities = state.nations[rival.id].cities.filter(eligible);
-    const unshielded = cities.find((c) => !c.hasShield);
-    if (unshielded) return { nationId: rival.id, cityId: unshielded.id };
-  }
-  for (const rival of ranked) {
-    const shielded = state.nations[rival.id].cities.find((c) => eligible(c) && c.hasShield);
-    if (shielded) return { nationId: rival.id, cityId: shielded.id };
+  // Nothing dies this round — strip the leader's shield so it dies next round
+  for (const rival of rivals) {
+    const shielded = state.nations[rival].cities.find((c) => eligible(c) && c.hasShield);
+    if (shielded) return { nationId: rival, cityId: shielded.id };
   }
   return null;
 }
@@ -99,7 +136,24 @@ export function pickDroneTarget(
   return null;
 }
 
-/** AI purchases only — leaves phase on 'action' */
+/** Enemy cities a warhead could actually take off the board this round. */
+function openTargets(state: GameState, id: NationId): City[] {
+  return aliveNations(state)
+    .filter((nid) => nid !== id)
+    .flatMap((nid) =>
+      state.nations[nid].cities.filter((c) => !c.destroyed && !c.isUnderground),
+    );
+}
+
+/**
+ * AI purchases only — leaves phase on 'action'.
+ *
+ * Shape of the plan, in the order that won the strategy simulation: two
+ * research centres for the income, shields on everything (a shield saves a
+ * 30-pt city for 3M), then only as many warheads as there are cities they can
+ * actually level this round. Warheads bought with no killable target are the
+ * single most expensive mistake available, so they are sized, not maximised.
+ */
 export function runAiBuyPhase(state: GameState): GameState {
   let s = state;
   const id = currentNationId(s);
@@ -107,78 +161,78 @@ export function runAiBuyPhase(state: GameState): GameState {
 
   s = { ...s, phase: 'buy' };
 
-  if (!s.nations[id].hasNuclearTech && s.nations[id].money >= COSTS.nuclearTech) {
-    if (s.round <= 3 || s.nations[id].money >= 8) {
-      s = buyNuclearTech(s);
-    }
+  const me = () => s.nations[id];
+  const finalRound = s.round >= s.maxRounds;
+  const roundsAfterThis = Math.max(0, s.maxRounds - s.round);
+
+  // Down to the last city, $6M in the bank is an automatic rebuild — that
+  // insurance outscores anything else the money could buy.
+  const rescue =
+    citiesLeft(s, id) <= 1 && me().money >= COSTS.rebuild && !finalRound ? COSTS.rebuild : 0;
+  const spare = () => Math.max(0, me().money - rescue);
+
+  if (!me().hasNuclearTech && !finalRound && spare() >= COSTS.nuclearTech) {
+    s = buyNuclearTech(s, id);
   }
 
-  while (
-    s.nations[id].money >= COSTS.research + 2 &&
-    researchCount(s, id) < 3 &&
-    (s.round <= 2 || researchCount(s, id) < 2)
-  ) {
-    const spot = s.nations[id].cities.find((c) => !c.destroyed && !c.hasResearch);
+  // Two centres is the sweet spot: the third costs a shield's worth of cash and
+  // paints the city as the juiciest target on the board.
+  while (researchCount(s, id) < 2 && spare() >= COSTS.research) {
+    const spot = me().cities.find((c) => !c.destroyed && !c.hasResearch);
     if (!spot) break;
-    s = buyResearch(s, spot.id);
+    s = buyResearch(s, spot.id, id);
   }
 
-  if (
-    !s.nations[id].hasAerospaceTech &&
-    s.round <= 3 &&
-    s.nations[id].money >= COSTS.aerospaceTech + 1
-  ) {
-    s = buyAerospaceTech(s);
+  // Drones only arrive the round after they are unlocked
+  if (!me().hasAerospaceTech && roundsAfterThis >= 1 && spare() >= COSTS.aerospaceTech) {
+    s = buyAerospaceTech(s, id);
   }
 
-  // Rubble scores nothing, so raise a city again once the war chest can spare it
-  if (canBuyRebuild(s, id) && s.nations[id].money >= COSTS.rebuild + 2) {
-    const rubble = s.nations[id].cities.find((c) => c.destroyed);
+  for (const city of me().cities) {
+    if (city.destroyed || city.hasShield || city.isUnderground) continue;
+    if (spare() < COSTS.shield) break;
+    s = buyShield(s, city.id, id);
+  }
+
+  // Size the arsenal to what it can kill: open cities, plus shielded ones we
+  // can suppress with a swarm in the same volley.
+  const targets = openTargets(s, id);
+  const undefended = targets.filter((c) => !c.hasShield).length;
+  const shielded = targets.length - undefended;
+  const escortable = me().hasAerospaceTech || me().drones > 0 ? shielded : 0;
+  let warheads = Math.min(MAX_BOMBS_PER_ROUND, undefended + escortable);
+  while (warheads > 0 && maxBombsPurchasable(s, id) > 0) {
+    const needsEscort = me().bombs + 1 > undefended;
+    const escort = needsEscort && me().hasAerospaceTech ? COSTS.drone : 0;
+    if (spare() < COSTS.bomb + escort) break;
+    s = buyBomb(s, id);
+    warheads -= 1;
+  }
+  const wantDrones = Math.min(
+    maxDronesPurchasable(s, id),
+    Math.max(0, Math.min(me().bombs, shielded)),
+  );
+  for (let i = 0; i < wantDrones; i += 1) {
+    if (spare() < COSTS.drone) break;
+    s = buyDrone(s, id);
+  }
+
+  // Rubble scores nothing: a rebuilt city is 30 pts back plus survival points
+  if (canBuyRebuild(s, id) && spare() >= COSTS.rebuild) {
+    const rubble = me().cities.find((c) => c.destroyed);
     if (rubble) s = buyRebuild(s, rubble.id, id);
   }
 
   // One city in the rock is a guaranteed seat at the final scores
-  if (canBuyUnderground(s, id) && s.nations[id].money >= COSTS.underground + 1) {
+  if (canBuyUnderground(s, id) && spare() >= COSTS.underground) {
     const keep =
-      s.nations[id].cities.find((c) => !c.destroyed && c.hasResearch) ??
-      s.nations[id].cities.find((c) => !c.destroyed);
+      me().cities.find((c) => !c.destroyed && c.hasResearch) ??
+      me().cities.find((c) => !c.destroyed);
     if (keep) s = buyUnderground(s, keep.id, id);
   }
 
-  for (const city of s.nations[id].cities) {
-    if (
-      !city.destroyed &&
-      !city.hasShield &&
-      !city.isUnderground &&
-      s.nations[id].money >= COSTS.shield + 2
-    ) {
-      s = buyShield(s, city.id);
-    }
-  }
-
-  const escort = s.nations[id].hasAerospaceTech ? COSTS.drone : 0;
-  const wantBombs = Math.min(3, maxBombsPurchasable(s, id));
-  for (let i = 0; i < wantBombs; i += 1) {
-    if (s.nations[id].money < COSTS.bomb + escort + 1 && s.environment < 40) break;
-    s = buyBomb(s);
-  }
-
-  // Drones are cheap, so buy a pack per warhead to strip shields, plus one raider
-  const wantDrones = Math.min(
-    maxDronesPurchasable(s, id),
-    Math.max(1, s.nations[id].bombs),
-  );
-  for (let i = 0; i < wantDrones; i += 1) {
-    if (s.nations[id].money < COSTS.drone) break;
-    s = buyDrone(s);
-  }
-
-  if (
-    !s.nations[id].envBoughtThisRound &&
-    s.environment < 50 &&
-    s.nations[id].money >= COSTS.environment + 2
-  ) {
-    s = buyEnvironment(s);
+  if (!me().envBoughtThisRound && s.environment < 50 && spare() >= COSTS.environment + 2) {
+    s = buyEnvironment(s, id);
   }
 
   return finishBuyPhase(s);
@@ -189,17 +243,10 @@ export function runAiDiplomacy(state: GameState): GameState {
   const id = currentNationId(s);
   if (!s.nations[id] || s.nations[id].eliminated) return s;
 
-  const rivals = aliveNations(s).filter((nid) => nid !== id);
-  const scores = rivals
-    .map((nid) => computeScore(s, nid))
-    .sort((a, b) => b.total - a.total);
-  const topRival = scores[0]?.nationId;
-
-  if (topRival && !s.nations[id].sanctions.includes(topRival)) {
-    s = toggleSanction(s, topRival);
-  }
-  for (const sid of [...s.nations[id].sanctions]) {
-    if (sid !== topRival) s = toggleSanction(s, sid);
+  // Sanctions cost nothing and stack, so every rival gets one: a rival we let
+  // off the hook is a rival funding the warhead pointed at us.
+  for (const nid of aliveNations(s).filter((rival) => rival !== id)) {
+    if (!s.nations[id].sanctions.includes(nid)) s = toggleSanction(s, nid, id);
   }
   return s;
 }

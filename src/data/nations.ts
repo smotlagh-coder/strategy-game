@@ -165,6 +165,7 @@ export const COSTS = {
   underground: 6,
   rebuild: 6,
   shield: 3,
+  laser: 2.5,
   bomb: 2.5,
   drone: 1,
   research: 2,
@@ -202,6 +203,7 @@ export function makeCities(id: NationId): City[] {
     hasShield: false,
     hasResearch: false,
     isUnderground: false,
+    hasLaser: false,
   }));
 }
 

@@ -44,6 +44,8 @@ Drones cannot level a city or break a shield on their own — they run up a repa
 
 Strikes are queued during turns and resolve together at round end. Survival score awards **10 pts × cities still standing** each round.
 
+AI nations play to win, not to look busy. They rank every rival by *projected* final score — points banked, cities still earning survival points each remaining round, research income and the arsenal pointed back at them — and aim at whoever is running away with the match, with a finishing shot reserved for anyone down to their last city and too broke to pay for the rebuild. They shield everything they own before buying warheads, keep two research centres, size their arsenal to the number of cities they can actually level this round (escorting a swarm in when the target is shielded), hold $6M back as rebuild insurance when down to one city, and sanction every rival, since sanctions are free.
+
 ---
 
 ## Prerequisites
