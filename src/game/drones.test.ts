@@ -221,8 +221,9 @@ describe('shields busy with drones', () => {
 
     const hit = s.nations.uk.cities.find((c) => c.id === city.id)!;
     expect(hit.destroyed).toBe(true);
-    // Drones resolve while the shield still stands, so the bill is halved
-    expect(s.nations.uk.pendingDroneDamage).toBe(DRONE_DAMAGE / 2);
+    // Rubble is never repaired, so the swarm's bill dies with the city
+    expect(s.nations.uk.pendingDroneDamage).toBe(0);
+    expect(s.roundEvents.some((e) => e.kind === 'droneDamage')).toBe(false);
   });
 
   it('still only strips the shield when the warhead flies alone', () => {
@@ -246,6 +247,51 @@ describe('shields busy with drones', () => {
     const hit = s.nations.uk.cities.find((c) => c.id === city.id)!;
     expect(hit.destroyed).toBe(false);
     expect(hit.hasShield).toBe(false);
+  });
+
+  it('writes off the repair bill for a city the warhead levels', () => {
+    let s = armed({ drones: 2, bombs: 1 });
+    const [doomed, spared] = s.nations.uk.cities;
+    s = queueStrike(s, 'uk', doomed.id, 'us');
+    s = queueStrike(s, 'uk', doomed.id, 'us', 'drone');
+    s = queueStrike(s, 'uk', spared.id, 'us', 'drone');
+
+    for (const strike of orderStrikesForResolution(s.pendingStrikes)) {
+      s = applyQueuedStrike(s, strike);
+    }
+
+    expect(s.nations.uk.cities.find((c) => c.id === doomed.id)!.destroyed).toBe(true);
+    // Only the surviving city still owes repairs
+    expect(s.nations.uk.pendingDroneDamage).toBe(DRONE_DAMAGE);
+    const billed = s.roundEvents.filter((e) => e.kind === 'droneDamage');
+    expect(billed.map((e) => e.cityId)).toEqual([spared.id]);
+  });
+
+  it('keeps the bill when the warhead only breaks the shield', () => {
+    let s = armed({ drones: 1, bombs: 1 });
+    const city = s.nations.uk.cities[0];
+    s = {
+      ...s,
+      nations: {
+        ...s.nations,
+        uk: {
+          ...s.nations.uk,
+          cities: s.nations.uk.cities.map((c) =>
+            // A laser downs the escort, so the shield is free to stop the warhead
+            c.id === city.id ? { ...c, hasShield: true, hasLaser: false } : c,
+          ),
+        },
+      },
+    };
+    // Swarm a different city so the shield stays free and the city survives
+    s = queueStrike(s, 'uk', city.id, 'us');
+    s = queueStrike(s, 'uk', s.nations.uk.cities[1].id, 'us', 'drone');
+    for (const strike of orderStrikesForResolution(s.pendingStrikes)) {
+      s = applyQueuedStrike(s, strike);
+    }
+
+    expect(s.nations.uk.cities[0].destroyed).toBe(false);
+    expect(s.nations.uk.pendingDroneDamage).toBe(DRONE_DAMAGE);
   });
 
   it('resolves every swarm before the warheads', () => {

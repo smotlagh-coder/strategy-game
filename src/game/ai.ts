@@ -203,7 +203,8 @@ export function runAiBuyPhase(state: GameState): GameState {
   // Lasers matter against a rival who actually flies drones — a swarm in hand,
   // or one they have already sent. A battery on a shielded city is worth far
   // more than the repair bill it saves: with no swarm left to tie the shield
-  // up, that city stops being killable at all.
+  // up, that city stops being killable at all. One keystone city only: an AI
+  // that lasers everything stops buying warheads and the match freezes.
   const swarmThreat = aliveNations(s).some(
     (nid) => nid !== id && (s.nations[nid].drones > 0 || s.nations[nid].dronesUsed > 0),
   );

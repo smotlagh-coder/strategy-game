@@ -1364,15 +1364,51 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
 
   const researchCenters = cities.filter((c) => !c.destroyed && c.hasResearch).length;
 
+  // Nobody repairs rubble: when the warhead levels the city, the swarm's bill
+  // for that same city is written off. Getting it back costs a $6M rebuild.
+  const swarmedThisCity = (e: RoundWorldEvent) =>
+    e.kind === 'droneDamage' &&
+    e.nationId === strike.targetNationId &&
+    e.cityId === strike.cityId;
+  const writtenOff = shielded
+    ? 0
+    : +state.roundEvents
+        .filter(swarmedThisCity)
+        .reduce((sum, e) => sum + (e.amount ?? 0), 0)
+        .toFixed(2);
+  const pendingDroneDamage = +Math.max(
+    0,
+    (defender.pendingDroneDamage ?? 0) - writtenOff,
+  ).toFixed(2);
+  const roundEvents = writtenOff > 0
+    ? state.roundEvents.filter((e) => !swarmedThisCity(e))
+    : state.roundEvents;
+
   let next: GameState = {
     ...state,
     environment: Math.max(0, state.environment - ENV_BOMB_HIT),
     nations: {
       ...state.nations,
-      [strike.targetNationId]: { ...defender, cities, researchCenters },
+      [strike.targetNationId]: {
+        ...defender,
+        cities,
+        researchCenters,
+        pendingDroneDamage,
+      },
     },
-    log: [...state.log, log(message, 'attack')],
-    roundEvents: [...state.roundEvents, hitEvent],
+    log: [
+      ...state.log,
+      log(message, 'attack'),
+      ...(writtenOff > 0
+        ? [
+            log(
+              `The $${writtenOff}M repair bill for ${city.name} died with the city — rebuilding costs $${COSTS.rebuild}M.`,
+              'money',
+            ),
+          ]
+        : []),
+    ],
+    roundEvents: [...roundEvents, hitEvent],
   };
 
   return checkEliminations(next);

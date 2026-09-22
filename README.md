@@ -32,7 +32,7 @@ Repo: [smotlagh-coder/strategy-game](https://github.com/smotlagh-coder/strategy-
 | Environment | **$1M** — world health **+10%** (once per round) |
 | Sanction | −**10%** total revenue for the target |
 | Nuke hit | World environment **−5%** |
-| Drone hit | Target owes **$1.5M** in repairs, billed at their next income — halved to **$0.75M** if the city has a shield or is underground, and **$0** if it has laser defence |
+| Drone hit | Target owes **$1.5M** in repairs, billed at their next income — halved to **$0.75M** if the city has a shield or is underground, and **$0** if it has laser defence or the city is destroyed in the same round |
 
 Every match seats **5 of the 12 countries**: each player's chosen country always plays, and the empty chairs are dealt at random from the countries nobody picked. In an online lobby a claimed country is locked to that player and greyed out for everyone else.
 
@@ -46,7 +46,7 @@ An **Underground City** is the one city nobody can take from you: bombs are not 
 
 **Laser defence** is the answer to drones. Any city can take a battery for $2.5M once you hold Aerospace Tech, and from then on every swarm aimed at that city is shot out of the sky: no repair bill, and — because there is no swarm left circling — the city's shield stays free to stop a warhead sent in the same volley. The battery burns with the city if a nuke gets through, and a rebuilt city comes back without one.
 
-Drones cannot level a city or break a shield on their own — they run up a repair bill, and a shield or bunker blunts the swarm enough to halve it. Their value is the combo: swarm a city you are also nuking and its shield is too busy to stop the warhead, so the city falls. Targeting runs bombs first, then drones.
+Drones cannot level a city or break a shield on their own — they run up a repair bill, and a shield or bunker blunts the swarm enough to halve it. Their value is the combo: swarm a city you are also nuking and its shield is too busy to stop the warhead, so the city falls. Targeting runs bombs first, then drones. A repair bill only lands on a city that survives the round: if the warhead levels the city the swarm helped open, there is nothing left to repair and the bill is written off — the owner pays $6M to rebuild instead.
 
 Strikes are queued during turns and resolve together at round end. Survival score awards **10 pts × cities still standing** each round.
 
