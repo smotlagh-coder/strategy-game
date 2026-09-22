@@ -2477,6 +2477,41 @@ img { max-width: 100%; display: block; }
   height: 112px;
 }
 
+/* Laser interception: the beam fires from the city out to the swarm */
+.strike-cinema__laser {
+  position: absolute;
+  height: 4px;
+  margin-top: -2px;
+  transform-origin: 0 50%;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.strike-cinema__laser i {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform-origin: 0 50%;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    rgba(230, 252, 255, 1),
+    rgba(120, 225, 255, 0.95) 55%,
+    rgba(96, 214, 255, 0.35)
+  );
+  box-shadow:
+    0 0 10px rgba(150, 235, 255, 0.95),
+    0 0 26px rgba(96, 214, 255, 0.65);
+  animation: laserFire 0.7s ease-out forwards;
+}
+
+@keyframes laserFire {
+  0% { transform: scaleX(0.04) scaleY(0.6); opacity: 0.4; }
+  18% { transform: scaleX(1) scaleY(1.5); opacity: 1; }
+  55% { transform: scaleX(1) scaleY(1); opacity: 0.95; }
+  100% { transform: scaleX(1) scaleY(0.5); opacity: 0; }
+}
+
 .strike-cinema__pop {
   position: absolute;
   inset: 36%;

@@ -194,6 +194,8 @@ interface StrikeTarget {
   weapons: ('nuke' | 'drone')[];
   /** Repair bill per drone pack — halved when the city has a shield or bunker */
   droneBill?: number;
+  /** The city's lasers downed the swarm, so it never reaches the skyline */
+  lasered?: boolean;
 }
 
 /** One attacker's whole volley — every missile flies in the same panel. */
@@ -204,6 +206,8 @@ interface StrikeShow {
 
 const STRIKE_FLIGHT_MS = 1750;
 const STRIKE_IMPACT_MS = 1300;
+/** How far along its run a swarm gets before the lasers catch it */
+const LASER_INTERCEPT_AT = 0.6;
 
 function StrikeCinema({
   strike,
@@ -220,6 +224,10 @@ function StrikeCinema({
   const [booms, setBooms] = useState<
     ({ x: number; y: number; weapon: 'nuke' | 'drone' } | null)[]
   >([]);
+  /** Where a laser caught a swarm, and the beam that did it */
+  const [zaps, setZaps] = useState<
+    { x: number; y: number; beamX: number; beamY: number; length: number; angle: number }[]
+  >([]);
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
   const strikeRef = useRef(strike);
@@ -230,7 +238,11 @@ function StrikeCinema({
     .join(',')}`;
   const count = strike.targets.length;
   const flightPlan = strike.targets.flatMap((target, targetIndex) =>
-    target.weapons.map((weapon) => ({ targetIndex, weapon })),
+    target.weapons.map((weapon) => ({
+      targetIndex,
+      weapon,
+      intercepted: weapon === 'drone' && Boolean(target.lasered),
+    })),
   );
   const nukeCount = flightPlan.filter((f) => f.weapon === 'nuke').length;
   const droneCount = flightPlan.length - nukeCount;
@@ -251,6 +263,7 @@ function StrikeCinema({
   useEffect(() => {
     const plan = planRef.current;
     setBooms([]);
+    setZaps([]);
     playSfx(SFX.launch, 0.9);
     let raf = 0;
     let startTimer = 0;
@@ -285,6 +298,7 @@ function StrikeCinema({
           path: pathRefs.current[i],
           targetIndex: leg.targetIndex,
           weapon: leg.weapon,
+          intercepted: leg.intercepted,
         }))
         .filter((f) => f.missile && f.city);
       if (!layer || !launcher || flights.length === 0) {
@@ -317,14 +331,19 @@ function StrikeCinema({
       });
 
       const t0 = performance.now();
+      const shotDown = new Set<number>();
       const tick = (now: number) => {
         if (finished) return;
         sawFrame = true;
         const u = Math.min(1, (now - t0) / STRIKE_FLIGHT_MS);
-        const t = u * u * (3 - 2 * u);
-        const omt = 1 - t;
-        for (const arc of arcs) {
+        for (let i = 0; i < arcs.length; i += 1) {
+          const arc = arcs[i];
           const el = arc.missile!;
+          // A swarm the lasers will catch stops short of the skyline
+          const stop = arc.intercepted ? LASER_INTERCEPT_AT : 1;
+          const capped = Math.min(u, stop);
+          const t = capped * capped * (3 - 2 * capped);
+          const omt = 1 - t;
           const x = omt * omt * p0.x + 2 * omt * t * arc.p1.x + t * t * arc.p2.x;
           const y = omt * omt * p0.y + 2 * omt * t * arc.p1.y + t * t * arc.p2.y;
           const vx = 2 * omt * (arc.p1.x - p0.x) + 2 * t * (arc.p2.x - arc.p1.x);
@@ -336,6 +355,26 @@ function StrikeCinema({
           // Shrinks as it dives so it reads as falling onto the city
           el.style.transform = `translate(-50%, -50%) rotate(${angle}deg) scale(${1 - t * 0.35})`;
           el.style.opacity = u < 0.04 ? String(u / 0.04) : '1';
+
+          if (arc.intercepted && u >= stop && !shotDown.has(i)) {
+            shotDown.add(i);
+            el.style.opacity = '0';
+            // Beam runs from the defended city out to the doomed swarm
+            const dx = x - arc.p2.x;
+            const dy = y - arc.p2.y;
+            playSfx(SFX.explosion, 0.28, 2.6);
+            setZaps((prev) => [
+              ...prev,
+              {
+                x,
+                y,
+                beamX: arc.p2.x,
+                beamY: arc.p2.y,
+                length: Math.hypot(dx, dy),
+                angle: (Math.atan2(dy, dx) * 180) / Math.PI,
+              },
+            ]);
+          }
         }
 
         if (u < 1) {
@@ -346,6 +385,8 @@ function StrikeCinema({
           const impacts: ({ x: number; y: number; weapon: 'nuke' | 'drone' } | null)[] =
             strikeRef.current.targets.map(() => null);
           for (const arc of arcs) {
+            // A swarm the lasers burnt never reaches the city, so nothing lands
+            if (arc.intercepted) continue;
             const landed = impacts[arc.targetIndex];
             // A warhead outshines any swarm sharing the same city
             if (landed?.weapon === 'nuke') continue;
@@ -487,6 +528,32 @@ function StrikeCinema({
               >
                 <img src={leg.weapon === 'drone' ? ART.drone : ART.missile} alt="" draggable={false} />
                 {leg.weapon === 'nuke' && <span className="strike-cinema__flame" />}
+              </div>
+            ))}
+            {zaps.map((zap, i) => (
+              <span
+                key={`beam-${i}`}
+                className="strike-cinema__laser"
+                style={{
+                  left: zap.beamX,
+                  top: zap.beamY,
+                  width: zap.length,
+                  transform: `rotate(${zap.angle}deg)`,
+                }}
+              >
+                <i />
+              </span>
+            ))}
+            {zaps.map((zap, i) => (
+              <div
+                key={`zap-${i}`}
+                className="strike-cinema__boom strike-cinema__boom--drone"
+                style={{ left: zap.x, top: zap.y }}
+              >
+                <span className="strike-cinema__pop" />
+                {[0, 1, 2, 3, 4, 5].map((n) => (
+                  <span key={n} className={`strike-cinema__spark spark-${n}`} />
+                ))}
               </div>
             ))}
             {booms.map((boom, i) =>
@@ -924,6 +991,13 @@ function StrikeTheater({
               cityName: city?.name ?? 'city',
               weapons: [weapon],
               droneBill: city ? droneDamageFor(city) : DRONE_DAMAGE,
+              lasered: events.some(
+                (e) =>
+                  e.kind === 'dronesIntercepted' &&
+                  e.cityId === strike.cityId &&
+                  e.nationId === strike.targetNationId &&
+                  e.attackerId === volley.attackerId,
+              ),
             });
           }
           await new Promise<void>((resolve) => {
@@ -2913,7 +2987,8 @@ function GameBoard({
               Each pack costs that nation ${DRONE_DAMAGE}M in damages, or
               {` $${DRONE_DAMAGE / 2}M`} if the city has a shield or bunker. Laser
               batteries shoot swarms down for nothing. Swarm a city you also
-              bombed and its shield is too busy to stop the warhead.
+              bombed and its shield is too busy to stop the warhead — the city
+              falls, so there is no repair bill to collect.
             </p>
             {droneTargets.length > 0 && (
               <p className="target-label">
