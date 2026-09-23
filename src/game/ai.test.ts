@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { COSTS } from '../data/nations';
+import { COSTS, MAX_SANCTIONS } from '../data/nations';
 import { createInitialState, seatTable, startGame } from './engine';
-import { pickBombTarget, runAiBuyPhase, runAiDiplomacy, runAiNationTurn, threatScore } from './ai';
+import {
+  pickBombTarget,
+  rankedRivals,
+  runAiBuyPhase,
+  runAiDiplomacy,
+  runAiNationTurn,
+  threatScore,
+} from './ai';
 import type { GameState, NationId, NationState } from '../types';
 
 /** A five seat table where only 'us' is human, with per-nation tweaks. */
@@ -122,11 +129,31 @@ describe('AI target selection', () => {
 });
 
 describe('AI purchasing', () => {
-  it('shields its cities before stockpiling warheads', () => {
+  it('covers a city and builds research before stockpiling warheads', () => {
     let s = table({ uk: { money: 20, hasNuclearTech: true, nuclearTechUnlockedRound: 0 } });
     s = { ...s, currentTurnIndex: s.turnOrder.indexOf('uk') };
     const after = runAiBuyPhase(s);
-    expect(after.nations.uk.cities.every((c) => c.hasShield || c.isUnderground)).toBe(true);
+    const uk = after.nations.uk;
+    // The rules allow one shield a round; the economy is funded before the
+    // arsenal, which is built from whatever is left
+    expect(uk.cities.filter((c) => c.hasShield).length).toBe(1);
+    expect(uk.cities.filter((c) => c.hasResearch).length).toBe(2);
+    expect(uk.hasAerospaceTech).toBe(true);
+  });
+
+  it('installs only one shield per round', () => {
+    let s = table({ uk: { money: 30 } });
+    s = { ...s, currentTurnIndex: s.turnOrder.indexOf('uk') };
+    const round1 = runAiBuyPhase(s);
+    expect(round1.nations.uk.cities.filter((c) => c.hasShield).length).toBe(1);
+  });
+
+  it('arms the same round it unlocks the tech, from round two on', () => {
+    let s = table({ uk: { money: 20 } });
+    s = { ...s, round: 2, currentTurnIndex: s.turnOrder.indexOf('uk') };
+    const after = runAiBuyPhase(s);
+    expect(after.nations.uk.hasNuclearTech).toBe(true);
+    expect(after.nations.uk.bombs).toBeGreaterThan(0);
   });
 
   it('buys no warheads when nothing on the board can be levelled', () => {
@@ -164,10 +191,45 @@ describe('AI purchasing', () => {
 });
 
 describe('AI diplomacy', () => {
-  it('sanctions every rival, since sanctions are free', () => {
-    let s = table();
+  it('spends both slots on the rivals it considers most dangerous', () => {
+    let s = table({
+      russia: { money: 30, bombs: 2, hasNuclearTech: true, nuclearTechUnlockedRound: 0 },
+      china: { money: 20, bombs: 1, hasNuclearTech: true, nuclearTechUnlockedRound: 0 },
+      france: { money: 1 },
+    });
     s = { ...s, currentTurnIndex: s.turnOrder.indexOf('uk') };
     const after = runAiDiplomacy(s);
-    expect([...after.nations.uk.sanctions].sort()).toEqual(['china', 'france', 'russia', 'us']);
+    expect(after.nations.uk.sanctions).toHaveLength(MAX_SANCTIONS);
+    expect([...after.nations.uk.sanctions].sort()).toEqual(['china', 'russia']);
+  });
+
+  it('answers a sanction by aiming at whoever imposed it', () => {
+    const base = table();
+    // France is the weakest rival on the board, but it is squeezing us
+    const s = {
+      ...base,
+      currentTurnIndex: base.turnOrder.indexOf('uk'),
+      nations: {
+        ...base.nations,
+        france: { ...base.nations.france, money: 1, sanctions: ['uk' as NationId] },
+      },
+    };
+    const before = rankedRivals(s, 'uk').indexOf('france');
+    const without = rankedRivals(
+      { ...s, nations: { ...s.nations, france: { ...s.nations.france, sanctions: [] } } },
+      'uk',
+    ).indexOf('france');
+    expect(before).toBeLessThan(without);
+    expect(runAiDiplomacy(s).nations.uk.sanctions).toContain('france');
+  });
+
+  it('does not swap a sanction for a rival that is barely ahead', () => {
+    let s = table({ russia: { money: 30 }, china: { money: 28 } });
+    s = { ...s, currentTurnIndex: s.turnOrder.indexOf('uk') };
+    const first = runAiDiplomacy(s);
+    const held = [...first.nations.uk.sanctions].sort();
+    // Nothing material changed, so the same two names should stay named
+    const again = runAiDiplomacy(first);
+    expect([...again.nations.uk.sanctions].sort()).toEqual(held);
   });
 });

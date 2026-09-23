@@ -59,12 +59,13 @@ describe('drone economy', () => {
     expect(DRONE_DAMAGE).toBe(1.5);
   });
 
-  it('locks drones until the round after Aerospace Tech is bought', () => {
+  it('lets packs fly the same round Aerospace Tech is bought', () => {
     let s = table();
+    expect(canBuyDrones(s, 'us')).toBe(false);
     s = buyAerospaceTech(s, 'us');
     expect(s.nations.us.money).toBe(20 - COSTS.aerospaceTech);
-    expect(canBuyDrones(s, 'us')).toBe(false);
-    expect(buyDrones(s, 2, 'us').nations.us.drones).toBe(0);
+    expect(canBuyDrones(s, 'us')).toBe(true);
+    expect(buyDrones(s, 2, 'us').nations.us.drones).toBe(2);
 
     s = nextRound({ ...s, phase: 'roundSummary' });
     expect(canBuyDrones(s, 'us')).toBe(true);

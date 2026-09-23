@@ -84,6 +84,10 @@ export interface NationState {
   dronesBoughtThisRound: number;
   /** City ids this nation swarmed with drones this round (separate from bomb targets) */
   citiesDronedThisRound: string[];
+  /** Shields installed this round (max 1) */
+  shieldsBoughtThisRound: number;
+  /** Swarms this nation's laser network shot down this round */
+  dronesInterceptedThisRound: number;
   /** Drone damage billed to this nation at the next income (see applyIncome) */
   pendingDroneDamage?: number;
   /** Whether environment was bought this round */

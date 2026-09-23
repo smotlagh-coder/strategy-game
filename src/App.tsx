@@ -7,6 +7,7 @@ import {
   COSTS,
   DRONE_DAMAGE,
   MAX_DRONES_PER_ROUND,
+  MAX_SANCTIONS,
   RESEARCH_INCOME,
 } from './data/nations';
 import { LEADER_SPEECHES, speechFor } from './data/speeches';
@@ -23,6 +24,8 @@ import {
   buyRebuild,
   buyUnderground,
   canBuyLaser,
+  canBuyShield,
+  sanctionsLeft,
   canBuyRebuild,
   canBuyUnderground,
   droneDamageFor,
@@ -985,19 +988,20 @@ function StrikeTheater({
             const city = stateRef.current.nations[strike.targetNationId]?.cities.find(
               (c) => c.id === strike.cityId,
             );
+            const lasered = events.some(
+              (e) =>
+                e.kind === 'dronesIntercepted' &&
+                e.cityId === strike.cityId &&
+                e.nationId === strike.targetNationId &&
+                e.attackerId === volley.attackerId,
+            );
             targets.push({
               to: strike.targetNationId,
               cityId: strike.cityId,
               cityName: city?.name ?? 'city',
               weapons: [weapon],
-              droneBill: city ? droneDamageFor(city) : DRONE_DAMAGE,
-              lasered: events.some(
-                (e) =>
-                  e.kind === 'dronesIntercepted' &&
-                  e.cityId === strike.cityId &&
-                  e.nationId === strike.targetNationId &&
-                  e.attackerId === volley.attackerId,
-              ),
+              droneBill: lasered ? 0 : city ? droneDamageFor(city) : DRONE_DAMAGE,
+              lasered,
             });
           }
           await new Promise<void>((resolve) => {
@@ -1687,11 +1691,7 @@ function canOfferRebuild(state: GameState, actorId: NationId): boolean {
 }
 
 function canOfferShield(state: GameState, actorId: NationId): boolean {
-  const n = state.nations[actorId];
-  return (
-    n.money >= COSTS.shield &&
-    n.cities.some((c) => !c.destroyed && !c.hasShield && !c.isUnderground)
-  );
+  return canBuyShield(state, actorId);
 }
 
 function canOfferLaser(state: GameState, actorId: NationId): boolean {
@@ -2394,7 +2394,7 @@ function GameBoard({
               <>
                 <h3 className="turn-wizard__q">Do you want to purchase Nuclear Tech?</h3>
                 <p className="turn-wizard__hint">
-                  Unlocks bomb production next round · {COSTS.nuclearTech}M
+                  Unlocks warheads right away · {COSTS.nuclearTech}M
                 </p>
                 <div className="turn-wizard__actions">
                   <button
@@ -2422,7 +2422,7 @@ function GameBoard({
               <>
                 <h3 className="turn-wizard__q">Do you want to purchase Aerospace Tech?</h3>
                 <p className="turn-wizard__hint">
-                  Unlocks drone packs next round · {COSTS.aerospaceTech}M
+                  Unlocks drone packs right away · {COSTS.aerospaceTech}M
                 </p>
                 <div className="turn-wizard__actions">
                   <button
@@ -2691,7 +2691,9 @@ function GameBoard({
             {wizardStep === 'shieldAsk' && (
               <>
                 <h3 className="turn-wizard__q">Do you want to purchase a shield?</h3>
-                <p className="turn-wizard__hint">{COSTS.shield}M · protects one city</p>
+                <p className="turn-wizard__hint">
+                  {COSTS.shield}M · protects one city · one shield per round
+                </p>
                 <div className="turn-wizard__actions">
                   <button
                     className="btn btn--xl btn--primary"
@@ -2837,7 +2839,8 @@ function GameBoard({
               <>
                 <h3 className="turn-wizard__q">Do you want to impose sanctions?</h3>
                 <p className="turn-wizard__hint">
-                  Free · each sanctioned rival loses 10% of their income
+                  Free · −10% income each · up to {MAX_SANCTIONS} rivals · they will take it
+                  personally
                 </p>
                 <div className="turn-wizard__actions">
                   <button
@@ -2864,20 +2867,22 @@ function GameBoard({
               <>
                 <h3 className="turn-wizard__q">Choose rivals to sanction</h3>
                 <p className="turn-wizard__hint">
-                  Tap to toggle · −10% income each · currently sanctioning{' '}
-                  {turn.sanctions.filter((nid) => !state.nations[nid]?.eliminated).length}
+                  Tap to toggle · −10% income each · max {MAX_SANCTIONS} at a time ·{' '}
+                  {sanctionsLeft(state, actorId)} slot
+                  {sanctionsLeft(state, actorId) === 1 ? '' : 's'} left
                 </p>
                 <div className="turn-wizard__sanction-grid">
                   {enemyIds.map((nid) => {
                     const n = nationDef(nid);
                     const alive = !state.nations[nid].eliminated;
                     const active = turn.sanctions.includes(nid);
+                    const full = !active && sanctionsLeft(state, actorId) < 1;
                     return (
                       <button
                         key={nid}
                         type="button"
                         className={`turn-wizard__sanction-card ${active ? 'is-on' : ''}`}
-                        disabled={!alive}
+                        disabled={!alive || full}
                         onClick={() => {
                           bumpSelectionActivity();
                           setState((s) => {
@@ -2893,7 +2898,15 @@ function GameBoard({
                       >
                         <img src={ART.leaders[nid]} alt="" draggable={false} />
                         <strong>{n.name}</strong>
-                        <span>{active ? 'Sanctioning' : alive ? 'Tap to sanction' : 'Out'}</span>
+                        <span>
+                          {active
+                            ? 'Sanctioning'
+                            : !alive
+                              ? 'Out'
+                              : full
+                                ? 'No slots left'
+                                : 'Tap to sanction'}
+                        </span>
                       </button>
                     );
                   })}

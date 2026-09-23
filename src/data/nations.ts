@@ -160,13 +160,13 @@ export const NATIONS: NationDef[] = [
 export const TABLE_SIZE = 5;
 
 export const COSTS = {
-  nuclearTech: 5,
+  nuclearTech: 4,
   aerospaceTech: 2,
   underground: 6,
-  rebuild: 6,
+  rebuild: 5,
   shield: 3,
   laser: 2.5,
-  bomb: 2.5,
+  bomb: 2,
   drone: 1,
   research: 2,
   environment: 1,
@@ -174,10 +174,16 @@ export const COSTS = {
 
 export const STARTING_MONEY = 14;
 /** Flat income every living nation receives each round (from round 2) */
-export const BASE_INCOME = 3;
+export const BASE_INCOME = 5;
 export const RESEARCH_INCOME = 1.5;
 /** Each sanction cuts the target's total revenue by this fraction */
 export const SANCTION_PENALTY = 0.1;
+/**
+ * Sanctions one nation may run at once. Unlimited free sanctions meant
+ * everyone sanctioned everyone and the choice said nothing; at two, naming a
+ * target is a public statement about who you intend to go after.
+ */
+export const MAX_SANCTIONS = 2;
 export const ENV_BOMB_HIT = 5;
 export const ENV_IMPROVE = 10;
 /** Points awarded each time a nation survives a completed round */
@@ -188,6 +194,18 @@ export const SURVIVAL_POINTS_PER_CITY = 10;
 export const MAX_BOMBS_PER_ROUND = 3;
 /** Max drone packs a nation may purchase in a single round */
 export const MAX_DRONES_PER_ROUND = 3;
+/**
+ * Shields a nation may install in a single round. One keeps a city exposed
+ * while defences go up city by city, instead of a whole nation walling off in
+ * its opening turn.
+ */
+export const MAX_SHIELDS_PER_ROUND = 1;
+/**
+ * Swarms one laser battery can shoot down per round. The battery defends the
+ * whole nation, so this budget — not the city it sits on — is what a swarming
+ * rival has to overwhelm.
+ */
+export const LASER_INTERCEPTS_PER_ROUND = 2;
 /** Repair bill a drone pack inflicts on the city it swarms */
 export const DRONE_DAMAGE = 1.5;
 export const MAX_ROUNDS = 5;
@@ -229,6 +247,8 @@ export function initialNation(id: NationId): NationState {
     dronesUsed: 0,
     dronesBoughtThisRound: 0,
     citiesDronedThisRound: [],
+    shieldsBoughtThisRound: 0,
+    dronesInterceptedThisRound: 0,
     pendingDroneDamage: 0,
     envBoughtThisRound: false,
     promptsDoneThisRound: [],

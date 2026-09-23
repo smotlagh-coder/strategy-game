@@ -1,4 +1,5 @@
 import type { GameState, NationId, NationState, PendingStrike, Phase } from '../types';
+import { MAX_SANCTIONS } from '../data/nations';
 import { allAliveHumansReady, ensureIncome } from '../game/engine';
 import { finishOnlineHumanPlanning, runOnlineAiPlanning } from '../game/ai';
 
@@ -184,6 +185,10 @@ export function mergeNationPlanning(
     citiesDronedThisRound: Array.from(
       new Set([...(remote.citiesDronedThisRound ?? []), ...(local.citiesDronedThisRound ?? [])]),
     ),
+    shieldsBoughtThisRound: Math.max(
+      counter(remote.shieldsBoughtThisRound),
+      counter(local.shieldsBoughtThisRound),
+    ),
     pendingDroneDamage: eliminated
       ? 0
       : Math.max(counter(remote.pendingDroneDamage), counter(local.pendingDroneDamage)),
@@ -196,8 +201,12 @@ export function mergeNationPlanning(
     citiesStruckThisRound: Array.from(
       new Set([...remote.citiesStruckThisRound, ...local.citiesStruckThisRound]),
     ),
-    sanctions:
-      local.sanctions.length >= remote.sanctions.length ? local.sanctions : remote.sanctions,
+    // Whoever named more rivals wins the list, trimmed in case a stale client
+    // still thinks sanctions are unlimited
+    sanctions: (local.sanctions.length >= remote.sanctions.length
+      ? local.sanctions
+      : remote.sanctions
+    ).slice(0, MAX_SANCTIONS),
     eliminated,
     lockedScore: Math.max(remote.lockedScore ?? 0, local.lockedScore ?? 0),
     // Forfeit / kick sticks — never revive an AI-converted nation as human.

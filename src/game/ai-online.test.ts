@@ -27,7 +27,7 @@ describe('online AI planning', () => {
     expect(aiIds.length).toBeGreaterThan(0);
     for (const id of aiIds) {
       const n = s.nations[id];
-      expect(n.hasNuclearTech).toBe(true);
+      // The opening turn goes on research and a shield, not on an arsenal
       expect(researchCount(s, id) + n.cities.filter((c) => c.hasShield).length).toBeGreaterThan(0);
       expect(n.money).toBeLessThan(10);
     }

@@ -6,6 +6,9 @@ import {
   ENV_IMPROVE,
   MAX_BOMBS_PER_ROUND,
   MAX_DRONES_PER_ROUND,
+  LASER_INTERCEPTS_PER_ROUND,
+  MAX_SANCTIONS,
+  MAX_SHIELDS_PER_ROUND,
   MAX_ROUNDS,
   NATIONS,
   RESEARCH_INCOME,
@@ -712,7 +715,7 @@ export function canBuyBombs(state: GameState, nationId?: NationId): boolean {
     !n.eliminated &&
     n.hasNuclearTech &&
     n.nuclearTechUnlockedRound != null &&
-    n.nuclearTechUnlockedRound < state.round
+    n.nuclearTechUnlockedRound <= state.round
   );
 }
 
@@ -743,7 +746,7 @@ export function buyNuclearTech(state: GameState, nationId?: NationId): GameState
     log: [
       ...state.log,
       log(
-        `${nationDef(id).name} unlocked Nuclear Tech — bombs available next round.`,
+        `${nationDef(id).name} unlocked Nuclear Tech — warheads can be built and fired this round.`,
         'money',
       ),
     ],
@@ -757,7 +760,7 @@ export function canBuyDrones(state: GameState, nationId?: NationId): boolean {
     !n.eliminated &&
     n.hasAerospaceTech &&
     n.aerospaceTechUnlockedRound != null &&
-    n.aerospaceTechUnlockedRound < state.round
+    n.aerospaceTechUnlockedRound <= state.round
   );
 }
 
@@ -788,7 +791,7 @@ export function buyAerospaceTech(state: GameState, nationId?: NationId): GameSta
     log: [
       ...state.log,
       log(
-        `${nationDef(id).name} unlocked Aerospace Tech — drones available next round.`,
+        `${nationDef(id).name} unlocked Aerospace Tech — drone packs can fly this round.`,
         'money',
       ),
     ],
@@ -1040,6 +1043,9 @@ export function canBuyLaser(state: GameState, nationId?: NationId): boolean {
     !n.eliminated &&
     n.hasAerospaceTech &&
     n.money >= COSTS.laser &&
+    // One network is enough: a second battery defends cities the first
+    // already covers
+    !laserNetwork(state, id) &&
     n.cities.some((c) => !c.destroyed && !c.hasLaser)
   );
 }
@@ -1065,11 +1071,23 @@ export function buyLaser(state: GameState, cityId: string, nationId?: NationId):
     log: [
       ...state.log,
       log(
-        `${nationDef(id).name} installed a laser defence battery on ${city.name} — drones will be shot down.`,
+        `${nationDef(id).name} installed a laser defence network on ${city.name} — it shoots down ${LASER_INTERCEPTS_PER_ROUND} drone swarms a round, anywhere in the nation.`,
         'money',
       ),
     ],
   };
+}
+
+/** One shield per round, so a nation cannot wall off every city in one turn. */
+export function canBuyShield(state: GameState, nationId?: NationId): boolean {
+  const id = nationId ?? currentNationId(state);
+  const n = state.nations[id];
+  return (
+    !n.eliminated &&
+    n.money >= COSTS.shield &&
+    n.shieldsBoughtThisRound < MAX_SHIELDS_PER_ROUND &&
+    n.cities.some((c) => !c.destroyed && !c.hasShield && !c.isUnderground)
+  );
 }
 
 export function buyShield(state: GameState, cityId: string, nationId?: NationId): GameState {
@@ -1081,8 +1099,7 @@ export function buyShield(state: GameState, cityId: string, nationId?: NationId)
     city.destroyed ||
     city.hasShield ||
     city.isUnderground ||
-    n.money < COSTS.shield ||
-    n.eliminated
+    !canBuyShield(state, id)
   ) {
     return state;
   }
@@ -1093,6 +1110,7 @@ export function buyShield(state: GameState, cityId: string, nationId?: NationId)
       [id]: {
         ...n,
         money: +(n.money - COSTS.shield).toFixed(2),
+        shieldsBoughtThisRound: n.shieldsBoughtThisRound + 1,
         cities: n.cities.map((c) => (c.id === cityId ? { ...c, hasShield: true } : c)),
       },
     },
@@ -1188,19 +1206,32 @@ export function queueStrikes(
 }
 
 /**
- * True when drones are swarming this city this round, tying up its shield.
- * A laser city never has a busy shield: the swarm is burnt out of the sky
- * before it can distract anyone.
+ * One battery defends every city the nation owns, and it can shoot down a
+ * fixed number of swarms a round — a swarming rival has to overwhelm the
+ * network, not tip-toe around one city.
+ */
+export function laserNetwork(state: GameState, nationId: NationId): boolean {
+  return state.nations[nationId].cities.some((c) => !c.destroyed && c.hasLaser);
+}
+
+export function laserInterceptsLeft(state: GameState, nationId: NationId): number {
+  if (!laserNetwork(state, nationId)) return 0;
+  const fired = state.nations[nationId].dronesInterceptedThisRound;
+  return Math.max(0, LASER_INTERCEPTS_PER_ROUND - fired);
+}
+
+/**
+ * True when a swarm actually got through to this city this round, tying up its
+ * shield. Drones resolve before warheads, so by the time a warhead lands the
+ * round's events already say whether the network burnt the swarm out of the sky.
  */
 export function shieldIsBusy(
-  strikes: PendingStrike[],
+  state: GameState,
   targetNationId: NationId,
   cityId: string,
-  city?: Pick<City, 'hasLaser'>,
 ): boolean {
-  if (city?.hasLaser) return false;
-  return strikes.some(
-    (s) => s.weapon === 'drone' && s.targetNationId === targetNationId && s.cityId === cityId,
+  return state.roundEvents.some(
+    (e) => e.kind === 'droneDamage' && e.nationId === targetNationId && e.cityId === cityId,
   );
 }
 
@@ -1210,10 +1241,8 @@ export function shieldIsBusy(
  * so it runs up half the repair bill. Shields still count even when the swarm is
  * tying one up for a warhead.
  */
-export function droneDamageFor(
-  city: Pick<City, 'hasShield' | 'isUnderground' | 'hasLaser'>,
-): number {
-  if (city.hasLaser) return 0;
+/** Repair bill for a swarm the laser network did not catch. */
+export function droneDamageFor(city: Pick<City, 'hasShield' | 'isUnderground'>): number {
   return city.hasShield || city.isUnderground ? +(DRONE_DAMAGE / 2).toFixed(2) : DRONE_DAMAGE;
 }
 
@@ -1223,13 +1252,21 @@ function applyDroneStrike(
   city: City,
 ): GameState {
   const defender = state.nations[strike.targetNationId];
-  if (city.hasLaser) {
+  if (laserInterceptsLeft(state, strike.targetNationId) > 0) {
+    const fired = defender.dronesInterceptedThisRound + 1;
+    const left = LASER_INTERCEPTS_PER_ROUND - fired;
     return {
       ...state,
+      nations: {
+        ...state.nations,
+        [strike.targetNationId]: { ...defender, dronesInterceptedThisRound: fired },
+      },
       log: [
         ...state.log,
         log(
-          `${nationDef(strike.targetNationId).name}'s laser battery shot down ${nationDef(strike.attackerId).name}'s drone swarm over ${city.name} — no damage.`,
+          `${nationDef(strike.targetNationId).name}'s laser network shot down ${nationDef(strike.attackerId).name}'s drone swarm over ${city.name} — no damage${
+            left > 0 ? '' : ' (the network is out of shots this round)'
+          }.`,
           'attack',
         ),
       ],
@@ -1331,7 +1368,7 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
   // Drones swarming this city keep its shield occupied, so the warhead lands
   const shielded =
     city.hasShield &&
-    !shieldIsBusy(state.pendingStrikes, strike.targetNationId, strike.cityId, city);
+    !shieldIsBusy(state, strike.targetNationId, strike.cityId);
   if (shielded) {
     cities = cities.map((c) =>
       c.id === strike.cityId ? { ...c, hasShield: false } : c,
@@ -1521,12 +1558,21 @@ export function markPromptDone(
   };
 }
 
+/** Sanctions a nation may run at once — lifting one frees the slot again. */
+export function sanctionsLeft(state: GameState, nationId?: NationId): number {
+  const id = nationId ?? currentNationId(state);
+  const live = state.nations[id].sanctions.filter((s) => !state.nations[s].eliminated);
+  return Math.max(0, MAX_SANCTIONS - live.length);
+}
+
 export function toggleSanction(state: GameState, target: NationId, nationId?: NationId): GameState {
   const id = nationId ?? currentNationId(state);
   const n = state.nations[id];
   if (n.eliminated || target === id || state.nations[target].eliminated) return state;
 
   const has = n.sanctions.includes(target);
+  // Only two rivals at a time, so a sanction is a choice about who to squeeze
+  if (!has && sanctionsLeft(state, id) < 1) return state;
   const sanctions = has ? n.sanctions.filter((s) => s !== target) : [...n.sanctions, target];
   return {
     ...state,
@@ -1587,6 +1633,8 @@ export function nextRound(state: GameState): GameState {
       bombsBoughtThisRound: 0,
       citiesDronedThisRound: [],
       dronesBoughtThisRound: 0,
+      shieldsBoughtThisRound: 0,
+      dronesInterceptedThisRound: 0,
       envBoughtThisRound: false,
       promptsDoneThisRound: [],
     };

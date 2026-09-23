@@ -138,7 +138,9 @@ describe('3-player online simulation', () => {
     expect(state.aiPlanningComplete).toBe(true);
     const aiIds = state.turnOrder.filter((id) => !state.nations[id].isHuman);
     for (const id of aiIds) {
-      expect(state.nations[id].hasNuclearTech).toBe(true);
+      expect(
+        state.nations[id].cities.some((c) => c.hasResearch || c.hasShield),
+      ).toBe(true);
       expect(state.nations[id].money).toBeLessThan(10);
     }
   });
@@ -203,7 +205,6 @@ describe('3-player online simulation', () => {
     expect(aiIds.length).toBeGreaterThan(0);
     for (const id of aiIds) {
       const n = room.shared.nations[id];
-      expect(n.hasNuclearTech).toBe(true);
       expect(n.money).toBeLessThan(10);
       expect(n.cities.some((c) => c.hasResearch || c.hasShield)).toBe(true);
     }
