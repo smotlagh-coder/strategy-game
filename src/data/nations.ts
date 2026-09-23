@@ -163,7 +163,7 @@ export const COSTS = {
   nuclearTech: 4,
   aerospaceTech: 2,
   underground: 6,
-  rebuild: 5,
+  rebuild: 4,
   shield: 3,
   laser: 3.5,
   spy: 3,
@@ -201,6 +201,9 @@ export const MAX_DRONES_PER_ROUND = 3;
  * its opening turn.
  */
 export const MAX_SHIELDS_PER_ROUND = 1;
+
+/** Research centres a nation can break ground on in a single round. */
+export const MAX_RESEARCH_PER_ROUND = 1;
 /**
  * Swarms one laser battery can shoot down per round. The battery defends the
  * whole nation, so this budget — not the city it sits on — is what a swarming
@@ -236,6 +239,7 @@ export function initialNation(id: NationId): NationState {
     bombs: 0,
     hasAerospaceTech: false,
     hasSpyNetwork: false,
+    scoutedCities: [],
     aerospaceTechUnlockedRound: null,
     drones: 0,
     researchCenters: 0,
@@ -250,6 +254,7 @@ export function initialNation(id: NationId): NationState {
     dronesBoughtThisRound: 0,
     citiesDronedThisRound: [],
     shieldsBoughtThisRound: 0,
+    researchBoughtThisRound: 0,
     dronesInterceptedThisRound: 0,
     pendingDroneDamage: 0,
     envBoughtThisRound: false,

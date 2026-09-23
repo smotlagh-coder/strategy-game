@@ -1,5 +1,5 @@
 import './App.css';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ART, SFX } from './data/art';
 import {
   NATIONS,
@@ -11,7 +11,6 @@ import {
   MAX_SANCTIONS,
   RESEARCH_INCOME,
 } from './data/nations';
-import { LEADER_SPEECHES, speechFor } from './data/speeches';
 import {
   applyQueuedStrike,
   orderStrikesForResolution,
@@ -26,10 +25,11 @@ import {
   buyRebuild,
   buyUnderground,
   canBuyLaser,
+  canBuyResearch,
   canBuySpyNetwork,
   canBuyShield,
   sanctionsLeft,
-  seesDefences,
+  seesCity,
   canBuyRebuild,
   canBuyUnderground,
   droneDamageFor,
@@ -56,7 +56,6 @@ import {
   setMode,
   setPlayerNames,
   playerDisplayName,
-  startGame,
   toggleSanction,
   touchHumanActivity,
   citiesLeft,
@@ -146,12 +145,15 @@ function wizardArt(step: WizardStep): string {
     case 'aerospace':
       return ART.aerospaceTech;
     case 'drones':
-    case 'droneStrike':
-      return ART.drone;
+      return ART.droneSwarm;
     case 'researchAsk':
     case 'researchPick':
       return ART.researchLab;
     case 'bombs':
+      return ART.warheads;
+    /* The strike steps dock beside the board, so they keep the small cut-outs */
+    case 'droneStrike':
+      return ART.drone;
     case 'strike':
       return ART.missile;
     case 'undergroundAsk':
@@ -162,14 +164,14 @@ function wizardArt(step: WizardStep): string {
       return ART.rebuildCity;
     case 'shieldAsk':
     case 'shieldPick':
-      return ART.shield;
+      return ART.cityShield;
     case 'laserAsk':
     case 'laserPick':
       return ART.laserDefence;
     case 'spyAsk':
       return ART.spyServices;
     case 'env':
-      return ART.map;
+      return ART.environment;
     case 'sanctionAsk':
     case 'sanctionPick':
       return ART.sanction;
@@ -1258,6 +1260,7 @@ function NationPod({
   highlightCityIds,
   highlight,
   revealed = false,
+  viewerId = null,
   onSelectCity,
 }: {
   id: NationId;
@@ -1275,8 +1278,10 @@ function NationPod({
   /** Cities to pulse (e.g. destroyed this round) */
   highlightCityIds?: string[];
   highlight?: boolean;
-  /** Whether the viewer may read this nation's city defences (own, or spied) */
+  /** Whether every city of this nation is open to the viewer (own, or spied) */
   revealed?: boolean;
+  /** Who is looking, for per-city intel: a spy service, or a swarm that got through */
+  viewerId?: NationId | null;
   onSelectCity?: (nationId: NationId, cityId: string) => void;
 }) {
   const n = state.nations[id];
@@ -1319,9 +1324,12 @@ function NationPod({
       </div>
       <div className="nation-card__cities">
         {n.cities.map((raw) => {
-          // Without eyes on this nation, every standing city reads as bare
-          // ground: rubble is visible from orbit, defences are not
-          const c = revealed ? raw : hideDefences(raw);
+          // Without eyes on a city it reads as bare ground: rubble is visible
+          // from orbit, defences are not. A spy service opens the whole nation;
+          // a swarm that got through opens the one city it flew over.
+          const open =
+            revealed || (viewerId != null && seesCity(state, viewerId, id, raw.id));
+          const c = open ? raw : hideDefences(raw);
           const selected = selectedCityIds?.includes(c.id);
           const hitThisRound = blocked.has(c.id);
           const bombLocked = bombed.has(c.id) && !c.destroyed;
@@ -1332,9 +1340,9 @@ function NationPod({
           const bombProof = Boolean(c.isUnderground && selectionWeapon === 'nuke');
           const canTarget = Boolean(targetable && !c.destroyed && !hitThisRound && !bombProof);
           const className = `city-tile ${c.destroyed ? 'is-destroyed' : ''} ${c.hasShield ? 'has-shield' : ''} ${c.hasResearch ? 'has-research' : ''} ${selected ? 'is-selected' : ''} ${canTarget ? 'is-targetable' : ''} ${hitThisRound && !c.destroyed && !bombLocked ? 'is-hit-this-round' : ''} ${bombLocked ? 'is-bomb-locked' : ''} ${droneLocked || droneSelected ? 'is-drone-locked' : ''} ${c.isUnderground && !c.destroyed ? 'is-underground' : ''} ${c.hasLaser && !c.destroyed ? 'has-laser' : ''} ${c.rebuiltRound != null && !c.destroyed ? 'is-rebuilt' : ''} ${justHit ? 'is-just-hit' : ''}`;
-          const unknown = !revealed && !c.destroyed;
+          const unknown = !open && !c.destroyed;
           const title = unknown
-            ? `${c.name} — defences unknown (no spy service)`
+            ? `${c.name} — defences unknown: spy them, or send a swarm over`
             : c.isUnderground && !c.destroyed
             ? `${c.name} — underground city, cannot be destroyed`
             : bombLocked
@@ -1611,145 +1619,6 @@ function CountrySelect({
   );
 }
 
-function MeetLeaders({ state, onContinue }: { state: GameState; onContinue: () => void }) {
-  // Only the countries seated at this table speak at the summit
-  const seated = state.turnOrder;
-  const order = useMemo(
-    () => LEADER_SPEECHES.map((s) => s.nationId).filter((id) => seated.includes(id)),
-    [seated],
-  );
-  const [index, setIndex] = useState(0);
-  const [started, setStarted] = useState(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const current = speechFor(order[Math.min(index, order.length - 1)]);
-  const done = index >= order.length;
-
-  const playAt = useCallback((i: number) => {
-    if (i >= order.length) {
-      setIndex(order.length);
-      return;
-    }
-    const speech = speechFor(order[i]);
-    audioRef.current?.pause();
-    const audio = new Audio(speech.audioSrc);
-    audioRef.current = audio;
-    setIndex(i);
-    audio.play().catch(() => {
-      // Autoplay blocked until user gesture — show line anyway and advance on timer
-      window.setTimeout(() => playAt(i + 1), 4500);
-    });
-    audio.onended = () => {
-      window.setTimeout(() => playAt(i + 1), 400);
-    };
-  }, [order]);
-
-  const startBriefing = () => {
-    setStarted(true);
-    playAt(0);
-  };
-
-  useEffect(() => {
-    return () => {
-      audioRef.current?.pause();
-      audioRef.current = null;
-    };
-  }, []);
-
-  return (
-    <div className="screen screen--splash">
-      <MapBackdrop />
-      <div className="splash-veil" />
-      <div className="splash-content splash-content--wide">
-        <h1 className="stencil-title">MEET THE LEADERS</h1>
-        <p className="tagline">
-          {started
-            ? done
-              ? 'Briefing complete. Trust no one.'
-              : `${nationDef(current.nationId).leader} addresses the summit…`
-            : 'Each leader will state their position on nuclear technology. Listen carefully — they may be lying.'}
-        </p>
-
-        <div className="leaders-row">
-          {seated.map((id) => {
-            const n = nationDef(id);
-            const human = state.nations[n.id].isHuman;
-            const speaking = started && !done && current.nationId === n.id;
-            const spoken = started && order.indexOf(n.id) < index;
-            return (
-              <div
-                key={n.id}
-                className={`leader-reveal ${human ? 'is-human' : ''} ${speaking ? 'is-speaking' : ''} ${spoken ? 'has-spoken' : ''}`}
-              >
-                <img src={ART.leaders[n.id]} alt={n.leader} />
-                <strong>{n.name}</strong>
-                <span>{n.leader}</span>
-                <em>{human ? playerDisplayName(state, n.id) : 'Computer'}</em>
-                {speaking && <span className="speaking-eq" aria-hidden />}
-              </div>
-            );
-          })}
-        </div>
-
-        {started && !done && (
-          <div className="speech-bubble enter-pop" key={current.nationId}>
-            <img src={ART.leaders[current.nationId]} alt="" />
-            <div>
-              <strong>{nationDef(current.nationId).leader}</strong>
-              <p>“{current.publicLine}”</p>
-            </div>
-          </div>
-        )}
-
-        {done && (
-          <p className="deceit-hint enter-pop">
-            Official statements end here. True intentions remain classified — watch what they buy.
-          </p>
-        )}
-
-        <div className="meet-actions">
-          {!started && (
-            <button className="btn btn--xl btn--primary" onClick={startBriefing}>
-              Play Leader Briefing
-            </button>
-          )}
-          {started && !done && (
-            <button
-              className="btn btn--primary"
-              onClick={() => {
-                audioRef.current?.pause();
-                playAt(index + 1);
-              }}
-            >
-              Skip Line →
-            </button>
-          )}
-          <button
-            className="btn btn--xl btn--primary"
-            disabled={!done && started}
-            onClick={() => {
-              audioRef.current?.pause();
-              onContinue();
-            }}
-          >
-            {done || !started ? 'Begin Round 1' : 'Wait for briefing…'}
-          </button>
-          {started && !done && (
-            <button
-              className="btn"
-              onClick={() => {
-                audioRef.current?.pause();
-                setIndex(order.length);
-              }}
-            >
-              Skip All
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function canOfferTech(state: GameState, actorId: NationId): boolean {
   const n = state.nations[actorId];
   return !n.hasNuclearTech && n.money >= COSTS.nuclearTech;
@@ -1765,10 +1634,7 @@ function canOfferDrones(state: GameState, actorId: NationId): boolean {
 }
 
 function canOfferResearch(state: GameState, actorId: NationId): boolean {
-  const n = state.nations[actorId];
-  return (
-    n.money >= COSTS.research && n.cities.some((c) => !c.destroyed && !c.hasResearch)
-  );
+  return canBuyResearch(state, actorId);
 }
 
 function canOfferBombs(state: GameState, actorId: NationId): boolean {
@@ -1903,7 +1769,12 @@ function GameBoard({
   const stateRef = useRef(state);
   stateRef.current = state;
   const aiRunningRef = useRef(false);
-  const wizardStartedRoundRef = useRef<number | null>(null);
+  /**
+   * Which nation's turn the prompts were last opened for, as `round:nation`.
+   * Hot-seat passes the device to a second human inside the same round, so a
+   * round number alone would swallow the second player's turn entirely.
+   */
+  const wizardStartedTurnRef = useRef<string | null>(null);
   const lastActivityRef = useRef(Date.now());
   const kickingRef = useRef(false);
   const onKickedRef = useRef(onKicked);
@@ -2070,9 +1941,10 @@ function GameBoard({
       return;
     }
     if (roundBriefingActive) return;
-    if (wizardStartedRoundRef.current === state.round) return;
+    const turnKey = `${state.round}:${actorId}`;
+    if (wizardStartedTurnRef.current === turnKey) return;
 
-    wizardStartedRoundRef.current = state.round;
+    wizardStartedTurnRef.current = turnKey;
     lastActivityRef.current = Date.now();
     setIdleSecondsLeft(Math.ceil(SELECTION_IDLE_MS / 1000));
     setTargets([]);
@@ -2886,7 +2758,8 @@ function GameBoard({
                 <h3 className="turn-wizard__q">Open a spy service?</h3>
                 <p className="turn-wizard__hint">
                   {COSTS.spy}M once · shields, research, bunkers and laser networks on every
-                  enemy city, for the rest of the war
+                  enemy city, for the rest of the war · the slow way is one drone swarm
+                  per city
                 </p>
                 <div className="turn-wizard__actions">
                   <button
@@ -3085,7 +2958,7 @@ function GameBoard({
                 : ''}
               . Strikes launch with everyone else at round end.
               {!turn.hasSpyNetwork &&
-                ' You have no eyes on their cities: a shield you cannot see will eat the warhead, and a bunker will break it.'}
+                ' You have no eyes on their cities: a shield you cannot see will eat the warhead, and a bunker will break it. Send a swarm over first and it reports back what is down there.'}
             </p>
             {targets.length > 0 && (
               <p className="target-label">
@@ -3140,8 +3013,11 @@ function GameBoard({
               batteries shoot swarms down for nothing. Swarm a city you also
               bombed and its shield is too busy to stop the warhead — the city
               falls, so there is no repair bill to collect.
+              {' '}
+              A swarm that gets through also reports what it flew over: that city's
+              defences stay on your map for the rest of the war.
               {!turn.hasSpyNetwork &&
-                ' Without a spy service you cannot see which nations have a laser network.'}
+                ' Until then you cannot see which nations have a laser network to burn the swarm first.'}
             </p>
             {droneTargets.length > 0 && (
               <p className="target-label">
@@ -3331,7 +3207,7 @@ function GameBoard({
                 id={id}
                 variant="enemy"
                 state={state}
-                revealed={seesDefences(state, actorId, id)}
+                viewerId={actorId}
                 selectedCityIds={selectedCityIds}
                 targetable={strikeSelectMode}
                 blockedCityIds={
@@ -3556,6 +3432,7 @@ function RoundSummary({
                       variant="enemy"
                       state={state}
                       revealed={worldRevealed}
+                      viewerId={myCityIds[0] ?? null}
                       highlightCityIds={destroyedCityIds}
                       highlight={state.nations[id].eliminated}
                     />
@@ -3606,6 +3483,7 @@ function RoundSummary({
                 variant="enemy"
                 state={state}
                 revealed={worldRevealed}
+                viewerId={myCityIds[0] ?? null}
                 highlightCityIds={destroyedCityIds}
                 highlight={state.nations[id].eliminated}
               />
@@ -3837,7 +3715,6 @@ export default function App() {
       state.phase === 'names' ||
       state.phase === 'lobby' ||
       state.phase === 'country' ||
-      state.phase === 'leaders' ||
       state.phase === 'gameOver';
     if (preGame) {
       if (state.phase === 'gameOver' || state.phase === 'mode' || state.phase === 'lobby') {
@@ -4177,10 +4054,16 @@ export default function App() {
         />
       )}
       {state.phase === 'country' && (
-        <CountrySelect state={state} onPick={(id) => setState((s) => pickCountry(s, id))} />
-      )}
-      {state.phase === 'leaders' && (
-        <MeetLeaders state={state} onContinue={() => setState((s) => advancePastAi(startGame(s)))} />
+        <CountrySelect
+          state={state}
+          onPick={(id) =>
+            setState((s) => {
+              const next = pickCountry(s, id);
+              // The last seat picked starts the match; the first hands over
+              return next.phase === 'buy' ? advancePastAi(next) : next;
+            })
+          }
+        />
       )}
       {(state.phase === 'buy' ||
         state.phase === 'action' ||

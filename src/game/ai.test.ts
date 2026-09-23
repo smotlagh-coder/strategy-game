@@ -144,10 +144,10 @@ describe('AI purchasing', () => {
     s = { ...s, currentTurnIndex: s.turnOrder.indexOf('uk') };
     const after = runAiBuyPhase(s);
     const uk = after.nations.uk;
-    // The rules allow one shield a round; the economy is funded before the
-    // arsenal, which is built from whatever is left
+    // The rules allow one shield and one research centre a round; the economy
+    // is funded before the arsenal, which is built from whatever is left
     expect(uk.cities.filter((c) => c.hasShield).length).toBe(1);
-    expect(uk.cities.filter((c) => c.hasResearch).length).toBe(2);
+    expect(uk.cities.filter((c) => c.hasResearch).length).toBe(1);
     expect(uk.hasAerospaceTech).toBe(true);
   });
 

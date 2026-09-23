@@ -8,6 +8,7 @@ import {
   MAX_DRONES_PER_ROUND,
   LASER_INTERCEPTS_PER_ROUND,
   MAX_SANCTIONS,
+  MAX_RESEARCH_PER_ROUND,
   MAX_SHIELDS_PER_ROUND,
   MAX_ROUNDS,
   NATIONS,
@@ -545,14 +546,14 @@ export function pickCountry(state: GameState, id: NationId): GameState {
         playerSlot: n.id === id ? 1 : undefined,
       };
     }
-    return {
+    // Straight into round 1 — there is no briefing to sit through
+    return startGame({
       ...state,
       nations,
       turnOrder: seatTable([id], { keep: state.turnOrder }),
       humanNations: [id],
-      phase: 'leaders',
       pendingCountryPick: id,
-    };
+    });
   }
 
   // Two player
@@ -572,14 +573,13 @@ export function pickCountry(state: GameState, id: NationId): GameState {
   const nations = { ...state.nations };
   nations[id] = { ...nations[id], isHuman: true, playerSlot: 2 };
   const humanNations = [...state.humanNations, id];
-  return {
+  return startGame({
     ...state,
     nations,
     turnOrder: seatTable(humanNations, { keep: state.turnOrder }),
     humanNations,
-    phase: 'leaders',
     pendingCountryPick: id,
-  };
+  });
 }
 
 export function startGame(state: GameState): GameState {
@@ -809,6 +809,34 @@ export function seesDefences(state: GameState, viewerId: NationId, targetId: Nat
 }
 
 /**
+ * Whether `viewerId` can read one particular city. A spy service opens every
+ * city at once; a drone swarm that gets through opens the city it flew over,
+ * and that knowledge keeps for the rest of the war.
+ */
+export function seesCity(
+  state: GameState,
+  viewerId: NationId,
+  targetId: NationId,
+  cityId: string,
+): boolean {
+  if (seesDefences(state, viewerId, targetId)) return true;
+  return Boolean(state.nations[viewerId]?.scoutedCities?.includes(cityId));
+}
+
+/** Record what a swarm saw on its way in — permanent intel on that one city. */
+export function scoutCity(state: GameState, viewerId: NationId, cityId: string): GameState {
+  const viewer = state.nations[viewerId];
+  if (!viewer || viewer.scoutedCities.includes(cityId)) return state;
+  return {
+    ...state,
+    nations: {
+      ...state.nations,
+      [viewerId]: { ...viewer, scoutedCities: [...viewer.scoutedCities, cityId] },
+    },
+  };
+}
+
+/**
  * A city as `viewerId` sees it. Rubble and rebuilds are visible from orbit;
  * shields, research, bunkers and laser networks are not, so an unspied enemy
  * city looks like bare ground and has to be attacked on guesswork.
@@ -819,7 +847,7 @@ export function cityAsSeenBy(
   targetId: NationId,
   city: City,
 ): City {
-  if (seesDefences(state, viewerId, targetId)) return city;
+  if (seesCity(state, viewerId, targetId, city.id)) return city;
   return {
     ...city,
     hasShield: false,
@@ -922,10 +950,22 @@ export function buyBombs(state: GameState, count: number, nationId?: NationId): 
   return s;
 }
 
+/** One site at a time: a nation cannot break ground on two centres in a round. */
+export function canBuyResearch(state: GameState, nationId?: NationId): boolean {
+  const id = nationId ?? currentNationId(state);
+  const n = state.nations[id];
+  return (
+    !n.eliminated &&
+    n.money >= COSTS.research &&
+    n.researchBoughtThisRound < MAX_RESEARCH_PER_ROUND &&
+    n.cities.some((c) => !c.destroyed && !c.hasResearch)
+  );
+}
+
 export function buyResearch(state: GameState, cityId?: string, nationId?: NationId): GameState {
   const id = nationId ?? currentNationId(state);
   const n = state.nations[id];
-  if (n.money < COSTS.research || n.eliminated) return state;
+  if (!canBuyResearch(state, id)) return state;
 
   const target =
     (cityId && n.cities.find((c) => c.id === cityId && !c.destroyed && !c.hasResearch)) ||
@@ -946,6 +986,7 @@ export function buyResearch(state: GameState, cityId?: string, nationId?: Nation
         money: +(n.money - COSTS.research).toFixed(2),
         cities,
         researchCenters,
+        researchBoughtThisRound: n.researchBoughtThisRound + 1,
       },
     },
     log: [
@@ -1210,7 +1251,9 @@ export function queueStrike(
   // Warheads cannot crack a bunker city; drones still run up a repair bill.
   // An attacker with no eyes on the target does not know that, so the warhead
   // flies anyway and breaks against the rock at resolution.
-  if (city.isUnderground && !drone && seesDefences(state, attackerId, targetNation)) return state;
+  if (city.isUnderground && !drone && seesCity(state, attackerId, targetNation, city.id)) {
+    return state;
+  }
 
   const strike: PendingStrike = {
     attackerId,
@@ -1293,7 +1336,10 @@ export function laserShotsKnownTo(
   viewerId: NationId,
   targetId: NationId,
 ): number {
-  if (!seesDefences(state, viewerId, targetId)) return 0;
+  const battery = state.nations[targetId]?.cities.find((c) => !c.destroyed && c.hasLaser);
+  // A beam gives away the city that fired it, so a swarm shot down counts as
+  // having found the network the hard way.
+  if (!battery || !seesCity(state, viewerId, targetId, battery.id)) return 0;
   return laserInterceptsLeft(state, targetId);
 }
 
@@ -1327,10 +1373,13 @@ function applyDroneStrike(
   if (laserInterceptsLeft(state, strike.targetNationId) > 0) {
     const fired = defender.dronesInterceptedThisRound + 1;
     const left = LASER_INTERCEPTS_PER_ROUND - fired;
+    // The swarm dies, but the beam shows the attacker where the battery sits
+    const battery = defender.cities.find((c) => !c.destroyed && c.hasLaser);
+    const seen = battery ? scoutCity(state, strike.attackerId, battery.id) : state;
     return {
-      ...state,
+      ...seen,
       nations: {
-        ...state.nations,
+        ...seen.nations,
         [strike.targetNationId]: { ...defender, dronesInterceptedThisRound: fired },
       },
       log: [
@@ -1357,17 +1406,19 @@ function applyDroneStrike(
 
   const damage = droneDamageFor(city);
   const defended = damage < DRONE_DAMAGE;
+  // The swarm got over the city, so the attacker has now seen what defends it
+  const seen = scoutCity(state, strike.attackerId, city.id);
   return {
-    ...state,
+    ...seen,
     nations: {
-      ...state.nations,
+      ...seen.nations,
       [strike.targetNationId]: {
         ...defender,
         pendingDroneDamage: +((defender.pendingDroneDamage ?? 0) + damage).toFixed(2),
       },
     },
     log: [
-      ...state.log,
+      ...seen.log,
       log(
         `${nationDef(strike.attackerId).name}'s drones hit ${city.name} (${nationDef(strike.targetNationId).name}) — $${damage}M in damages${defended ? ' (defences took the brunt)' : ''}.`,
         'attack',
@@ -1706,6 +1757,7 @@ export function nextRound(state: GameState): GameState {
       citiesDronedThisRound: [],
       dronesBoughtThisRound: 0,
       shieldsBoughtThisRound: 0,
+      researchBoughtThisRound: 0,
       dronesInterceptedThisRound: 0,
       envBoughtThisRound: false,
       promptsDoneThisRound: [],

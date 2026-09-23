@@ -14,6 +14,7 @@ import {
   buyRebuild,
   buyUnderground,
   canBuyLaser,
+  canBuyResearch,
   canBuyRebuild,
   canBuySpyNetwork,
   canBuyShield,
@@ -29,6 +30,7 @@ import {
   maxBombsPurchasable,
   maxDronesPurchasable,
   queueStrike,
+  seesCity,
   researchCount,
   sanctionsLeft,
   toggleSanction,
@@ -152,8 +154,12 @@ export function pickDroneTarget(
       .filter((s) => s.attackerId === attackerId && s.weapon !== 'drone')
       .map((s) => `${s.targetNationId}:${s.cityId}`),
   );
+  const blind = !state.nations[attackerId].hasSpyNetwork;
   const value = (rivalId: NationId, city: City) => {
     if (nuking.has(`${rivalId}:${city.id}`)) return 3;
+    // Blind, a swarm is also a scout: the city it flies over is readable for
+    // the rest of the war, which is worth more than a marginal repair bill.
+    if (blind && !seesCity(state, attackerId, rivalId, city.id)) return 2.5;
     if (!city.hasShield && !city.isUnderground) return 2;
     return 1;
   };
@@ -243,11 +249,11 @@ export function runAiBuyPhase(state: GameState): GameState {
   }
 
   // Two centres is the sweet spot: the third costs a shield's worth of cash and
-  // paints the city as the juiciest target on the board.
-  while (researchCount(s, id) < 2 && budget() >= COSTS.research) {
+  // paints the city as the juiciest target on the board. Only one site a round,
+  // so the second centre waits for next round's budget like everyone else's.
+  if (researchCount(s, id) < 2 && canBuyResearch(s, id) && budget() >= COSTS.research) {
     const spot = me().cities.find((c) => !c.destroyed && !c.hasResearch);
-    if (!spot) break;
-    s = buyResearch(s, spot.id, id);
+    if (spot) s = buyResearch(s, spot.id, id);
   }
 
   // Eyes before warheads. The standings say how many shields a rival has put
@@ -308,7 +314,25 @@ export function runAiBuyPhase(state: GameState): GameState {
   // can suppress with a swarm in the same volley.
   const targets = openTargets(s, id);
   const undefended = targets.filter((c) => !c.hasShield).length;
-  const shielded = targets.length - undefended;
+  // Without a spy service the shielded city cannot be picked out, but the
+  // count is public on the scoreboard: a nation that knows three shields are
+  // up still buys the swarms to suppress them, it just cannot aim them.
+  // Blind, the shielded city cannot be picked out, but the count is public on
+  // the scoreboard. Escorts are only worth buying when the odds of hitting a
+  // shield are real: simulation puts break-even at one shield per two standing
+  // enemy cities, below which the money belongs in warheads.
+  const rivals = aliveNations(s).filter((nid) => nid !== id);
+  const knownShields = rivals.reduce((total, nid) => total + computeScore(s, nid).shields, 0);
+  const rivalCities = rivals.reduce(
+    (total, nid) => total + s.nations[nid].cities.filter((c) => !c.destroyed).length,
+    0,
+  );
+  const worthEscorting = rivalCities > 0 && knownShields * 2 >= rivalCities;
+  const shielded = me().hasSpyNetwork
+    ? targets.length - undefended
+    : worthEscorting
+      ? Math.min(targets.length, knownShields)
+      : 0;
   const escortable = me().hasAerospaceTech || me().drones > 0 ? shielded : 0;
   let warheads = Math.min(MAX_BOMBS_PER_ROUND, undefended + escortable);
   while (warheads > 0 && maxBombsPurchasable(s, id) > 0) {
@@ -324,6 +348,26 @@ export function runAiBuyPhase(state: GameState): GameState {
   );
   for (let i = 0; i < wantDrones; i += 1) {
     if (spare() < COSTS.drone) break;
+    s = buyDrone(s, id);
+  }
+
+  // A swarm is the cheap way to find out what a city is hiding: it flies for
+  // the price of half a warhead and, if it gets through, the defences are on
+  // the table for the rest of the war. Worth one pack out of spare cash while
+  // there is still a round left to use what it brings back.
+  const blindOnSomething = aliveNations(s)
+    .filter((nid) => nid !== id)
+    .some((nid) =>
+      s.nations[nid].cities.some((c) => !c.destroyed && !seesCity(s, id, nid, c.id)),
+    );
+  if (
+    blindOnSomething &&
+    // Intel is only worth buying for a nation that can act on it
+    me().hasNuclearTech &&
+    s.round < s.maxRounds &&
+    maxDronesPurchasable(s, id) > 0 &&
+    spare() >= COSTS.drone + COSTS.bomb
+  ) {
     s = buyDrone(s, id);
   }
 

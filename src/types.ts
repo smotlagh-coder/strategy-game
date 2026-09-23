@@ -19,7 +19,6 @@ export type Phase =
   | 'mode'
   | 'names'
   | 'country'
-  | 'leaders'
   | 'lobby'
   | 'income'
   | 'buy'
@@ -67,6 +66,8 @@ export interface NationState {
   researchCenters: number;
   /** Spy service bought — reveals enemy city defences for the rest of the game */
   hasSpyNetwork: boolean;
+  /** Enemy city ids this nation has seen the defences of, by spying or by swarm */
+  scoutedCities: string[];
   eliminated: boolean;
   /** Nations this nation is currently sanctioning */
   sanctions: NationId[];
@@ -88,6 +89,8 @@ export interface NationState {
   citiesDronedThisRound: string[];
   /** Shields installed this round (max 1) */
   shieldsBoughtThisRound: number;
+  /** Research centres built this round (max 1) */
+  researchBoughtThisRound: number;
   /** Swarms this nation's laser network shot down this round */
   dronesInterceptedThisRound: number;
   /** Drone damage billed to this nation at the next income (see applyIncome) */
