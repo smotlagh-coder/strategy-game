@@ -829,6 +829,15 @@ export function seesCity(
   return Boolean(state.nations[viewerId]?.scoutedCities?.includes(cityId));
 }
 
+/**
+ * Put one city on every nation's map. A warhead breaking against rock is not a
+ * secret anyone can keep: the whole table watched it bounce, so from then on
+ * that city is read as the bunker it is, by everybody.
+ */
+export function revealCityToEveryone(state: GameState, cityId: string): GameState {
+  return state.turnOrder.reduce((seen, id) => scoutCity(seen, id, cityId), state);
+}
+
 /** Record what a swarm saw on its way in — permanent intel on that one city. */
 export function scoutCity(state: GameState, viewerId: NationId, cityId: string): GameState {
   const viewer = state.nations[viewerId];
