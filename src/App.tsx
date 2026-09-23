@@ -49,7 +49,9 @@ import {
   markPromptDone,
   maxBombsPurchasable,
   maxDronesPurchasable,
+  needsOvertime,
   nextRound,
+  tiedForTheLead,
   pickCountry,
   queueStrikes,
   setMode,
@@ -174,6 +176,24 @@ function wizardArt(step: WizardStep): string {
     default:
       return ART.missile;
   }
+}
+
+/**
+ * A nation running a spy service is drawn in the cap and shades, so the table
+ * can see who is watching without a badge sitting over the portrait.
+ */
+function leaderArt(state: GameState, id: NationId): string {
+  return state.nations[id]?.hasSpyNetwork ? ART.leadersSpy[id] : ART.leaders[id];
+}
+
+/**
+ * A city that has moved underground is redrawn inside its rock cavern, so the
+ * board shows what it has become rather than labelling it.
+ */
+function cityArt(city: City): string {
+  return city.isUnderground && !city.destroyed
+    ? ART.citiesUnderground[city.id]
+    : ART.cities[city.id];
 }
 
 interface FxEvent {
@@ -1112,10 +1132,9 @@ function WizardCityCard({
   blocked?: string;
   onPick: () => void;
 }) {
+  /* The shield is the dome over the art and underground is the art itself, so
+     only these two still need a badge */
   const badges = [
-    city.hasShield && !city.destroyed && { key: 'shield', src: ART.shield, label: 'Shield' },
-    city.isUnderground &&
-      !city.destroyed && { key: 'bunker', src: ART.undergroundIcon, label: 'Underground' },
     city.hasResearch &&
       !city.destroyed && { key: 'research', src: ART.researchIcon, label: 'Research' },
     city.hasLaser && !city.destroyed && { key: 'laser', src: ART.laserIcon, label: 'Lasers' },
@@ -1129,11 +1148,14 @@ function WizardCityCard({
       title={`${city.name} — ${blocked ?? cityStatusLabel(city)}`}
     >
       <span className="turn-wizard__city-art">
-        <img src={ART.cities[city.id]} alt="" draggable={false} />
+        <img src={cityArt(city)} alt="" draggable={false} />
+        {city.hasShield && !city.destroyed && <span className="city-dome" aria-hidden />}
         {badges.length > 0 && (
           <span className="turn-wizard__city-badges">
             {badges.map((b) => (
-              <img key={b.key} src={b.src} alt={b.label} title={b.label} draggable={false} />
+              <span key={b.key} className={`is-${b.key}`} title={b.label}>
+                <img src={b.src} alt={b.label} draggable={false} />
+              </span>
             ))}
           </span>
         )}
@@ -1201,14 +1223,12 @@ function WizardNationHeader({
   const def = nationDef(nationId);
   return (
     <div className={`modal__head wizard-nation-head ${compact ? 'wizard-nation-head--compact' : ''}`}>
-      <div className="wizard-nation-head__emblem">
-        <img className="modal__leader" src={ART.leaders[nationId]} alt="" />
-        {state.nations[nationId].hasSpyNetwork && (
-          <span className="spy-badge" title="Spy service" aria-label="Spy service">
-            <img src={ART.spyIcon} alt="" draggable={false} />
-          </span>
-        )}
-      </div>
+      <img
+        className="modal__leader"
+        src={leaderArt(state, nationId)}
+        alt=""
+        title={state.nations[nationId].hasSpyNetwork ? 'Spy service' : undefined}
+      />
       <div>
         <p className="wizard-nation-head__country">{def.name}</p>
         <h2>
@@ -1281,16 +1301,11 @@ function NationPod({
       data-nation-id={id}
     >
       <div className="nation-card__portrait" data-nation-portrait={id}>
-        <img src={ART.leaders[id]} alt={def.leader} />
-        {n.hasSpyNetwork && (
-          <span
-            className="spy-badge"
-            title="Spy service — reads every nation's city defences"
-            aria-label="Spy service"
-          >
-            <img src={ART.spyIcon} alt="" draggable={false} />
-          </span>
-        )}
+        <img
+          src={leaderArt(state, id)}
+          alt={def.leader}
+          title={n.hasSpyNetwork ? "Spy service — reads every nation's city defences" : undefined}
+        />
         <div className="nation-card__meta">
           <strong>
             {playerDisplayName(state, id)}
@@ -1342,25 +1357,14 @@ function NationPod({
               )}
               <img
                 className="city-tile__art"
-                src={ART.cities[c.id]}
+                src={cityArt(c)}
                 alt={c.name}
                 draggable={false}
               />
-              {c.hasShield && !c.destroyed && (
-                <span className="city-tile__dome" aria-hidden />
-              )}
+              {c.hasShield && !c.destroyed && <span className="city-dome" aria-hidden />}
               {c.hasResearch && !c.destroyed && (
                 <span className="city-tile__research" title="Research" aria-label="Research">
                   <img src={ART.researchIcon} alt="" draggable={false} />
-                </span>
-              )}
-              {c.isUnderground && !c.destroyed && (
-                <span
-                  className="city-tile__bunker"
-                  title="Underground city — cannot be destroyed"
-                  aria-label="Underground city"
-                >
-                  <img src={ART.undergroundIcon} alt="" draggable={false} />
                 </span>
               )}
               {c.hasLaser && !c.destroyed && (
@@ -2304,6 +2308,11 @@ function GameBoard({
       ? [actorId]
       : state.turnOrder.filter((id) => state.nations[id].isHuman);
   const enemyIds = state.turnOrder.filter((id) => !allyIds.includes(id));
+  // The Enemies panel is read by whoever is at the screen, not by whoever is
+  // taking their turn: while the AI moves, `actorId` is the AI, and reading the
+  // board through its eyes would hide the defences the player paid to see.
+  const enemyViewerId = allyIds[0] ?? actorId;
+  const enemiesRevealed = allyIds.some((id) => state.nations[id].hasSpyNetwork);
 
   return (
     <div className={`screen screen--board${strikeSelectMode ? ' is-striking' : ''}`}>
@@ -2850,7 +2859,7 @@ function GameBoard({
                           });
                         }}
                       >
-                        <img src={ART.leaders[nid]} alt="" draggable={false} />
+                        <img src={leaderArt(state, nid)} alt="" draggable={false} />
                         <strong>{n.name}</strong>
                         <span>
                           {active
@@ -3017,18 +3026,16 @@ function GameBoard({
             {isHumanTurn && (
               <div className="panel panel--shop enter-pop">
                 <div className="modal__head">
-                  <span className="leader-emblem">
-                    <img className="modal__leader" src={ART.leaders[actorId]} alt="" />
-                    {turn.hasSpyNetwork && (
-                      <span
-                        className="spy-badge"
-                        title="Spy service — enemy city defences are visible to you"
-                        aria-label="Spy service"
-                      >
-                        <img src={ART.spyIcon} alt="" draggable={false} />
-                      </span>
-                    )}
-                  </span>
+                  <img
+                    className="modal__leader"
+                    src={leaderArt(state, actorId)}
+                    alt=""
+                    title={
+                      turn.hasSpyNetwork
+                        ? 'Spy service — enemy city defences are visible to you'
+                        : undefined
+                    }
+                  />
                   <div>
                     <h2>
                       {playerDisplayName(state, actorId).toUpperCase()}
@@ -3100,7 +3107,7 @@ function GameBoard({
 
             {isSpectator && mySeatId && (state.phase === 'buy' || state.phase === 'action') && (
               <div className="panel panel--ai enter-pop">
-                <img src={ART.leaders[mySeatId]} alt="" />
+                <img src={leaderArt(state, mySeatId)} alt="" />
                 <h2>{nationDef(mySeatId).name} is in ruins</h2>
                 <p>
                   You are out of the fight, but your score stands — watch the rest of the
@@ -3112,7 +3119,7 @@ function GameBoard({
 
             {!isHumanTurn && !isSpectator && (state.phase === 'buy' || state.phase === 'action') && (
               <div className="panel panel--ai enter-pop">
-                <img src={ART.leaders[turnId]} alt="" />
+                <img src={leaderArt(state, turnId)} alt="" />
                 <h2>{nationDef(turnId).leader} is acting…</h2>
                 <p>
                   {nationDef(turnId).name} · Cities {citiesLeft(state, turnId)}/3 · Bombs{' '}
@@ -3149,7 +3156,8 @@ function GameBoard({
                 id={id}
                 variant="enemy"
                 state={state}
-                viewerId={actorId}
+                viewerId={enemyViewerId}
+                revealed={enemiesRevealed}
                 selectedCityIds={selectedCityIds}
                 targetable={strikeSelectMode}
                 blockedCityIds={
@@ -3216,7 +3224,11 @@ function RoundSummary({
     .map((e) => e.cityId)
     .filter((id): id is string => Boolean(id) && !rebuiltCityIds.has(id));
   const isOnline = state.mode === 'online';
-  const isFinal = state.round >= state.maxRounds;
+  // A level scoreboard buys another round, so the last scheduled round is only
+  // the last one if somebody is actually ahead
+  const overtimeLeaders = state.round >= state.maxRounds ? tiedForTheLead(state) : [];
+  const goingToOvertime = needsOvertime(state) && overtimeLeaders.length > 1;
+  const isFinal = state.round >= state.maxRounds && !goingToOvertime;
   const myNationId =
     isOnline && sessionUid && state.uidToNation?.[sessionUid]
       ? state.uidToNation[sessionUid]
@@ -3245,7 +3257,9 @@ function RoundSummary({
         <span className="aftermath-countdown__hint">
           {secondsLeft == null
             ? 'Strategy timer starts when everyone finishes the launch sequence'
-            : 'Use this time to plan your strategy'}
+            : goingToOvertime
+              ? `${overtimeLeaders.map((id) => nationDef(id).name).join(' and ')} finish level — round ${state.round + 1} decides the superpower`
+              : 'Use this time to plan your strategy'}
         </span>
       </div>
       <div className="board-split round-report__split">
@@ -3268,7 +3282,7 @@ function RoundSummary({
                       key={row.nationId}
                       className={`score-card ${row.eliminated ? 'is-out' : ''} ${isLead ? 'is-lead' : ''} ${isYou ? 'is-you' : ''}`}
                     >
-                      <img src={ART.leaders[row.nationId]} alt="" />
+                      <img src={leaderArt(state, row.nationId)} alt="" />
                       <div>
                         <strong>
                           {row.eliminated ? 'OUT' : `#${i + 1}`} {nationDef(row.nationId).name}
@@ -3489,7 +3503,7 @@ function GameOver({
       <div className="game-over-layout">
         <header className="game-over-hero enter-pop">
           {state.winner && (
-            <img className="winner-art" src={ART.leaders[state.winner]} alt="" />
+            <img className="winner-art" src={leaderArt(state, state.winner)} alt="" />
           )}
           <div>
             <h1 className="stencil-title">SUPERPOWER</h1>
@@ -3518,7 +3532,7 @@ function GameOver({
                   key={row.nationId}
                   className={`score-card ${row.eliminated ? 'is-out' : ''} ${isWinner ? 'is-lead' : ''} ${isYou ? 'is-you' : ''}`}
                 >
-                  <img src={ART.leaders[row.nationId]} alt="" />
+                  <img src={leaderArt(state, row.nationId)} alt="" />
                   <div>
                     <strong>
                       #{i + 1} {nationDef(row.nationId).name}

@@ -210,6 +210,12 @@ export const LASER_INTERCEPTS_PER_ROUND = 2;
 /** Repair bill a drone pack inflicts on the city it swarms */
 export const DRONE_DAMAGE = 1.5;
 export const MAX_ROUNDS = 5;
+/**
+ * Extra rounds a deadlocked final round can buy. Two nations with untouchable
+ * bunkers can stay level forever, so the overtime runs out and the tiebreakers
+ * settle it.
+ */
+export const MAX_OVERTIME_ROUNDS = 3;
 
 export function nationDef(id: NationId): NationDef {
   return NATIONS.find((n) => n.id === id)!;

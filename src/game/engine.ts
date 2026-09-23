@@ -8,6 +8,7 @@ import {
   MAX_SANCTIONS,
   MAX_RESEARCH_PER_ROUND,
   MAX_SHIELDS_PER_ROUND,
+  MAX_OVERTIME_ROUNDS,
   MAX_ROUNDS,
   NATIONS,
   RESEARCH_INCOME,
@@ -442,6 +443,28 @@ function checkEliminations(state: GameState): GameState {
     }
   }
   return { ...state, nations, log: logEntries, roundEvents };
+}
+
+/**
+ * The living nations sharing the top score, or an empty list when one nation
+ * leads on its own. A shared lead is not a title.
+ */
+export function tiedForTheLead(state: GameState): NationId[] {
+  const contenders = allScores(state).filter((s) => !s.eliminated);
+  if (contenders.length < 2) return [];
+  const top = contenders[0].total;
+  const tied = contenders.filter((s) => s.total === top);
+  return tied.length > 1 ? tied.map((s) => s.nationId) : [];
+}
+
+/**
+ * Whether the last round settled nothing and the war should run one more. The
+ * overtime is capped: the extra rounds already granted are the distance
+ * `maxRounds` has been pushed beyond the scheduled match length.
+ */
+export function needsOvertime(state: GameState): boolean {
+  if (state.maxRounds - MAX_ROUNDS >= MAX_OVERTIME_ROUNDS) return false;
+  return tiedForTheLead(state).length > 1;
 }
 
 function pickLivingSuperpower(state: GameState): NationId | null {
@@ -1687,19 +1710,34 @@ export function endTurn(state: GameState): GameState {
 }
 
 export function nextRound(state: GameState): GameState {
-  const nextRoundNum = state.round + 1;
-  if (nextRoundNum > state.maxRounds) {
-    return checkWinner({ ...state, round: nextRoundNum });
+  let base = state;
+  const nextRoundNum = base.round + 1;
+  if (nextRoundNum > base.maxRounds) {
+    // Nobody takes the title on a shared score: the war runs an extra round
+    // and the leaders settle it between them.
+    if (!needsOvertime(base)) return checkWinner({ ...base, round: nextRoundNum });
+    const tied = tiedForTheLead(base).map((id) => nationDef(id).name);
+    base = {
+      ...base,
+      maxRounds: base.maxRounds + 1,
+      log: [
+        ...base.log,
+        log(
+          `${tied.join(' and ')} finish level — round ${nextRoundNum} decides the superpower.`,
+          'neutral',
+        ),
+      ],
+    };
   }
 
   // Reset to first alive in turn order
   let idx = 0;
-  while (idx < state.turnOrder.length && state.nations[state.turnOrder[idx]].eliminated) {
+  while (idx < base.turnOrder.length && base.nations[base.turnOrder[idx]].eliminated) {
     idx += 1;
   }
 
-  const clearedNations = { ...state.nations };
-  for (const id of state.turnOrder) {
+  const clearedNations = { ...base.nations };
+  for (const id of base.turnOrder) {
     clearedNations[id] = {
       ...clearedNations[id],
       citiesStruckThisRound: [],
@@ -1714,7 +1752,7 @@ export function nextRound(state: GameState): GameState {
   }
 
   let next: GameState = {
-    ...state,
+    ...base,
     round: nextRoundNum,
     currentTurnIndex: idx,
     phase: 'buy',
@@ -1722,7 +1760,7 @@ export function nextRound(state: GameState): GameState {
     pendingStrikes: [],
     roundEvents: [],
     aftermathEndsAt: null,
-    log: [...state.log, log(`Round ${nextRoundNum} begins.`, 'neutral')],
+    log: [...base.log, log(`Round ${nextRoundNum} begins.`, 'neutral')],
   };
   next = beginHumanPlanning(next);
   next = applyIncome(next);

@@ -719,28 +719,6 @@ img { max-width: 100%; display: block; }
     drop-shadow(0 0 9px rgba(245, 197, 66, 0.6));
 }
 
-.city-tile__bunker {
-  position: absolute;
-  bottom: 1.15rem;
-  right: 0;
-  z-index: 5;
-  display: grid;
-  place-items: center;
-  width: clamp(1.55rem, 24%, 2.4rem);
-  height: clamp(1.55rem, 24%, 2.4rem);
-  border-radius: 999px;
-  overflow: hidden;
-  background: rgba(28, 20, 4, 0.9);
-  border: 2px solid rgba(245, 197, 66, 0.9);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55), 0 0 10px rgba(245, 197, 66, 0.3);
-}
-
-.city-tile__bunker img {
-  width: 104%;
-  height: 104%;
-  object-fit: cover;
-}
-
 /* Sits under the bomb lock: an inbound warhead is the more urgent badge */
 .city-tile__laser {
   position: absolute;
@@ -783,42 +761,6 @@ img { max-width: 100%; display: block; }
   font-size: clamp(0.65rem, 1.6vh, 0.9rem);
   line-height: 1;
   pointer-events: none;
-}
-
-/* Spy service — worn next to the leader so the table knows who is watching */
-.leader-emblem {
-  position: relative;
-  display: inline-block;
-  flex-shrink: 0;
-}
-
-.spy-badge {
-  position: absolute;
-  right: -4px;
-  bottom: -4px;
-  z-index: 5;
-  display: grid;
-  place-items: center;
-  width: clamp(1.1rem, 2.6vh, 1.6rem);
-  height: clamp(1.1rem, 2.6vh, 1.6rem);
-  border-radius: 999px;
-  overflow: hidden;
-  background: rgba(6, 14, 28, 0.95);
-  border: 2px solid rgba(120, 190, 255, 0.85);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
-  pointer-events: none;
-}
-
-.spy-badge img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.nation-card__portrait .spy-badge {
-  right: 2px;
-  bottom: auto;
-  top: 2px;
 }
 
 .city-tile.is-drone-locked .city-tile__art {
@@ -1026,7 +968,7 @@ img { max-width: 100%; display: block; }
   text-overflow: ellipsis;
 }
 
-.city-tile__dome {
+.city-dome {
   position: absolute;
   inset: 0;
   pointer-events: none;
@@ -1037,7 +979,7 @@ img { max-width: 100%; display: block; }
     radial-gradient(ellipse 92% 88% at 50% 78%, rgba(90, 185, 255, 0.22) 0%, rgba(50, 140, 230, 0.18) 42%, transparent 70%);
 }
 
-.city-tile__dome::before {
+.city-dome::before {
   content: '';
   position: absolute;
   left: 5%;
@@ -1058,7 +1000,7 @@ img { max-width: 100%; display: block; }
   );
 }
 
-.city-tile__dome::after {
+.city-dome::after {
   content: '';
   position: absolute;
   left: 8%;
@@ -1181,14 +1123,10 @@ img { max-width: 100%; display: block; }
 .modal__leader {
   width: 48px;
   height: 48px;
+  flex-shrink: 0;
   border-radius: 12px;
   object-fit: cover;
   border: 2px solid rgba(255, 255, 255, 0.3);
-}
-
-.wizard-nation-head__emblem {
-  position: relative;
-  flex-shrink: 0;
 }
 
 .wizard-nation-head__country {
@@ -1805,26 +1743,58 @@ img { max-width: 100%; display: block; }
   filter: drop-shadow(0 5px 9px rgba(0, 0, 0, 0.6));
 }
 
-/* What the city already owns, read at a glance while picking */
+/* What the city already owns, read at a glance while picking: the same rings
+   the board uses, a size up because the picker tiles are bigger */
 .turn-wizard__city-badges {
   position: absolute;
   top: 0;
   right: 0;
+  z-index: 4;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 5px;
+  /* Tied to the card so a phone does not end up with badges over the skyline */
+  width: clamp(1.5rem, 26%, 2.2rem);
+}
+
+.turn-wizard__city-badges span {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(8, 18, 36, 0.85);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
 }
 
 .turn-wizard__city-badges img {
-  width: 22px;
-  height: 22px;
+  width: 100%;
+  height: 100%;
   aspect-ratio: auto;
-  object-fit: contain;
-  border-radius: 6px;
-  padding: 2px;
-  background: rgba(4, 12, 26, 0.85);
-  border: 1px solid rgba(150, 200, 255, 0.4);
+  object-fit: cover;
   filter: none;
+}
+
+.turn-wizard__city-badges .is-research {
+  border: 2px solid rgba(120, 220, 160, 0.85);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55), 0 0 10px rgba(80, 200, 140, 0.35);
+}
+
+.turn-wizard__city-badges .is-research img {
+  /* Crop the icon's dark margin so the plant fills the badge */
+  transform: scale(1.22);
+}
+
+.turn-wizard__city-badges .is-laser {
+  border: 2px solid rgba(96, 214, 255, 0.85);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55), 0 0 10px rgba(96, 214, 255, 0.35);
+}
+
+.turn-wizard__city-badges .is-laser img {
+  width: 88%;
+  height: 88%;
+  object-fit: contain;
 }
 
 .turn-wizard__city-card span {
