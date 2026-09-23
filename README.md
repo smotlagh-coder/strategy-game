@@ -30,9 +30,7 @@ Repo: [smotlagh-coder/strategy-game](https://github.com/smotlagh-coder/strategy-
 | Underground City | **$6M** — one city per nation, permanently: nukes cannot destroy it and it never needs a shield |
 | Rebuild city | **$4M** — raise a burnt city from the rubble, bare (no shield, research or bunker) |
 | Research center | **$2M** — place on a city; that city earns **+$1.5M**/round. **One site per nation per round.** Destroyed with the city. |
-| Environment | **$1M** — world health **+10%** (once per round) |
 | Sanction | −**10%** total revenue for the target. **Max 2 at a time** — and the target takes it personally |
-| Nuke hit | World environment **−5%** |
 | Drone hit | Target owes **$1.5M** in repairs, billed at their next income — halved to **$0.75M** if the city has a shield or is underground, and **$0** if the laser network shoots the swarm down or the city is destroyed in the same round |
 
 Every match seats **5 of the 12 countries**: each player's chosen country always plays, and the empty chairs are dealt at random from the countries nobody picked. In an online lobby a claimed country is locked to that player and greyed out for everyone else.
@@ -43,7 +41,7 @@ Rubble is not final: any burnt city can be **rebuilt for $4M** on a later turn, 
 
 An **Underground City** is the one city nobody can take from you: bombs are not even selectable against it, and a bomb already in the air when it goes underground breaks against the rock. It cannot be eliminated, so the nation holding one is guaranteed a seat at the final scores — but drone swarms still bill it for repairs (at the halved defended rate), and the other two cities remain exposed.
 
-**Mutual Destruction** only when world environment hits **0%**. Otherwise a living nation always becomes the superpower (ties broken by cities / survival points).
+Every match ends with a superpower: the last nation standing, or the highest score once five rounds are up (ties broken by cities / survival points).
 
 **Laser defence** is the answer to drones, and it is national. $3.5M buys one network per nation once you hold Aerospace Tech — it covers all three cities, not just the one it is installed on, and it shoots down the first **2 swarms** aimed at your country each round. A swarm that dies in the air costs you nothing: no repair bill, no warhead slipping past a busy shield, and nothing reported home about what the city is hiding.
 
@@ -278,7 +276,7 @@ App Engine runs `gcp-build` (`npm run build`) then `npm start` (serves `dist` on
 1. Enter your name (session)
 2. Choose Single, Hot-seat (2P), or Online Multiplayer
 3. Pick nation(s) / invite players
-4. Each turn: answer purchase prompts (nuclear tech, aerospace tech, research, bombs, drones, underground city, rebuild, shield, laser defence, spy service, environment, sanctions), then lock bomb targets and drone targets
+4. Each turn: answer purchase prompts (nuclear tech, aerospace tech, research, bombs, drones, underground city, rebuild, shield, laser defence, spy service, sanctions), then lock bomb targets and drone targets
 5. After all nations act, watch simultaneous strikes, review treasury + scores on the aftermath board
 
 ---

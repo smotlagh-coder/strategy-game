@@ -371,12 +371,6 @@ img { max-width: 100%; display: block; }
   text-align: right;
 }
 
-.wizard-nation-head__env {
-  margin: 0.2rem 0 0;
-  font-size: 0.78rem;
-  color: var(--muted);
-}
-
 .board-left__log {
   max-height: 2.4rem;
   overflow: hidden;
@@ -884,7 +878,6 @@ img { max-width: 100%; display: block; }
   display: none;
 }
 
-.env-meter,
 .round-pill {
   pointer-events: auto;
   display: inline-flex;
@@ -896,15 +889,6 @@ img { max-width: 100%; display: block; }
   border: 1px solid var(--line);
   backdrop-filter: blur(8px);
   font-weight: 800;
-}
-
-.env-meter--good { color: var(--good); }
-.env-meter--warn { color: var(--warn); }
-.env-meter--bad { color: var(--danger); animation: dangerPulse 1s infinite; }
-
-@keyframes dangerPulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 77, 77, 0.4); }
-  50% { box-shadow: 0 0 0 8px rgba(255, 77, 77, 0); }
 }
 
 .round-pill {
@@ -1524,7 +1508,6 @@ img { max-width: 100%; display: block; }
 
 .log-line--attack { color: #ff9a9a; }
 .log-line--money { color: #ffd56a; }
-.log-line--env { color: #6dffb0; }
 .log-line--sanction { color: #d2b0ff; }
 
 /* FX */
@@ -3198,13 +3181,12 @@ img { max-width: 100%; display: block; }
     overflow: hidden;
   }
 
-  /* Env, round and resources share one line */
+  /* Round and resources share one line */
   .board-left__hud {
     flex-wrap: nowrap;
     gap: 0.28rem;
   }
 
-  .board-left__hud .env-meter,
   .board-left__hud .round-pill {
     flex-shrink: 0;
     gap: 0.25rem;

@@ -2,8 +2,6 @@ import {
   BASE_INCOME,
   COSTS,
   DRONE_DAMAGE,
-  ENV_BOMB_HIT,
-  ENV_IMPROVE,
   MAX_BOMBS_PER_ROUND,
   MAX_DRONES_PER_ROUND,
   LASER_INTERCEPTS_PER_ROUND,
@@ -89,7 +87,6 @@ export function createInitialState(): GameState {
     phase: 'session',
     round: 1,
     maxRounds: MAX_ROUNDS,
-    environment: 100,
     nations,
     turnOrder: seatTable([]),
     currentTurnIndex: 0,
@@ -318,14 +315,11 @@ export function computeScore(state: GameState, id: NationId): RoundScore {
   const cities = citiesLeft(state, id);
   const shields = shieldsLeft(state, id);
   const research = researchCount(state, id);
-  // World environment above 70% unlocks positive eco points; otherwise 0 (never negative)
-  const envPoints =
-    state.environment > 70 ? Math.max(0, n.environmentScore) * 2 : 0;
   // City survival is scored each round (cities standing × points), then banked
   const survivalPoints = n.citySurvivalPoints;
   const liveTotal = Math.max(
     0,
-    cities * 30 + research * 12 + shields * 8 + envPoints + survivalPoints,
+    cities * 30 + research * 12 + shields * 8 + survivalPoints,
   );
   // Eliminated nations keep their frozen score from when they fell
   const total =
@@ -335,7 +329,6 @@ export function computeScore(state: GameState, id: NationId): RoundScore {
     citiesLeft: cities,
     researchCenters: research,
     shields,
-    environmentScore: state.environment > 70 ? Math.max(0, n.environmentScore) : 0,
     roundsSurvived: n.roundsSurvived,
     citySurvivalPoints: n.citySurvivalPoints,
     total: Math.round(total),
@@ -451,12 +444,12 @@ function checkEliminations(state: GameState): GameState {
   return { ...state, nations, log: logEntries, roundEvents };
 }
 
-function pickLivingSuperpower(state: GameState): NationId | 'draw' {
+function pickLivingSuperpower(state: GameState): NationId | null {
   const scores = allScores(state);
   const contenders = scores.filter((s) => !s.eliminated);
   if (contenders.length === 0) {
-    // No living nations — fall back to highest locked score, never mutual destruction
-    return scores[0]?.nationId ?? 'draw';
+    // No living nations — the highest locked score still takes the title
+    return scores[0]?.nationId ?? null;
   }
   const top = contenders[0].total;
   const tied = contenders.filter((s) => s.total === top);
@@ -473,16 +466,6 @@ function pickLivingSuperpower(state: GameState): NationId | 'draw' {
 }
 
 function checkWinner(state: GameState): GameState {
-  // Mutual destruction only when the environment has collapsed
-  if (state.environment <= 0) {
-    return {
-      ...state,
-      phase: 'gameOver',
-      winner: 'draw',
-      roundScores: allScores(state),
-    };
-  }
-
   const alive = aliveNations(state);
   if (alive.length <= 1) {
     return {
@@ -996,37 +979,6 @@ export function buyResearch(state: GameState, cityId?: string, nationId?: Nation
   };
 }
 
-export function buyEnvironment(state: GameState, nationId?: NationId): GameState {
-  const id = nationId ?? currentNationId(state);
-  const n = state.nations[id];
-  if (
-    n.money < COSTS.environment ||
-    n.eliminated ||
-    n.envBoughtThisRound ||
-    state.environment >= 100
-  ) {
-    return state;
-  }
-  return {
-    ...state,
-    environment: Math.min(100, state.environment + ENV_IMPROVE),
-    nations: {
-      ...state.nations,
-      [id]: {
-        ...n,
-        money: +(n.money - COSTS.environment).toFixed(2),
-        environmentScore: n.environmentScore + 10,
-        environmentBuys: n.environmentBuys + 1,
-        envBoughtThisRound: true,
-      },
-    },
-    log: [
-      ...state.log,
-      log(`${nationDef(id).name} invested in the environment (+${ENV_IMPROVE}%).`, 'env'),
-    ],
-  };
-}
-
 /** Rubble comes back as a bare city: the shield, the lab and the bunker are gone for good. */
 function raiseFromRubble(n: NationState, cityId: string, round: number): NationState {
   const cities = n.cities.map((c) =>
@@ -1452,7 +1404,6 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
   if (city && !city.destroyed && city.isUnderground) {
     return {
       ...state,
-      environment: Math.max(0, state.environment - ENV_BOMB_HIT),
       log: [
         ...state.log,
         log(
@@ -1546,7 +1497,6 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
 
   let next: GameState = {
     ...state,
-    environment: Math.max(0, state.environment - ENV_BOMB_HIT),
     nations: {
       ...state.nations,
       [strike.targetNationId]: {
@@ -1759,7 +1709,6 @@ export function nextRound(state: GameState): GameState {
       shieldsBoughtThisRound: 0,
       researchBoughtThisRound: 0,
       dronesInterceptedThisRound: 0,
-      envBoughtThisRound: false,
       promptsDoneThisRound: [],
     };
   }

@@ -17,7 +17,6 @@ export const ART = {
   spyServices: '/art/spy-network.png',
   droneSwarm: '/art/drone-swarm.png',
   warheads: '/art/warhead-arsenal.png',
-  environment: '/art/environment-recovery.png',
   /* Cut-out stickers for city badges, the resource bar and the strike dock */
   shield: '/art/shield-icon.png',
   laserIcon: '/art/laser-icon.png',

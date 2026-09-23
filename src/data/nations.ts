@@ -170,7 +170,6 @@ export const COSTS = {
   bomb: 2,
   drone: 1,
   research: 2,
-  environment: 1,
 } as const;
 
 export const STARTING_MONEY = 14;
@@ -185,8 +184,6 @@ export const SANCTION_PENALTY = 0.1;
  * target is a public statement about who you intend to go after.
  */
 export const MAX_SANCTIONS = 2;
-export const ENV_BOMB_HIT = 5;
-export const ENV_IMPROVE = 10;
 /** Points awarded each time a nation survives a completed round */
 export const SURVIVAL_POINTS_PER_ROUND = 25;
 /** Points per standing city when a nation survives a round */
@@ -245,9 +242,7 @@ export function initialNation(id: NationId): NationState {
     researchCenters: 0,
     eliminated: false,
     sanctions: [],
-    environmentScore: 0,
     bombsUsed: 0,
-    environmentBuys: 0,
     citiesStruckThisRound: [],
     bombsBoughtThisRound: 0,
     dronesUsed: 0,
@@ -257,7 +252,6 @@ export function initialNation(id: NationId): NationState {
     researchBoughtThisRound: 0,
     dronesInterceptedThisRound: 0,
     pendingDroneDamage: 0,
-    envBoughtThisRound: false,
     promptsDoneThisRound: [],
     lockedScore: null,
     roundsSurvived: 0,

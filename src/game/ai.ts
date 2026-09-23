@@ -5,7 +5,6 @@ import {
   buyAerospaceTech,
   buyBomb,
   buyDrone,
-  buyEnvironment,
   buyLaser,
   buyNuclearTech,
   buyResearch,
@@ -377,10 +376,6 @@ export function runAiBuyPhase(state: GameState): GameState {
       me().cities.find((c) => !c.destroyed && c.hasResearch) ??
       me().cities.find((c) => !c.destroyed);
     if (keep) s = buyUnderground(s, keep.id, id);
-  }
-
-  if (!me().envBoughtThisRound && s.environment < 50 && spare() >= COSTS.environment + 2) {
-    s = buyEnvironment(s, id);
   }
 
   return finishBuyPhase(s);

@@ -71,12 +71,8 @@ export interface NationState {
   eliminated: boolean;
   /** Nations this nation is currently sanctioning */
   sanctions: NationId[];
-  /** Cumulative environment contribution (positive = green, negative = bombs) */
-  environmentScore: number;
   /** Bombs used this game (for scoring flavor) */
   bombsUsed: number;
-  /** Environment buys this game */
-  environmentBuys: number;
   /** City ids this nation already struck this round (can't hit same city twice per round) */
   citiesStruckThisRound: string[];
   /** Bombs purchased this round (max 3) */
@@ -95,8 +91,6 @@ export interface NationState {
   dronesInterceptedThisRound: number;
   /** Drone damage billed to this nation at the next income (see applyIncome) */
   pendingDroneDamage?: number;
-  /** Whether environment was bought this round */
-  envBoughtThisRound: boolean;
   /** Buy-wizard prompts already answered this round (survives board remounts) */
   promptsDoneThisRound?: string[];
   /** Round number for which base/research income was already applied */
@@ -118,7 +112,6 @@ export interface RoundScore {
   citiesLeft: number;
   researchCenters: number;
   shields: number;
-  environmentScore: number;
   roundsSurvived: number;
   citySurvivalPoints: number;
   total: number;
@@ -128,7 +121,7 @@ export interface RoundScore {
 export interface LogEntry {
   id: string;
   text: string;
-  tone?: 'neutral' | 'attack' | 'money' | 'env' | 'sanction';
+  tone?: 'neutral' | 'attack' | 'money' | 'sanction';
 }
 
 /** What happened during the round just completed (shown on aftermath board) */
@@ -169,7 +162,6 @@ export interface GameState {
   phase: Phase;
   round: number;
   maxRounds: number;
-  environment: number;
   nations: Record<NationId, NationState>;
   turnOrder: NationId[];
   currentTurnIndex: number;
@@ -191,7 +183,7 @@ export interface GameState {
   /** Highest published sync event this client has followed (local only). */
   syncSeq?: number;
   log: LogEntry[];
-  winner: NationId | 'draw' | null;
+  winner: NationId | null;
   pendingCountryPick: NationId | null;
   /** Strikes queued during turns; resolved together at round end */
   pendingStrikes: PendingStrike[];

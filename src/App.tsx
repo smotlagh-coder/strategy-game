@@ -34,7 +34,6 @@ import {
   canBuyUnderground,
   droneDamageFor,
   buyDrones,
-  buyEnvironment,
   buyNuclearTech,
   buyResearch,
   buyShield,
@@ -132,7 +131,6 @@ type WizardStep =
   | 'laserAsk'
   | 'laserPick'
   | 'spyAsk'
-  | 'env'
   | 'sanctionAsk'
   | 'sanctionPick'
   | 'strike'
@@ -170,8 +168,6 @@ function wizardArt(step: WizardStep): string {
       return ART.laserDefence;
     case 'spyAsk':
       return ART.spyServices;
-    case 'env':
-      return ART.environment;
     case 'sanctionAsk':
     case 'sanctionPick':
       return ART.sanction;
@@ -1078,16 +1074,6 @@ function MapBackdrop() {
   );
 }
 
-function EnvMeter({ value }: { value: number }) {
-  const tone = value >= 70 ? 'good' : value >= 40 ? 'warn' : 'bad';
-  return (
-    <div className={`env-meter env-meter--${tone}`}>
-      <span className="env-meter__icon">🌳</span>
-      <strong>{value}%</strong>
-    </div>
-  );
-}
-
 function cityStatusLabel(c: {
   destroyed: boolean;
   hasShield: boolean;
@@ -1201,7 +1187,6 @@ function WizardNationHeader({
   money,
   bombs,
   drones,
-  environment,
   idleSecondsLeft,
   compact = false,
 }: {
@@ -1210,7 +1195,6 @@ function WizardNationHeader({
   money: number;
   bombs: number;
   drones: number;
-  environment: number;
   idleSecondsLeft?: number | null;
   compact?: boolean;
 }) {
@@ -1236,7 +1220,6 @@ function WizardNationHeader({
           drones={drones}
           shields={shieldsLeft(state, nationId)}
         />
-        <p className="wizard-nation-head__env">Env {environment}%</p>
         {idleSecondsLeft != null && (
           <p className={`idle-timer ${idleSecondsLeft <= 10 ? 'is-urgent' : ''}`}>
             Select within {idleSecondsLeft}s or you leave the game
@@ -1661,13 +1644,6 @@ function canOfferSpy(state: GameState, actorId: NationId): boolean {
   return canBuySpyNetwork(state, actorId);
 }
 
-function canOfferEnv(state: GameState, actorId: NationId): boolean {
-  const n = state.nations[actorId];
-  return (
-    !n.envBoughtThisRound && n.money >= COSTS.environment && state.environment < 100
-  );
-}
-
 function canOfferSanction(state: GameState, actorId: NationId): boolean {
   const n = state.nations[actorId];
   if (n.promptsDoneThisRound?.includes('sanctionAsk')) return false;
@@ -1699,7 +1675,6 @@ function nextWizardStep(
     'shieldAsk',
     'laserAsk',
     'spyAsk',
-    'env',
     'sanctionAsk',
     'strike',
     'droneStrike',
@@ -1727,7 +1702,6 @@ function nextWizardStep(
     if (step === 'shieldAsk' && canOfferShield(state, actorId)) return 'shieldAsk';
     if (step === 'laserAsk' && canOfferLaser(state, actorId)) return 'laserAsk';
     if (step === 'spyAsk' && canOfferSpy(state, actorId)) return 'spyAsk';
-    if (step === 'env' && canOfferEnv(state, actorId)) return 'env';
     if (step === 'sanctionAsk' && canOfferSanction(state, actorId)) return 'sanctionAsk';
     if (step === 'strike' && canOfferStrike(state, actorId)) return 'strike';
     if (step === 'droneStrike' && canOfferDroneStrike(state, actorId)) return 'droneStrike';
@@ -2345,7 +2319,6 @@ function GameBoard({
               money={turn.money}
               bombs={turn.bombs}
               drones={turn.drones}
-              environment={state.environment}
               idleSecondsLeft={isOnline ? idleSecondsLeft : null}
             />
 
@@ -2816,34 +2789,6 @@ function GameBoard({
               </>
             )}
 
-            {wizardStep === 'env' && (
-              <>
-                <h3 className="turn-wizard__q">
-                  Improve the environment by 10% for {COSTS.environment}M?
-                </h3>
-                <p className="turn-wizard__hint">Once per round · world is at {state.environment}%</p>
-                <div className="turn-wizard__actions">
-                  <button
-                    className="btn btn--xl btn--primary"
-                    onClick={() => {
-                      pushFx({ kind: 'buy', label: 'Environment +10%' }, 700);
-                      const next = buyEnvironment(stateRef.current, actorId);
-                      setState(next);
-                      advanceAfter(next, 'env');
-                    }}
-                  >
-                    Yes
-                  </button>
-                  <button
-                    className="btn btn--xl"
-                    onClick={() => advanceAfter(stateRef.current, 'env')}
-                  >
-                    No
-                  </button>
-                </div>
-              </>
-            )}
-
             {wizardStep === 'sanctionAsk' && (
               <>
                 <h3 className="turn-wizard__q">Do you want to impose sanctions?</h3>
@@ -2943,7 +2888,6 @@ function GameBoard({
               money={turn.money}
               bombs={turn.bombs}
               drones={turn.drones}
-              environment={state.environment}
               idleSecondsLeft={isOnline ? idleSecondsLeft : null}
               compact
             />
@@ -2997,7 +2941,6 @@ function GameBoard({
               money={turn.money}
               bombs={turn.bombs}
               drones={turn.drones}
-              environment={state.environment}
               idleSecondsLeft={isOnline ? idleSecondsLeft : null}
               compact
             />
@@ -3051,7 +2994,6 @@ function GameBoard({
       <div className="board-split">
         <section className="board-left">
           <header className="board-left__hud">
-            <EnvMeter value={state.environment} />
             <div className="round-pill">
               ROUND {state.round}/{state.maxRounds}
             </div>
@@ -3309,7 +3251,6 @@ function RoundSummary({
       <div className="board-split round-report__split">
         <section className="board-left round-report__main">
           <header className="board-left__hud">
-            <EnvMeter value={state.environment} />
             <div className="round-pill">ROUND {state.round} AFTERMATH</div>
           </header>
 
@@ -3514,23 +3455,21 @@ function GameOver({
   rematchError?: string | null;
   onLeaderboard?: () => void;
 }) {
-  const winnerName =
-    state.winner && state.winner !== 'draw' ? nationDef(state.winner).name : 'No one';
-  const isMutual = state.winner === 'draw';
+  const winnerName = state.winner ? nationDef(state.winner).name : 'No one';
   const creditedRef = useRef(false);
   const isOnline = state.mode === 'online';
   const isHost = Boolean(sessionUid && state.onlineHostUid === sessionUid);
   /** Older matches may lack onlineHostUid — allow attempt; server enforces host. */
   const canStartRematch = isOnline && Boolean(sessionUid) && (isHost || !state.onlineHostUid);
   const winnerPlayer =
-    state.winner && state.winner !== 'draw' && state.nations[state.winner]?.isHuman
+    state.winner && state.nations[state.winner]?.isHuman
       ? playerDisplayName(state, state.winner)
       : null;
 
   useEffect(() => {
     if (creditedRef.current) return;
     if (!sessionUid || !displayName) return;
-    if (!state.winner || state.winner === 'draw') return;
+    if (!state.winner) return;
     const w = state.nations[state.winner];
     if (!w?.isHuman) return;
     const isMe =
@@ -3549,19 +3488,16 @@ function GameOver({
       <div className="splash-veil splash-veil--fire" />
       <div className="game-over-layout">
         <header className="game-over-hero enter-pop">
-          {state.winner && state.winner !== 'draw' && (
+          {state.winner && (
             <img className="winner-art" src={ART.leaders[state.winner]} alt="" />
           )}
           <div>
-            <h1 className="stencil-title">{isMutual ? 'MUTUAL DESTRUCTION' : 'SUPERPOWER'}</h1>
+            <h1 className="stencil-title">SUPERPOWER</h1>
             <p className="tagline">
-              {isMutual
-                ? 'The environment hit 0%. The world burns. Nobody wins.'
-                : winnerPlayer
-                  ? `${winnerName} — ${winnerPlayer} dominates the board.`
-                  : `${winnerName} dominates the board.`}
+              {winnerPlayer
+                ? `${winnerName} — ${winnerPlayer} dominates the board.`
+                : `${winnerName} dominates the board.`}
             </p>
-            <EnvMeter value={state.environment} />
           </div>
         </header>
 

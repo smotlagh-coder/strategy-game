@@ -200,12 +200,9 @@ export function mergeNationPlanning(
     pendingDroneDamage: eliminated
       ? 0
       : Math.max(counter(remote.pendingDroneDamage), counter(local.pendingDroneDamage)),
-    envBoughtThisRound: remote.envBoughtThisRound || local.envBoughtThisRound,
     promptsDoneThisRound: Array.from(
       new Set([...(remote.promptsDoneThisRound ?? []), ...(local.promptsDoneThisRound ?? [])]),
     ),
-    environmentBuys: Math.max(remote.environmentBuys, local.environmentBuys),
-    environmentScore: Math.max(remote.environmentScore, local.environmentScore),
     citiesStruckThisRound: Array.from(
       new Set([...remote.citiesStruckThisRound, ...local.citiesStruckThisRound]),
     ),
@@ -336,9 +333,6 @@ export function applyRemoteGameSnapshot(
           prev.humanLastActive?.[myNationId] ?? 0,
         ),
       },
-      environment: prev.nations[myNationId]?.envBoughtThisRound
-        ? Math.max(prev.environment, remote.environment)
-        : remote.environment,
       aiPlanningComplete: Boolean(remote.aiPlanningComplete || prev.aiPlanningComplete),
     };
     if (!next.aiPlanningComplete) next = runOnlineAiPlanning(next);
@@ -417,12 +411,6 @@ export function mergeHumanPlanningWrite(
   });
 
   const mergedReady = mergeHumanReadyFlags(remote.humanReady, local.humanReady);
-  const localEnvBuy = local.nations[nationId]?.envBoughtThisRound ? 1 : 0;
-  const remoteHadMine = remote.nations[nationId]?.envBoughtThisRound ? 1 : 0;
-  let environment = preferred.environment;
-  if (localEnvBuy && !remoteHadMine) {
-    environment = Math.min(100, preferred.environment + 10);
-  }
 
   const mergedLastActive: Partial<Record<NationId, number>> = {
     ...remote.humanLastActive,
@@ -452,7 +440,6 @@ export function mergeHumanPlanningWrite(
     ...preferred,
     phase: preferred.phase === 'action' ? 'action' : 'buy',
     currentTurnIndex: Math.max(remote.currentTurnIndex, local.currentTurnIndex),
-    environment,
     nations: mergedNations,
     humanReady: mergedReady,
     humanLastActive: mergedLastActive,
