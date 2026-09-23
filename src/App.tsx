@@ -225,6 +225,8 @@ interface StrikeTarget {
   droneBill?: number;
   /** The city's lasers downed the swarm, so it never reaches the skyline */
   lasered?: boolean;
+  /** The warhead broke against the bunker: the ground shakes, nothing burns */
+  absorbed?: boolean;
 }
 
 /** One attacker's whole volley — every missile flies in the same panel. */
@@ -251,7 +253,7 @@ function StrikeCinema({
   const missileRefs = useRef<(HTMLDivElement | null)[]>([]);
   const pathRefs = useRef<(SVGPathElement | null)[]>([]);
   const [booms, setBooms] = useState<
-    ({ x: number; y: number; weapon: 'nuke' | 'drone' } | null)[]
+    ({ x: number; y: number; weapon: 'nuke' | 'drone'; absorbed?: boolean } | null)[]
   >([]);
   /** Where a laser caught a swarm, and the beam that did it */
   const [zaps, setZaps] = useState<
@@ -271,6 +273,7 @@ function StrikeCinema({
       targetIndex,
       weapon,
       intercepted: weapon === 'drone' && Boolean(target.lasered),
+      absorbed: weapon === 'nuke' && Boolean(target.absorbed),
     })),
   );
   const nukeCount = flightPlan.filter((f) => f.weapon === 'nuke').length;
@@ -328,6 +331,7 @@ function StrikeCinema({
           targetIndex: leg.targetIndex,
           weapon: leg.weapon,
           intercepted: leg.intercepted,
+          absorbed: leg.absorbed,
         }))
         .filter((f) => f.missile && f.city);
       if (!layer || !launcher || flights.length === 0) {
@@ -411,18 +415,26 @@ function StrikeCinema({
         } else {
           window.clearInterval(frameTimer);
           // Whole volley lands together, so one panel covers every target
-          const impacts: ({ x: number; y: number; weapon: 'nuke' | 'drone' } | null)[] =
-            strikeRef.current.targets.map(() => null);
+          const impacts: ({
+            x: number;
+            y: number;
+            weapon: 'nuke' | 'drone';
+            absorbed?: boolean;
+          } | null)[] = strikeRef.current.targets.map(() => null);
           for (const arc of arcs) {
             // A swarm the lasers burnt never reaches the city, so nothing lands
             if (arc.intercepted) continue;
             const landed = impacts[arc.targetIndex];
             // A warhead outshines any swarm sharing the same city
             if (landed?.weapon === 'nuke') continue;
-            impacts[arc.targetIndex] = { ...arc.p2, weapon: arc.weapon };
+            impacts[arc.targetIndex] = { ...arc.p2, weapon: arc.weapon, absorbed: arc.absorbed };
           }
-          const anyNuke = impacts.some((i) => i?.weapon === 'nuke');
-          if (anyNuke) playSfx(SFX.explosion, 0.95);
+          // A warhead that broke on rock gets a low, smothered thud rather than
+          // the airburst — the blast went into the ground, not the skyline
+          const anyBlast = impacts.some((i) => i?.weapon === 'nuke' && !i.absorbed);
+          const anyRock = impacts.some((i) => i?.weapon === 'nuke' && i.absorbed);
+          if (anyBlast) playSfx(SFX.explosion, 0.95);
+          else if (anyRock) playSfx(SFX.explosion, 0.5, 0.6);
           else playSfx(SFX.explosion, 0.3, 2.1);
           setBooms(impacts);
           for (const arc of arcs) arc.missile!.style.opacity = '0';
@@ -492,7 +504,9 @@ function StrikeCinema({
                     <div
                       className={`strike-cinema__target-art ${
                         booms[i]?.weapon === 'nuke'
-                          ? 'is-burning'
+                          ? booms[i]?.absorbed
+                            ? 'is-absorbed'
+                            : 'is-burning'
                           : booms[i]
                             ? 'is-rattled'
                             : ''
@@ -507,22 +521,27 @@ function StrikeCinema({
                         alt=""
                       />
                       <img className="strike-cinema__leader-sm" src={ART.leaders[target.to]} alt="" />
-                      {booms[i]?.weapon === 'nuke' && (
-                        <span className="strike-cinema__fire" aria-hidden />
-                      )}
+                      {booms[i]?.weapon === 'nuke' &&
+                        (booms[i]?.absorbed ? (
+                          <span className="strike-cinema__rubble" aria-hidden />
+                        ) : (
+                          <span className="strike-cinema__fire" aria-hidden />
+                        ))}
                       {booms[i]?.weapon === 'drone' && (
                         <span className="strike-cinema__dust" aria-hidden />
                       )}
                     </div>
                     <strong>{to.name}</strong>
                     <span>{target.cityName}</span>
-                    {target.weapons.includes('drone') && (
+                    {(target.absorbed || target.weapons.includes('drone')) && (
                       <span className="strike-cinema__tag">
-                        {target.droneBill === 0
-                          ? 'Lasers shot the swarm down'
-                          : target.weapons.includes('nuke')
-                            ? 'Shield swarmed'
-                            : `−$${target.droneBill ?? DRONE_DAMAGE}M damages`}
+                        {target.absorbed
+                          ? 'Broke against the bunker'
+                          : target.droneBill === 0
+                            ? 'Lasers shot the swarm down'
+                            : target.weapons.includes('nuke')
+                              ? 'Shield swarmed'
+                              : `−$${target.droneBill ?? DRONE_DAMAGE}M damages`}
                       </span>
                     )}
                   </div>
@@ -591,10 +610,11 @@ function StrikeCinema({
                   key={`${strike.targets[i]?.cityId ?? i}-boom`}
                   className={`strike-cinema__boom${
                     boom.weapon === 'drone' ? ' strike-cinema__boom--drone' : ''
-                  }`}
+                  }${boom.absorbed ? ' strike-cinema__boom--rock' : ''}`}
                   style={{ left: boom.x, top: boom.y }}
                 >
-                  {boom.weapon === 'drone' ? (
+                  {boom.weapon === 'drone' || boom.absorbed ? (
+                    // No fireball on rock: a grey shock ring and flying debris
                     <>
                       <span className="strike-cinema__pop" />
                       {[0, 1, 2, 3, 4, 5].map((n) => (
@@ -635,9 +655,11 @@ function formatRoundEvent(e: RoundWorldEvent): string {
       : `${nation} rebuilt ${e.cityName} from the rubble.`;
   }
   if (e.kind === 'strikeAbsorbed') {
+    // The whole table watched it bounce, so the bunker is public from here on
+    const now = `${e.cityName} (${nation}) — the bunker is on every map now.`;
     return attacker
-      ? `${attacker}'s warhead broke against the bunkers under ${e.cityName} (${nation}).`
-      : `A warhead broke against the bunkers under ${e.cityName} (${nation}).`;
+      ? `${attacker}'s warhead broke against the bunkers under ${now}`
+      : `A warhead broke against the bunkers under ${now}`;
   }
   if (e.kind === 'shieldDestroyed') {
     return attacker
@@ -1021,6 +1043,13 @@ function StrikeTheater({
                 e.nationId === strike.targetNationId &&
                 e.attackerId === volley.attackerId,
             );
+            const absorbed = events.some(
+              (e) =>
+                e.kind === 'strikeAbsorbed' &&
+                e.cityId === strike.cityId &&
+                e.nationId === strike.targetNationId &&
+                e.attackerId === volley.attackerId,
+            );
             targets.push({
               to: strike.targetNationId,
               cityId: strike.cityId,
@@ -1028,6 +1057,7 @@ function StrikeTheater({
               weapons: [weapon],
               droneBill: lasered ? 0 : city ? droneDamageFor(city) : DRONE_DAMAGE,
               lasered,
+              absorbed,
             });
           }
           await new Promise<void>((resolve) => {

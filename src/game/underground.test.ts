@@ -10,6 +10,7 @@ import {
   orderStrikesForResolution,
   queueStrike,
   seatTable,
+  seesCity,
   startGame,
 } from './engine';
 import { mergeNationPlanning } from '../lib/onlineSync';
@@ -106,6 +107,26 @@ describe('surviving attacks underground', () => {
     s = applyQueuedStrike(s, s.pendingStrikes[0]);
     expect(s.nations.uk.cities[0].destroyed).toBe(false);
     expect(s.roundEvents.some((e) => e.kind === 'strikeAbsorbed')).toBe(true);
+  });
+
+  it('puts the bunker on every map once a warhead breaks on it', () => {
+    let s = table({ hasSpyNetwork: false });
+    const city = s.nations.uk.cities[0];
+    s = buyUnderground(s, city.id, 'uk');
+    s = queueStrike(s, 'uk', city.id, 'us');
+    expect(seesCity(s, 'us', 'uk', city.id)).toBe(false);
+
+    s = applyQueuedStrike(s, s.pendingStrikes[0]);
+    // Not just the attacker: the bystanders watched it bounce too
+    for (const viewer of s.turnOrder) {
+      expect(seesCity(s, viewer, 'uk', city.id)).toBe(true);
+    }
+    // And nobody spends a second warhead learning the same lesson
+    const rearmed: GameState = {
+      ...s,
+      nations: { ...s.nations, us: { ...s.nations.us, bombs: 1, citiesStruckThisRound: [] } },
+    };
+    expect(queueStrike(rearmed, 'uk', city.id, 'us')).toBe(rearmed);
   });
 
   it('absorbs a warhead that was queued before the city went underground', () => {

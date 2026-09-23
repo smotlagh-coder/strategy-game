@@ -2408,6 +2408,50 @@ img { max-width: 100%; display: block; }
   height: 112px;
 }
 
+/* Warhead against a bunker: the blast goes into the ground, so there is no
+   fireball — a smothered grey shock ring and a spray of broken rock */
+.strike-cinema__boom--rock {
+  width: 140px;
+  height: 140px;
+}
+
+/* A dust shockwave rolling out of the ground, not a burst of energy */
+.strike-cinema__boom--rock .strike-cinema__pop {
+  inset: 25%;
+  border-width: 5px;
+  border-color: rgba(240, 226, 196, 0.85);
+  background: radial-gradient(
+    circle,
+    rgba(242, 232, 210, 0.4),
+    rgba(150, 132, 104, 0.2) 52%,
+    transparent 72%
+  );
+  box-shadow: 0 0 26px rgba(214, 186, 134, 0.6), inset 0 0 16px rgba(230, 214, 180, 0.45);
+  animation: rockThud 0.8s ease-out forwards;
+}
+
+@keyframes rockThud {
+  0% { transform: scale(0.2); opacity: 0; }
+  20% { transform: scale(0.8); opacity: 1; }
+  100% { transform: scale(2.4); opacity: 0; }
+}
+
+.strike-cinema__boom--rock .strike-cinema__spark {
+  /* Chunks of rock, not sparks: stubbier, duller, thrown further */
+  width: 8px;
+  height: 16px;
+  border-radius: 1px;
+  background: linear-gradient(rgba(232, 220, 196, 1), rgba(110, 96, 74, 0));
+  box-shadow: 0 0 8px rgba(190, 168, 126, 0.6);
+  animation: rockShard 0.8s ease-out forwards;
+}
+
+@keyframes rockShard {
+  0% { transform: rotate(var(--spoke, 0deg)) translateY(-8px) scale(0.6); opacity: 0; }
+  25% { transform: rotate(var(--spoke, 0deg)) translateY(-44px) scale(1); opacity: 1; }
+  100% { transform: rotate(var(--spoke, 0deg)) translateY(-78px) scale(0.8); opacity: 0; }
+}
+
 /* Laser interception: the beam fires from the city out to the swarm */
 .strike-cinema__laser {
   position: absolute;
@@ -2517,6 +2561,34 @@ img { max-width: 100%; display: block; }
   25% { transform: translate(-2px, 1px); }
   55% { transform: translate(2px, -1px); }
   80% { transform: translate(-1px, 0); }
+}
+
+/* Bunkered city: the ground heaves and the dust rolls, but nothing burns and
+   the skyline keeps its colour — the warhead never got through the rock */
+.strike-cinema__target-art.is-absorbed {
+  animation: cityShake 0.5s ease-out 1;
+}
+
+.strike-cinema__target-art.is-absorbed .strike-cinema__city {
+  filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.75))
+    drop-shadow(0 0 18px rgba(245, 197, 66, 0.8));
+}
+
+.strike-cinema__rubble {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 50% 100%, rgba(234, 222, 198, 0.42), transparent 56%),
+    radial-gradient(ellipse at 28% 96%, rgba(198, 182, 154, 0.3), transparent 50%),
+    radial-gradient(ellipse 80% 40% at 50% 104%, rgba(120, 100, 66, 0.4), transparent 72%);
+  mix-blend-mode: screen;
+  animation: bunkerDust 1.2s ease-out forwards;
+}
+
+@keyframes bunkerDust {
+  0% { opacity: 0; transform: translateY(12px) scaleY(0.75); }
+  22% { opacity: 1; transform: translateY(0) scaleY(1); }
+  100% { opacity: 0; transform: translateY(-12px) scaleY(1.2); }
 }
 
 /* Struck city: scorched, shaking, still alight when the cinema cuts away */

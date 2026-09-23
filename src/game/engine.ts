@@ -1434,17 +1434,19 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
   }
   // A player can bunker a city in the same round a warhead was aimed at it
   if (city && !city.destroyed && city.isUnderground) {
+    // Everyone saw the warhead break, so nobody has to buy that intel again
+    const seen = revealCityToEveryone(state, city.id);
     return {
-      ...state,
+      ...seen,
       log: [
-        ...state.log,
+        ...seen.log,
         log(
-          `${nationDef(strike.attackerId).name}'s warhead broke against the bunkers under ${city.name} (${nationDef(strike.targetNationId).name}).`,
+          `${nationDef(strike.attackerId).name}'s warhead broke against the bunkers under ${city.name} (${nationDef(strike.targetNationId).name}) — every capital can see the city is dug in now.`,
           'attack',
         ),
       ],
       roundEvents: [
-        ...state.roundEvents,
+        ...seen.roundEvents,
         worldEvent({
           kind: 'strikeAbsorbed',
           nationId: strike.targetNationId,
