@@ -25,14 +25,15 @@ Repo: [smotlagh-coder/strategy-game](https://github.com/smotlagh-coder/strategy-
 | Aerospace Tech | **$2M** once — drone packs can be built and flown the same round |
 | Drone pack | **$1M** each (max 3 purchased per round) |
 | City shield | **$3M** — blocks one nuke (shield destroyed, city survives). **One install per nation per round** |
-| Laser defence | **$2.5M** per city — needs Aerospace Tech; shoots down every drone swarm sent at that city |
+| Laser defence | **$3.5M** — one network per nation, needs Aerospace Tech; covers every city and shoots down **2** swarms per round |
+| Spy service | **$3M** once — reveals every enemy city's shields, research, bunkers and laser network for the rest of the war |
 | Underground City | **$6M** — one city per nation, permanently: nukes cannot destroy it and it never needs a shield |
 | Rebuild city | **$5M** — raise a burnt city from the rubble, bare (no shield, research or bunker) |
 | Research center | **$2M** — place on a city; that city earns **+$1.5M**/round. Destroyed with the city. |
 | Environment | **$1M** — world health **+10%** (once per round) |
-| Sanction | −**10%** total revenue for the target |
+| Sanction | −**10%** total revenue for the target. **Max 2 at a time** — and the target takes it personally |
 | Nuke hit | World environment **−5%** |
-| Drone hit | Target owes **$1.5M** in repairs, billed at their next income — halved to **$0.75M** if the city has a shield or is underground, and **$0** if it has laser defence or the city is destroyed in the same round |
+| Drone hit | Target owes **$1.5M** in repairs, billed at their next income — halved to **$0.75M** if the city has a shield or is underground, and **$0** if the laser network shoots the swarm down or the city is destroyed in the same round |
 
 Every match seats **5 of the 12 countries**: each player's chosen country always plays, and the empty chairs are dealt at random from the countries nobody picked. In an online lobby a claimed country is locked to that player and greyed out for everyone else.
 
@@ -44,7 +45,15 @@ An **Underground City** is the one city nobody can take from you: bombs are not 
 
 **Mutual Destruction** only when world environment hits **0%**. Otherwise a living nation always becomes the superpower (ties broken by cities / survival points).
 
-**Laser defence** is the answer to drones. Any city can take a battery for $2.5M once you hold Aerospace Tech, and from then on every swarm aimed at that city is shot out of the sky: no repair bill, and — because there is no swarm left circling — the city's shield stays free to stop a warhead sent in the same volley. The battery burns with the city if a nuke gets through, and a rebuilt city comes back without one.
+**Laser defence** is the answer to drones, and it is national. $3.5M buys one network per nation once you hold Aerospace Tech — it covers all three cities, not just the one it is installed on, and it shoots down the first **2 swarms** aimed at your country each round. A swarm that dies in the air costs you nothing: no repair bill, and — because there is no swarm circling — that city's shield stays free to stop a warhead sent in the same volley.
+
+The shot budget is what keeps drones alive as a strategy. Nobody can buy more than 3 drone packs a round, so a single attacker who commits a third swarm gets one through, and two attackers working the same target overwhelm the network easily. The AI knows this: it will not send swarms it cannot push past your network, and when it does attack it fires decoys at your other cities first to burn the shots before the escort goes in behind them. The network burns with its host city if a nuke gets through, and a rebuilt city comes back without one.
+
+**You cannot see what you have not paid to see.** Enemy cities show whether they are standing or rubble and nothing else: a shield, a research centre, a bunker or a laser network on someone else's city is marked `?` until you open a **spy service** for $3M. It is bought once and lasts the war, and the nation running one wears a spy badge next to its leader, so the table knows who is watching.
+
+Attacking blind is not hopeless, just wasteful. A warhead that lands on a shield you could not see still burns the shield down, and the city falls to the next one; a warhead aimed at a bunker you could not see breaks against the rock and is gone for nothing. Swarms sent at a nation whose laser network you cannot see are shot out of the sky. What everyone can always read is the scoreboard: it prints how many shields and research centres each nation holds, so you know the defences are out there — the spy service is what tells you *which city* they are on. The AI plays by the same rule, which is why it will sometimes waste a warhead on a bunker, and why it buys a service of its own once it has cash to spare beyond its strike package.
+
+**Sanctions are a declaration, not a tax.** You may only run **two at a time**, so picking a target means letting someone else off, and lifting one frees the slot again. The AI reads its own sanction list as a target list — the rivals it is squeezing are the rivals it is preparing to hit — and it remembers who is squeezing *it*, so sanctioning an AI moves you up its list of people to nuke. It only switches targets when a new rival is clearly more dangerous than the one it is already sanctioning, so the list is a stable signal of who it has decided to go after rather than noise that changes every round.
 
 Drones cannot level a city or break a shield on their own — they run up a repair bill, and a shield or bunker blunts the swarm enough to halve it. Their value is the combo: swarm a city you are also nuking and its shield is too busy to stop the warhead, so the city falls. Targeting runs bombs first, then drones. A repair bill only lands on a city that survives the round: if the warhead levels the city the swarm helped open, there is nothing left to repair and the bill is written off — the owner pays $5M to rebuild instead.
 
@@ -52,7 +61,7 @@ Strikes are queued during turns and resolve together at round end. Survival scor
 
 **Nothing waits.** Buy Nuclear Tech and a warhead on your first turn and it lands at the end of that same round — the same goes for Aerospace Tech and drone packs. Shields are the one thing you cannot rush: a nation may install **one per round**, so no country walls off all three cities in a single turn and there is always something on the board worth shooting at. Between the $14M opening and $5M a round after it, every round can pay for a real move, which is what keeps the war spread across all five rounds instead of piling up in the last one.
 
-AI nations play to win, not to look busy. They rank every rival by *projected* final score — points banked, cities still earning survival points each remaining round, research income and the arsenal pointed back at them — and aim at whoever is running away with the match, with a finishing shot reserved for anyone down to their last city and too broke to pay for the rebuild. They spend the opening turn on two research centres and a shield on the city they would hate most to lose, and from round 2 on they hold back the price of a warhead before anything else — a rival city left standing banks survival points every round. They rebuild rubble first (a city back on the board is the best value in the game), size their arsenal to the number of cities they can actually level this round (escorting a swarm in when the target is shielded), keep rebuild insurance in the bank when down to one city, and sanction every rival, since sanctions are free.
+AI nations play to win, not to look busy. They rank every rival by *projected* final score — points banked, cities still earning survival points each remaining round, research income and the arsenal pointed back at them — and aim at whoever is running away with the match, with a finishing shot reserved for anyone down to their last city and too broke to pay for the rebuild. They spend the opening turn on two research centres and a shield on the city they would hate most to lose, and from round 2 on they hold back the price of a warhead before anything else — a rival city left standing banks survival points every round. They rebuild rubble first (a city back on the board is the best value in the game), size their arsenal to the number of cities they can actually level this round (escorting a swarm in when the target is shielded), keep rebuild insurance in the bank when down to one city, and spend both sanction slots on the two rivals they intend to hit. They are as blind as you are: until an AI opens its own spy service it aims at whatever is standing, so the shields it walks into are luck rather than cheating.
 
 ---
 
@@ -265,7 +274,7 @@ App Engine runs `gcp-build` (`npm run build`) then `npm start` (serves `dist` on
 1. Enter your name (session)
 2. Choose Single, Hot-seat (2P), or Online Multiplayer
 3. Pick nation(s) / invite players
-4. Each turn: answer purchase prompts (nuclear tech, aerospace tech, research, bombs, drones, underground city, rebuild, shield, laser defence, environment, sanctions), then lock bomb targets and drone targets
+4. Each turn: answer purchase prompts (nuclear tech, aerospace tech, research, bombs, drones, underground city, rebuild, shield, laser defence, spy service, environment, sanctions), then lock bomb targets and drone targets
 5. After all nations act, watch simultaneous strikes, review treasury + scores on the aftermath board
 
 ---

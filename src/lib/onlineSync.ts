@@ -174,6 +174,7 @@ export function mergeNationPlanning(
     bombsBoughtThisRound: Math.max(remote.bombsBoughtThisRound, local.bombsBoughtThisRound),
     bombsUsed: Math.max(remote.bombsUsed, local.bombsUsed),
     hasAerospaceTech: Boolean(remote.hasAerospaceTech || local.hasAerospaceTech),
+    hasSpyNetwork: Boolean(remote.hasSpyNetwork || local.hasSpyNetwork),
     aerospaceTechUnlockedRound:
       local.aerospaceTechUnlockedRound ?? remote.aerospaceTechUnlockedRound ?? null,
     drones: eliminated ? 0 : mergeDroneStock(remote, local),

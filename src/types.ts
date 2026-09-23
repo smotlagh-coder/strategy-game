@@ -65,6 +65,8 @@ export interface NationState {
   aerospaceTechUnlockedRound: number | null;
   drones: number;
   researchCenters: number;
+  /** Spy service bought — reveals enemy city defences for the rest of the game */
+  hasSpyNetwork: boolean;
   eliminated: boolean;
   /** Nations this nation is currently sanctioning */
   sanctions: NationId[];

@@ -773,6 +773,62 @@ export function maxDronesPurchasable(state: GameState, nationId?: NationId): num
   return Math.max(0, Math.min(byMoney, byCap));
 }
 
+export function canBuySpyNetwork(state: GameState, nationId?: NationId): boolean {
+  const id = nationId ?? currentNationId(state);
+  const n = state.nations[id];
+  return !n.eliminated && !n.hasSpyNetwork && n.money >= COSTS.spy;
+}
+
+export function buySpyNetwork(state: GameState, nationId?: NationId): GameState {
+  const id = nationId ?? currentNationId(state);
+  const n = state.nations[id];
+  if (!canBuySpyNetwork(state, id)) return state;
+  return {
+    ...state,
+    nations: {
+      ...state.nations,
+      [id]: { ...n, money: +(n.money - COSTS.spy).toFixed(2), hasSpyNetwork: true },
+    },
+    log: [
+      ...state.log,
+      log(
+        `${nationDef(id).name} opened a spy service — enemy city defences are on the table.`,
+        'money',
+      ),
+    ],
+  };
+}
+
+/**
+ * Whether `viewerId` can read the defences of `targetId`'s cities. Your own
+ * cities are always open to you; everyone else's take a spy service.
+ */
+export function seesDefences(state: GameState, viewerId: NationId, targetId: NationId): boolean {
+  if (viewerId === targetId) return true;
+  return Boolean(state.nations[viewerId]?.hasSpyNetwork);
+}
+
+/**
+ * A city as `viewerId` sees it. Rubble and rebuilds are visible from orbit;
+ * shields, research, bunkers and laser networks are not, so an unspied enemy
+ * city looks like bare ground and has to be attacked on guesswork.
+ */
+export function cityAsSeenBy(
+  state: GameState,
+  viewerId: NationId,
+  targetId: NationId,
+  city: City,
+): City {
+  if (seesDefences(state, viewerId, targetId)) return city;
+  return {
+    ...city,
+    hasShield: false,
+    hasResearch: false,
+    isUnderground: false,
+    hasLaser: false,
+  };
+}
+
 export function buyAerospaceTech(state: GameState, nationId?: NationId): GameState {
   const id = nationId ?? currentNationId(state);
   const n = state.nations[id];
@@ -1151,8 +1207,10 @@ export function queueStrike(
 
   const city = defender.cities.find((c) => c.id === cityId);
   if (!city || city.destroyed) return state;
-  // Warheads cannot crack a bunker city; drones still run up a repair bill
-  if (city.isUnderground && !drone) return state;
+  // Warheads cannot crack a bunker city; drones still run up a repair bill.
+  // An attacker with no eyes on the target does not know that, so the warhead
+  // flies anyway and breaks against the rock at resolution.
+  if (city.isUnderground && !drone && seesDefences(state, attackerId, targetNation)) return state;
 
   const strike: PendingStrike = {
     attackerId,
@@ -1225,6 +1283,20 @@ export function laserInterceptsLeft(state: GameState, nationId: NationId): numbe
  * shield. Drones resolve before warheads, so by the time a warhead lands the
  * round's events already say whether the network burnt the swarm out of the sky.
  */
+/**
+ * Interceptions `viewerId` can count on the defender having left. Without a
+ * spy service the network is invisible, so an attacker plans as if there were
+ * none and loses swarms finding out.
+ */
+export function laserShotsKnownTo(
+  state: GameState,
+  viewerId: NationId,
+  targetId: NationId,
+): number {
+  if (!seesDefences(state, viewerId, targetId)) return 0;
+  return laserInterceptsLeft(state, targetId);
+}
+
 export function shieldIsBusy(
   state: GameState,
   targetNationId: NationId,

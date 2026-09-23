@@ -16,6 +16,8 @@ export const ART = {
   researchLab: '/art/research-lab.jpg',
   researchIcon: '/art/research-icon.png',
   sanction: '/art/sanction-icon.svg',
+  spyServices: '/art/spy-services.svg',
+  spyIcon: '/art/spy-icon.svg',
   leaders: {
     russia: '/art/leader-russia.png',
     france: '/art/leader-france.png',

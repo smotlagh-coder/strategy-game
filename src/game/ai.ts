@@ -9,14 +9,17 @@ import {
   buyLaser,
   buyNuclearTech,
   buyResearch,
+  buySpyNetwork,
   buyShield,
   buyRebuild,
   buyUnderground,
   canBuyLaser,
   canBuyRebuild,
+  canBuySpyNetwork,
   canBuyShield,
   canBuyUnderground,
-  laserInterceptsLeft,
+  cityAsSeenBy,
+  laserShotsKnownTo,
   citiesLeft,
   computeScore,
   concludeRoundTurns,
@@ -54,6 +57,15 @@ export function threatScore(state: GameState, id: NationId): number {
     researchCount(state, id) * 8 +
     arsenal
   );
+}
+
+/**
+ * A rival's cities as this nation sees them. Without a spy service every
+ * enemy city reads as bare ground, so the AI plans the same way a blind human
+ * does: it picks targets on position alone and finds the shields the hard way.
+ */
+function seenCities(state: GameState, viewerId: NationId, targetId: NationId): City[] {
+  return state.nations[targetId].cities.map((c) => cityAsSeenBy(state, viewerId, targetId, c));
 }
 
 /** Drones already committed this round cannot escort another warhead. */
@@ -106,15 +118,17 @@ export function pickBombTarget(
   // the escort has to survive first, so we need more swarms in hand than the
   // network has shots left this round.
   for (const rival of rivals) {
-    const suppressible = escorts > laserInterceptsLeft(state, rival);
-    const killable = state.nations[rival].cities
+    const suppressible = escorts > laserShotsKnownTo(state, attackerId, rival);
+    const killable = seenCities(state, attackerId, rival)
       .filter((c) => eligible(c) && (!c.hasShield || suppressible))
       .sort((a, b) => worth(b) - worth(a));
     if (killable.length > 0) return { nationId: rival, cityId: killable[0].id };
   }
   // Nothing dies this round — strip the leader's shield so it dies next round
   for (const rival of rivals) {
-    const shielded = state.nations[rival].cities.find((c) => eligible(c) && c.hasShield);
+    const shielded = seenCities(state, attackerId, rival).find(
+      (c) => eligible(c) && c.hasShield,
+    );
     if (shielded) return { nationId: rival, cityId: shielded.id };
   }
   return null;
@@ -149,10 +163,10 @@ export function pickDroneTarget(
     // A network with shots left burns swarms for nothing. Only send them at a
     // covered nation when there are enough to saturate it, or when a warhead
     // is already inbound and the escort has to get through.
-    const shots = laserInterceptsLeft(state, rival.id);
+    const shots = laserShotsKnownTo(state, attackerId, rival.id);
     const saturating = swarmsInHand > shots;
     if (shots > 0 && !saturating) continue;
-    const cities = state.nations[rival.id].cities.filter(
+    const cities = seenCities(state, attackerId, rival.id).filter(
       (c) => !c.destroyed && !swarmed.has(c.id),
     );
     const best = [...cities].sort(
@@ -174,8 +188,8 @@ function openTargets(state: GameState, id: NationId): City[] {
     .flatMap((nid) => {
       // A shield only falls to a swarm, and a swarm only lands if it can
       // outlast the defender's laser network
-      const suppressible = swarms > laserInterceptsLeft(state, nid);
-      return state.nations[nid].cities.filter(
+      const suppressible = swarms > laserShotsKnownTo(state, id, nid);
+      return seenCities(state, id, nid).filter(
         (c) => !c.destroyed && !c.isUnderground && (!c.hasShield || suppressible),
       );
     });
@@ -234,6 +248,26 @@ export function runAiBuyPhase(state: GameState): GameState {
     const spot = me().cities.find((c) => !c.destroyed && !c.hasResearch);
     if (!spot) break;
     s = buyResearch(s, spot.id, id);
+  }
+
+  // Eyes before warheads. The standings say how many shields a rival has put
+  // up, but not which city carries them, and a blind package is spent finding
+  // out: one bounced warhead costs more than the whole spy service.
+  const rivalShields = () =>
+    aliveNations(s)
+      .filter((nid) => nid !== id)
+      .reduce((total, nid) => total + computeScore(s, nid).shields, 0);
+  // Only out of genuinely spare cash: intel that costs a warhead is a bad
+  // trade, because a warhead aimed at a shield still burns the shield down.
+  // Simulation puts the line at two warheads of headroom — above it the
+  // service pays for itself, below it the money was better spent shooting.
+  if (
+    canBuySpyNetwork(s, id) &&
+    worthArming() &&
+    rivalShields() > 0 &&
+    budget() >= COSTS.spy + 2 * COSTS.bomb
+  ) {
+    s = buySpyNetwork(s, id);
   }
 
   // Aerospace pays for itself the same round: swarms suppress shields for the
@@ -359,10 +393,13 @@ export function runAiNationTurn(state: GameState, nationId: NationId): GameState
   while (s.nations[nationId].bombs > 0) {
     const target = pickBombTarget(s, nationId);
     if (!target) break;
+    const before = s;
     s = queueStrike(s, target.nationId, target.cityId, nationId);
+    // A refused strike would leave the warhead in hand and the plan unchanged
+    if (s === before) break;
     // A shielded target only falls if drones tie the shield up first
-    const city = s.nations[target.nationId].cities.find((c) => c.id === target.cityId);
-    const shots = laserInterceptsLeft(s, target.nationId);
+    const city = seenCities(s, nationId, target.nationId).find((c) => c.id === target.cityId);
+    const shots = laserShotsKnownTo(s, nationId, target.nationId);
     if (city?.hasShield && s.nations[nationId].drones > shots) {
       // The network fires in the order swarms arrive, and a city can only be
       // swarmed once, so decoys go to the neighbours first: they burn the

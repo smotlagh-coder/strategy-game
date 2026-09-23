@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 240" fill="none">
+  <defs>
+    <linearGradient id="room" x1="0" y1="0" x2="320" y2="240" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0E1A2E"/>
+      <stop offset="1" stop-color="#05090F"/>
+    </linearGradient>
+    <linearGradient id="brim" x1="96" y1="72" x2="224" y2="104" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E4EDFA"/>
+      <stop offset="1" stop-color="#90A7C7"/>
+    </linearGradient>
+    <linearGradient id="lens" x1="112" y1="106" x2="208" y2="126" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0A111D"/>
+      <stop offset="0.5" stop-color="#2A4868"/>
+      <stop offset="1" stop-color="#0A111D"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.42" r="0.6">
+      <stop stop-color="#5FA8FF" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#5FA8FF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="320" height="240" rx="18" fill="url(#room)"/>
+  <rect width="320" height="240" rx="18" fill="url(#glow)"/>
+
+  <!-- intel wall: dossier cards and target pins -->
+  <g opacity="0.55">
+    <rect x="18" y="30" width="46" height="60" rx="5" fill="#16263E"/>
+    <rect x="24" y="38" width="34" height="5" rx="2.5" fill="#55759F"/>
+    <rect x="24" y="50" width="26" height="4" rx="2" fill="#3C5878"/>
+    <rect x="24" y="60" width="30" height="4" rx="2" fill="#3C5878"/>
+    <rect x="24" y="70" width="20" height="4" rx="2" fill="#3C5878"/>
+
+    <rect x="256" y="42" width="46" height="60" rx="5" fill="#16263E"/>
+    <rect x="262" y="50" width="34" height="5" rx="2.5" fill="#55759F"/>
+    <rect x="262" y="62" width="26" height="4" rx="2" fill="#3C5878"/>
+    <rect x="262" y="72" width="30" height="4" rx="2" fill="#3C5878"/>
+
+    <circle cx="44" cy="150" r="7" fill="none" stroke="#E2603F" stroke-width="3"/>
+    <circle cx="280" cy="150" r="7" fill="none" stroke="#E2603F" stroke-width="3"/>
+    <path d="M44 150 L160 120 L280 150" stroke="#E2603F" stroke-width="2" stroke-dasharray="6 6" opacity="0.7"/>
+  </g>
+
+  <!-- agent -->
+  <path d="M84 224c8-36 32-56 76-56s68 20 76 56z" fill="#16243C"/>
+  <path d="M160 168l-14 56h28z" fill="#CBDAF0"/>
+  <ellipse cx="160" cy="118" rx="44" ry="48" fill="#2B3D57"/>
+  <path d="M112 90c0-26 20-44 48-44s48 18 48 44z" fill="url(#brim)"/>
+  <rect x="110" y="82" width="100" height="17" rx="8.5" fill="#42597C"/>
+  <path d="M78 90h164c0 11-37 19-82 19s-82-8-82-19z" fill="url(#brim)"/>
+  <rect x="112" y="106" width="96" height="27" rx="13.5" fill="url(#lens)" stroke="#8FB8E8" stroke-width="3"/>
+  <path d="M160 113v13" stroke="#8FB8E8" stroke-width="3"/>
+</svg>

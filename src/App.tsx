@@ -7,6 +7,7 @@ import {
   COSTS,
   DRONE_DAMAGE,
   MAX_DRONES_PER_ROUND,
+  LASER_INTERCEPTS_PER_ROUND,
   MAX_SANCTIONS,
   RESEARCH_INCOME,
 } from './data/nations';
@@ -21,11 +22,14 @@ import {
   buyAerospaceTech,
   buyBombs,
   buyLaser,
+  buySpyNetwork,
   buyRebuild,
   buyUnderground,
   canBuyLaser,
+  canBuySpyNetwork,
   canBuyShield,
   sanctionsLeft,
+  seesDefences,
   canBuyRebuild,
   canBuyUnderground,
   droneDamageFor,
@@ -61,6 +65,7 @@ import {
 } from './game/engine';
 import { runAllAiUntilHumanOrSummary, runAiTurn, runOnlineAiPlanning } from './game/ai';
 import type {
+  City,
   GameMode,
   GameState,
   GameSyncEvent,
@@ -127,6 +132,7 @@ type WizardStep =
   | 'shieldPick'
   | 'laserAsk'
   | 'laserPick'
+  | 'spyAsk'
   | 'env'
   | 'sanctionAsk'
   | 'sanctionPick'
@@ -160,6 +166,8 @@ function wizardArt(step: WizardStep): string {
     case 'laserAsk':
     case 'laserPick':
       return ART.laserDefence;
+    case 'spyAsk':
+      return ART.spyServices;
     case 'env':
       return ART.map;
     case 'sanctionAsk':
@@ -1096,6 +1104,60 @@ function cityStatusLabel(c: {
   return bits.length ? bits.join(' · ') : 'Open';
 }
 
+/** A city with everything a spy service would have told you stripped out. */
+function hideDefences(c: City): City {
+  return { ...c, hasShield: false, hasResearch: false, isUnderground: false, hasLaser: false };
+}
+
+/**
+ * A city in one of the wizard's pickers. Every city is always on screen —
+ * the ones you cannot pick are greyed out with the reason — so the choice is
+ * made against the full picture of what the nation already has.
+ */
+function WizardCityCard({
+  city,
+  blocked,
+  onPick,
+}: {
+  city: City;
+  /** Why this city is not selectable, or undefined when it is */
+  blocked?: string;
+  onPick: () => void;
+}) {
+  const badges = [
+    city.hasShield && !city.destroyed && { key: 'shield', src: ART.shield, label: 'Shield' },
+    city.isUnderground &&
+      !city.destroyed && { key: 'bunker', src: ART.undergroundIcon, label: 'Underground' },
+    city.hasResearch &&
+      !city.destroyed && { key: 'research', src: ART.researchIcon, label: 'Research' },
+    city.hasLaser && !city.destroyed && { key: 'laser', src: ART.laserIcon, label: 'Lasers' },
+  ].filter(Boolean) as { key: string; src: string; label: string }[];
+
+  return (
+    <button
+      className={`turn-wizard__city-card ${city.destroyed ? 'is-rubble' : ''}`}
+      onClick={onPick}
+      disabled={Boolean(blocked)}
+      title={`${city.name} — ${blocked ?? cityStatusLabel(city)}`}
+    >
+      <span className="turn-wizard__city-art">
+        <img src={ART.cities[city.id]} alt="" draggable={false} />
+        {badges.length > 0 && (
+          <span className="turn-wizard__city-badges">
+            {badges.map((b) => (
+              <img key={b.key} src={b.src} alt={b.label} title={b.label} draggable={false} />
+            ))}
+          </span>
+        )}
+      </span>
+      <span>{city.name}</span>
+      <em className={`turn-wizard__city-state ${blocked ? 'is-blocked' : ''}`}>
+        {blocked ?? cityStatusLabel(city)}
+      </em>
+    </button>
+  );
+}
+
 function ResourceBar({
   money,
   bombs,
@@ -1155,6 +1217,11 @@ function WizardNationHeader({
     <div className={`modal__head wizard-nation-head ${compact ? 'wizard-nation-head--compact' : ''}`}>
       <div className="wizard-nation-head__emblem">
         <img className="modal__leader" src={ART.leaders[nationId]} alt="" />
+        {state.nations[nationId].hasSpyNetwork && (
+          <span className="spy-badge" title="Spy service" aria-label="Spy service">
+            <img src={ART.spyIcon} alt="" draggable={false} />
+          </span>
+        )}
       </div>
       <div>
         <p className="wizard-nation-head__country">{def.name}</p>
@@ -1190,6 +1257,7 @@ function NationPod({
   selectionWeapon = 'nuke',
   highlightCityIds,
   highlight,
+  revealed = false,
   onSelectCity,
 }: {
   id: NationId;
@@ -1207,6 +1275,8 @@ function NationPod({
   /** Cities to pulse (e.g. destroyed this round) */
   highlightCityIds?: string[];
   highlight?: boolean;
+  /** Whether the viewer may read this nation's city defences (own, or spied) */
+  revealed?: boolean;
   onSelectCity?: (nationId: NationId, cityId: string) => void;
 }) {
   const n = state.nations[id];
@@ -1224,6 +1294,15 @@ function NationPod({
     >
       <div className="nation-card__portrait" data-nation-portrait={id}>
         <img src={ART.leaders[id]} alt={def.leader} />
+        {n.hasSpyNetwork && (
+          <span
+            className="spy-badge"
+            title="Spy service — reads every nation's city defences"
+            aria-label="Spy service"
+          >
+            <img src={ART.spyIcon} alt="" draggable={false} />
+          </span>
+        )}
         <div className="nation-card__meta">
           <strong>
             {playerDisplayName(state, id)}
@@ -1239,7 +1318,10 @@ function NationPod({
         </div>
       </div>
       <div className="nation-card__cities">
-        {n.cities.map((c) => {
+        {n.cities.map((raw) => {
+          // Without eyes on this nation, every standing city reads as bare
+          // ground: rubble is visible from orbit, defences are not
+          const c = revealed ? raw : hideDefences(raw);
           const selected = selectedCityIds?.includes(c.id);
           const hitThisRound = blocked.has(c.id);
           const bombLocked = bombed.has(c.id) && !c.destroyed;
@@ -1250,7 +1332,10 @@ function NationPod({
           const bombProof = Boolean(c.isUnderground && selectionWeapon === 'nuke');
           const canTarget = Boolean(targetable && !c.destroyed && !hitThisRound && !bombProof);
           const className = `city-tile ${c.destroyed ? 'is-destroyed' : ''} ${c.hasShield ? 'has-shield' : ''} ${c.hasResearch ? 'has-research' : ''} ${selected ? 'is-selected' : ''} ${canTarget ? 'is-targetable' : ''} ${hitThisRound && !c.destroyed && !bombLocked ? 'is-hit-this-round' : ''} ${bombLocked ? 'is-bomb-locked' : ''} ${droneLocked || droneSelected ? 'is-drone-locked' : ''} ${c.isUnderground && !c.destroyed ? 'is-underground' : ''} ${c.hasLaser && !c.destroyed ? 'has-laser' : ''} ${c.rebuiltRound != null && !c.destroyed ? 'is-rebuilt' : ''} ${justHit ? 'is-just-hit' : ''}`;
-          const title = c.isUnderground && !c.destroyed
+          const unknown = !revealed && !c.destroyed;
+          const title = unknown
+            ? `${c.name} — defences unknown (no spy service)`
+            : c.isUnderground && !c.destroyed
             ? `${c.name} — underground city, cannot be destroyed`
             : bombLocked
             ? `${c.name} — targeted for bombing`
@@ -1290,7 +1375,7 @@ function NationPod({
               {c.hasLaser && !c.destroyed && (
                 <span
                   className="city-tile__laser"
-                  title="Laser defence — drone swarms are shot down"
+                  title={`Laser defence network — shoots down ${LASER_INTERCEPTS_PER_ROUND} swarms a round, anywhere in the nation`}
                   aria-label="Laser defence"
                 >
                   <img src={ART.laserIcon} alt="" draggable={false} />
@@ -1316,6 +1401,15 @@ function NationPod({
                   aria-label={droneLocked ? 'Drone swarm inbound' : 'Selected for drones'}
                 >
                   <img src={ART.drone} alt="" draggable={false} />
+                </span>
+              )}
+              {unknown && (
+                <span
+                  className="city-tile__unknown"
+                  title="Defences unknown — buy a spy service to see them"
+                  aria-label="Defences unknown"
+                >
+                  ?
                 </span>
               )}
               {c.destroyed && (
@@ -1697,6 +1791,9 @@ function canOfferShield(state: GameState, actorId: NationId): boolean {
 function canOfferLaser(state: GameState, actorId: NationId): boolean {
   return canBuyLaser(state, actorId);
 }
+function canOfferSpy(state: GameState, actorId: NationId): boolean {
+  return canBuySpyNetwork(state, actorId);
+}
 
 function canOfferEnv(state: GameState, actorId: NationId): boolean {
   const n = state.nations[actorId];
@@ -1735,6 +1832,7 @@ function nextWizardStep(
     'rebuildAsk',
     'shieldAsk',
     'laserAsk',
+    'spyAsk',
     'env',
     'sanctionAsk',
     'strike',
@@ -1762,6 +1860,7 @@ function nextWizardStep(
     if (step === 'rebuildAsk' && canOfferRebuild(state, actorId)) return 'rebuildAsk';
     if (step === 'shieldAsk' && canOfferShield(state, actorId)) return 'shieldAsk';
     if (step === 'laserAsk' && canOfferLaser(state, actorId)) return 'laserAsk';
+    if (step === 'spyAsk' && canOfferSpy(state, actorId)) return 'spyAsk';
     if (step === 'env' && canOfferEnv(state, actorId)) return 'env';
     if (step === 'sanctionAsk' && canOfferSanction(state, actorId)) return 'sanctionAsk';
     if (step === 'strike' && canOfferStrike(state, actorId)) return 'strike';
@@ -2336,14 +2435,6 @@ function GameBoard({
     closeHumanTurn(picked);
   };
 
-  const unshieldedCities = turn.cities.filter(
-    (c) => !c.destroyed && !c.hasShield && !c.isUnderground,
-  );
-  const surfaceCities = turn.cities.filter((c) => !c.destroyed && !c.isUnderground);
-  // A bunker city can still be swarmed, so lasers are worth having down there too
-  const laserlessCities = turn.cities.filter((c) => !c.destroyed && !c.hasLaser);
-  const burntCities = turn.cities.filter((c) => c.destroyed);
-  const researchCities = turn.cities.filter((c) => !c.destroyed && !c.hasResearch);
   const bombMax = maxBombsPurchasable(state, actorId);
   const droneMax = maxDronesPurchasable(state, actorId);
   const selectedCityIds = droneSelectMode
@@ -2475,22 +2566,28 @@ function GameBoard({
             {wizardStep === 'researchPick' && (
               <>
                 <h3 className="turn-wizard__q">Select the city for your Research Center</h3>
-                <p className="turn-wizard__hint">Cities that already have research are hidden</p>
+                <p className="turn-wizard__hint">
+                  +${RESEARCH_INCOME}M a round while it stands — it burns with the city
+                </p>
                 <div className="turn-wizard__city-grid">
-                  {researchCities.map((c) => (
-                    <button
+                  {turn.cities.map((c) => (
+                    <WizardCityCard
                       key={c.id}
-                      className="turn-wizard__city-card"
-                      onClick={() => {
+                      city={c}
+                      blocked={
+                        c.destroyed
+                          ? 'In rubble'
+                          : c.hasResearch
+                            ? 'Already researching'
+                            : undefined
+                      }
+                      onPick={() => {
                         pushFx({ kind: 'buy', label: `Research in ${c.name}` }, 700);
                         const next = buyResearch(stateRef.current, c.id, actorId);
                         setState(next);
                         advanceAfter(next, 'researchPick');
                       }}
-                    >
-                      <img src={ART.cities[c.id]} alt="" draggable={false} />
-                      <span>{c.name}</span>
-                    </button>
+                    />
                   ))}
                 </div>
                 <div className="turn-wizard__actions">
@@ -2602,20 +2699,24 @@ function GameBoard({
                   This is your one bunker city — it can never be destroyed
                 </p>
                 <div className="turn-wizard__city-grid">
-                  {surfaceCities.map((c) => (
-                    <button
+                  {turn.cities.map((c) => (
+                    <WizardCityCard
                       key={c.id}
-                      className="turn-wizard__city-card"
-                      onClick={() => {
+                      city={c}
+                      blocked={
+                        c.destroyed
+                          ? 'In rubble'
+                          : c.isUnderground
+                            ? 'Already the bunker'
+                            : undefined
+                      }
+                      onPick={() => {
                         pushFx({ kind: 'buy', label: `${c.name} goes underground` }, 700);
                         const next = buyUnderground(stateRef.current, c.id, actorId);
                         setState(next);
                         advanceAfter(next, 'undergroundPick');
                       }}
-                    >
-                      <img src={ART.cities[c.id]} alt="" draggable={false} />
-                      <span>{c.name}</span>
-                    </button>
+                    />
                   ))}
                 </div>
                 <div className="turn-wizard__actions">
@@ -2661,20 +2762,18 @@ function GameBoard({
                 <h3 className="turn-wizard__q">Which city do you rebuild?</h3>
                 <p className="turn-wizard__hint">Construction finishes before the next strikes</p>
                 <div className="turn-wizard__city-grid">
-                  {burntCities.map((c) => (
-                    <button
+                  {turn.cities.map((c) => (
+                    <WizardCityCard
                       key={c.id}
-                      className="turn-wizard__city-card"
-                      onClick={() => {
+                      city={c}
+                      blocked={c.destroyed ? undefined : 'Still standing'}
+                      onPick={() => {
                         pushFx({ kind: 'buy', label: `${c.name} rebuilt` }, 700);
                         const next = buyRebuild(stateRef.current, c.id, actorId);
                         setState(next);
                         advanceAfter(next, 'rebuildPick');
                       }}
-                    >
-                      <img src={ART.cities[c.id]} alt="" draggable={false} />
-                      <span>{c.name}</span>
-                    </button>
+                    />
                   ))}
                 </div>
                 <div className="turn-wizard__actions">
@@ -2717,22 +2816,31 @@ function GameBoard({
             {wizardStep === 'shieldPick' && (
               <>
                 <h3 className="turn-wizard__q">Select the city for your shield</h3>
-                <p className="turn-wizard__hint">Cities that already have a shield are hidden</p>
+                <p className="turn-wizard__hint">
+                  Stops one warhead, then it is spent — and this is your only install this
+                  round
+                </p>
                 <div className="turn-wizard__city-grid">
-                  {unshieldedCities.map((c) => (
-                    <button
+                  {turn.cities.map((c) => (
+                    <WizardCityCard
                       key={c.id}
-                      className="turn-wizard__city-card"
-                      onClick={() => {
+                      city={c}
+                      blocked={
+                        c.destroyed
+                          ? 'In rubble'
+                          : c.isUnderground
+                            ? 'Bunker — safe already'
+                            : c.hasShield
+                              ? 'Already shielded'
+                              : undefined
+                      }
+                      onPick={() => {
                         pushFx({ kind: 'buy', label: `Shield on ${c.name}` }, 700);
                         const next = buyShield(stateRef.current, c.id, actorId);
                         setState(next);
                         advanceAfter(next, 'shieldPick');
                       }}
-                    >
-                      <img src={ART.cities[c.id]} alt="" draggable={false} />
-                      <span>{c.name}</span>
-                    </button>
+                    />
                   ))}
                 </div>
                 <div className="turn-wizard__actions">
@@ -2748,9 +2856,10 @@ function GameBoard({
 
             {wizardStep === 'laserAsk' && (
               <>
-                <h3 className="turn-wizard__q">Install a laser defence battery?</h3>
+                <h3 className="turn-wizard__q">Build a laser defence network?</h3>
                 <p className="turn-wizard__hint">
-                  {COSTS.laser}M per city · shoots down every drone swarm sent at it
+                  {COSTS.laser}M · one per nation · covers every city ·{' '}
+                  {LASER_INTERCEPTS_PER_ROUND} swarms shot down per round
                 </p>
                 <div className="turn-wizard__actions">
                   <button
@@ -2772,28 +2881,55 @@ function GameBoard({
               </>
             )}
 
+            {wizardStep === 'spyAsk' && (
+              <>
+                <h3 className="turn-wizard__q">Open a spy service?</h3>
+                <p className="turn-wizard__hint">
+                  {COSTS.spy}M once · shields, research, bunkers and laser networks on every
+                  enemy city, for the rest of the war
+                </p>
+                <div className="turn-wizard__actions">
+                  <button
+                    className="btn btn--xl btn--primary"
+                    onClick={() => {
+                      pushFx({ kind: 'buy', label: 'Spy service opened' }, 700);
+                      const next = buySpyNetwork(stateRef.current, actorId);
+                      setState(next);
+                      advanceAfter(next, 'spyAsk');
+                    }}
+                  >
+                    Yes
+                  </button>
+                  <button
+                    className="btn btn--xl"
+                    onClick={() => advanceAfter(stateRef.current, 'spyAsk')}
+                  >
+                    No
+                  </button>
+                </div>
+              </>
+            )}
+
             {wizardStep === 'laserPick' && (
               <>
-                <h3 className="turn-wizard__q">Which city gets the lasers?</h3>
+                <h3 className="turn-wizard__q">Where do the lasers go?</h3>
                 <p className="turn-wizard__hint">
-                  Drones sent at this city are shot down — no repair bill, and no swarm
-                  left to distract its shield
+                  The network covers all your cities wherever it sits — pick the city you
+                  trust to keep standing, because it burns with the control site
                 </p>
                 <div className="turn-wizard__city-grid">
-                  {laserlessCities.map((c) => (
-                    <button
+                  {turn.cities.map((c) => (
+                    <WizardCityCard
                       key={c.id}
-                      className="turn-wizard__city-card"
-                      onClick={() => {
-                        pushFx({ kind: 'buy', label: `Lasers on ${c.name}` }, 700);
+                      city={c}
+                      blocked={c.destroyed ? 'In rubble' : undefined}
+                      onPick={() => {
+                        pushFx({ kind: 'buy', label: `Laser network — ${c.name}` }, 700);
                         const next = buyLaser(stateRef.current, c.id, actorId);
                         setState(next);
                         advanceAfter(next, 'laserPick');
                       }}
-                    >
-                      <img src={ART.cities[c.id]} alt="" draggable={false} />
-                      <span>{c.name}</span>
-                    </button>
+                    />
                   ))}
                 </div>
                 <div className="turn-wizard__actions">
@@ -2948,6 +3084,8 @@ function GameBoard({
                 ? ` · selected ${targets.length}/${turn.bombs}`
                 : ''}
               . Strikes launch with everyone else at round end.
+              {!turn.hasSpyNetwork &&
+                ' You have no eyes on their cities: a shield you cannot see will eat the warhead, and a bunker will break it.'}
             </p>
             {targets.length > 0 && (
               <p className="target-label">
@@ -3002,6 +3140,8 @@ function GameBoard({
               batteries shoot swarms down for nothing. Swarm a city you also
               bombed and its shield is too busy to stop the warhead — the city
               falls, so there is no repair bill to collect.
+              {!turn.hasSpyNetwork &&
+                ' Without a spy service you cannot see which nations have a laser network.'}
             </p>
             {droneTargets.length > 0 && (
               <p className="target-label">
@@ -3059,7 +3199,18 @@ function GameBoard({
             {isHumanTurn && (
               <div className="panel panel--shop enter-pop">
                 <div className="modal__head">
-                  <img className="modal__leader" src={ART.leaders[actorId]} alt="" />
+                  <span className="leader-emblem">
+                    <img className="modal__leader" src={ART.leaders[actorId]} alt="" />
+                    {turn.hasSpyNetwork && (
+                      <span
+                        className="spy-badge"
+                        title="Spy service — enemy city defences are visible to you"
+                        aria-label="Spy service"
+                      >
+                        <img src={ART.spyIcon} alt="" draggable={false} />
+                      </span>
+                    )}
+                  </span>
                   <div>
                     <h2>
                       {playerDisplayName(state, actorId).toUpperCase()}
@@ -3083,6 +3234,7 @@ function GameBoard({
                       selectedCityIds={selectedCityIds}
                       pendingBombCityIds={pendingBombCityIds}
                       highlight={id === actorId}
+                      revealed
                     />
                   ))}
                 </div>
@@ -3122,6 +3274,7 @@ function GameBoard({
                     selectedCityIds={selectedCityIds}
                     pendingBombCityIds={pendingBombCityIds}
                     highlight={id === actorId}
+                    revealed
                   />
                 ))}
               </div>
@@ -3178,6 +3331,7 @@ function GameBoard({
                 id={id}
                 variant="enemy"
                 state={state}
+                revealed={seesDefences(state, actorId, id)}
                 selectedCityIds={selectedCityIds}
                 targetable={strikeSelectMode}
                 blockedCityIds={
@@ -3257,6 +3411,9 @@ function RoundSummary({
   const worldIds = aftermathWorldIds(state.turnOrder, myCityIds) as NationId[];
   const isYouNation = (id: NationId) =>
     myNationId ? id === myNationId : Boolean(state.nations[id].isHuman);
+  // The aftermath board is read by whoever is at the screen: one spy service
+  // among the nations they play is enough to light the world panel up
+  const worldRevealed = myCityIds.some((id) => state.nations[id].hasSpyNetwork);
 
   return (
     <div className="screen screen--board screen--round-report">
@@ -3358,6 +3515,7 @@ function RoundSummary({
                     id={id}
                     variant="ally"
                     state={state}
+                    revealed
                     highlightCityIds={destroyedCityIds}
                     highlight={state.nations[id].eliminated}
                   />
@@ -3365,7 +3523,9 @@ function RoundSummary({
               </div>
 
               <div className="round-report__world-mobile">
-                <h2 className="round-report__panel-title">World — shields, research, lasers, ruins</h2>
+                <h2 className="round-report__panel-title">
+                  {worldRevealed ? 'World — shields, research, lasers, ruins' : 'World — who is still standing'}
+                </h2>
                 <p className="round-report__legend">
                   <span>🛡 Shield</span>
                   <span>
@@ -3395,6 +3555,7 @@ function RoundSummary({
                       id={id}
                       variant="enemy"
                       state={state}
+                      revealed={worldRevealed}
                       highlightCityIds={destroyedCityIds}
                       highlight={state.nations[id].eliminated}
                     />
@@ -3414,16 +3575,27 @@ function RoundSummary({
         </section>
 
         <section className="board-right round-report__world-desktop">
-          <h3 className="board-section-title">World — shields, research, lasers, ruins</h3>
+          <h3 className="board-section-title">
+            {worldRevealed ? 'World — shields, research, lasers, ruins' : 'World — who is still standing'}
+          </h3>
           <p className="round-report__legend">
-            <span>🛡 Shield</span>
-            <span>
-              <img className="legend-icon" src={ART.researchIcon} alt="" draggable={false} />{' '}
-              Research
-            </span>
-            <span>
-              <img className="legend-icon" src={ART.laserIcon} alt="" draggable={false} /> Lasers
-            </span>
+            {worldRevealed ? (
+              <>
+                <span>🛡 Shield</span>
+                <span>
+                  <img className="legend-icon" src={ART.researchIcon} alt="" draggable={false} />{' '}
+                  Research
+                </span>
+                <span>
+                  <img className="legend-icon" src={ART.laserIcon} alt="" draggable={false} />{' '}
+                  Lasers
+                </span>
+              </>
+            ) : (
+              <span>
+                ? Defences unknown — a ${COSTS.spy}M spy service puts them on the board
+              </span>
+            )}
             <span className="round-report__legend-burnt">Burnt = destroyed</span>
           </p>
           <div className="board-right__nations">
@@ -3433,6 +3605,7 @@ function RoundSummary({
                 id={id}
                 variant="enemy"
                 state={state}
+                revealed={worldRevealed}
                 highlightCityIds={destroyedCityIds}
                 highlight={state.nations[id].eliminated}
               />

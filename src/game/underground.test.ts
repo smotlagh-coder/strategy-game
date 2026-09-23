@@ -35,6 +35,9 @@ function table(usExtra: Partial<GameState['nations']['us']> = {}) {
         hasAerospaceTech: true,
         aerospaceTechUnlockedRound: 0,
         drones: 2,
+        // The attacker runs a spy service unless a test says otherwise, so
+        // targeting reasons about the bunker instead of guessing past it
+        hasSpyNetwork: true,
         ...usExtra,
       },
       uk: { ...base.nations.uk, money: 20 },
@@ -82,13 +85,27 @@ describe('buying an underground city', () => {
 });
 
 describe('surviving attacks underground', () => {
-  it('cannot be picked as a bomb target', () => {
+  it('cannot be picked as a bomb target by an attacker who can see it', () => {
     let s = table();
     const city = s.nations.uk.cities[0];
     s = buyUnderground(s, city.id, 'uk');
     s = queueStrike(s, 'uk', city.id, 'us');
     expect(s.pendingStrikes).toHaveLength(0);
     expect(s.nations.us.bombs).toBe(2);
+  });
+
+  it('takes the blind attacker\'s warhead and breaks it against the rock', () => {
+    let s = table({ hasSpyNetwork: false });
+    const city = s.nations.uk.cities[0];
+    s = buyUnderground(s, city.id, 'uk');
+    s = queueStrike(s, 'uk', city.id, 'us');
+    // No eyes on the target, so the warhead is spent finding out
+    expect(s.pendingStrikes).toHaveLength(1);
+    expect(s.nations.us.bombs).toBe(1);
+
+    s = applyQueuedStrike(s, s.pendingStrikes[0]);
+    expect(s.nations.uk.cities[0].destroyed).toBe(false);
+    expect(s.roundEvents.some((e) => e.kind === 'strikeAbsorbed')).toBe(true);
   });
 
   it('absorbs a warhead that was queued before the city went underground', () => {
@@ -157,7 +174,7 @@ describe('surviving attacks underground', () => {
 });
 
 describe('AI awareness', () => {
-  it('never aims a warhead at a bunker city', () => {
+  it('never aims a warhead at a bunker city it can see', () => {
     // Head-to-head table so the pickers have exactly one rival to choose from
     let s: GameState = { ...table(), turnOrder: ['us', 'uk'] };
     for (const city of s.nations.uk.cities.slice(1)) {

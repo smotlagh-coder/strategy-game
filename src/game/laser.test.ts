@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { COSTS, DRONE_DAMAGE } from '../data/nations';
+import { COSTS, DRONE_DAMAGE, LASER_INTERCEPTS_PER_ROUND } from '../data/nations';
 import {
   applyQueuedStrike,
   buyLaser,
@@ -8,12 +8,14 @@ import {
   canBuyLaser,
   createInitialState,
   droneDamageFor,
+  laserInterceptsLeft,
+  nextRound,
   orderStrikesForResolution,
   queueStrike,
   seatTable,
   startGame,
 } from './engine';
-import { pickDroneTarget, runAiBuyPhase } from './ai';
+import { pickDroneTarget, runAiBuyPhase, runAiNationTurn } from './ai';
 import { mergeNationPlanning } from '../lib/onlineSync';
 import type { GameState, NationId, NationState } from '../types';
 
@@ -37,6 +39,8 @@ function table(overrides: Partial<Record<NationId, Partial<NationState>>> = {}):
         hasNuclearTech: true,
         nuclearTechUnlockedRound: 0,
         bombs: 1,
+        // Attack plans only account for a network the attacker can see
+        hasSpyNetwork: true,
         ...(overrides.us ?? {}),
       },
       uk: {
@@ -60,8 +64,8 @@ function resolveAll(state: GameState): GameState {
 }
 
 describe('laser defence', () => {
-  it('costs $2.5M per city and needs Aerospace Tech first', () => {
-    expect(COSTS.laser).toBe(2.5);
+  it('costs $3.5M and needs Aerospace Tech first', () => {
+    expect(COSTS.laser).toBe(3.5);
 
     const noTech = table({ uk: { hasAerospaceTech: false, aerospaceTechUnlockedRound: null } });
     expect(canBuyLaser(noTech, 'uk')).toBe(false);
@@ -73,10 +77,49 @@ describe('laser defence', () => {
     expect(s.nations.uk.money).toBe(20 - COSTS.laser);
   });
 
-  it('does not sell a second battery for the same city', () => {
-    const city = table().nations.uk.cities[0];
-    const s = buyLaser(table(), city.id, 'uk');
-    expect(buyLaser(s, city.id, 'uk').nations.uk.money).toBe(s.nations.uk.money);
+  it('sells one network per nation, not one battery per city', () => {
+    const cities = table().nations.uk.cities;
+    const s = buyLaser(table(), cities[0].id, 'uk');
+    expect(canBuyLaser(s, 'uk')).toBe(false);
+    expect(buyLaser(s, cities[1].id, 'uk')).toBe(s);
+    expect(buyLaser(s, cities[0].id, 'uk')).toBe(s);
+  });
+
+  it('covers every city the nation owns, not just the one it sits on', () => {
+    let s = table();
+    const [host, elsewhere] = s.nations.uk.cities;
+    s = buyLaser(s, host.id, 'uk');
+    s = queueStrike(s, 'uk', elsewhere.id, 'us', 'drone');
+    s = resolveAll(s);
+
+    expect(s.nations.uk.pendingDroneDamage ?? 0).toBe(0);
+    expect(s.roundEvents.some((e) => e.kind === 'dronesIntercepted')).toBe(true);
+  });
+
+  it('runs out of shots after its budget and lets the rest through', () => {
+    let s = table({ us: { drones: 5 } });
+    s = buyLaser(s, s.nations.uk.cities[0].id, 'uk');
+    for (const city of s.nations.uk.cities) {
+      s = queueStrike(s, 'uk', city.id, 'us', 'drone');
+    }
+    s = resolveAll(s);
+
+    const shot = s.roundEvents.filter((e) => e.kind === 'dronesIntercepted');
+    const billed = s.roundEvents.filter((e) => e.kind === 'droneDamage');
+    expect(shot).toHaveLength(LASER_INTERCEPTS_PER_ROUND);
+    expect(billed).toHaveLength(3 - LASER_INTERCEPTS_PER_ROUND);
+    expect(s.nations.uk.dronesInterceptedThisRound).toBe(LASER_INTERCEPTS_PER_ROUND);
+  });
+
+  it('reloads for the next round', () => {
+    let s = table({ us: { drones: 5 } });
+    s = buyLaser(s, s.nations.uk.cities[0].id, 'uk');
+    s = queueStrike(s, 'uk', s.nations.uk.cities[0].id, 'us', 'drone');
+    s = resolveAll(s);
+    expect(laserInterceptsLeft(s, 'uk')).toBe(LASER_INTERCEPTS_PER_ROUND - 1);
+
+    s = nextRound({ ...s, phase: 'roundSummary', pendingStrikes: [] });
+    expect(laserInterceptsLeft(s, 'uk')).toBe(LASER_INTERCEPTS_PER_ROUND);
   });
 
   it('shoots the swarm down instead of billing repairs', () => {
@@ -87,19 +130,18 @@ describe('laser defence', () => {
     s = resolveAll(s);
 
     expect(s.nations.uk.pendingDroneDamage ?? 0).toBe(0);
-    expect(droneDamageFor(s.nations.uk.cities[0])).toBe(0);
     const event = s.roundEvents.find((e) => e.kind === 'dronesIntercepted');
     expect(event?.cityId).toBe(city.id);
     expect(event?.attackerId).toBe('us');
   });
 
-  it('bills the usual repairs on a city without a battery', () => {
+  it('bills the usual repairs on a nation without a network', () => {
     let s = table();
-    const [lasered, open] = s.nations.uk.cities;
-    s = buyLaser(s, lasered.id, 'uk');
+    const open = s.nations.uk.cities[1];
     s = queueStrike(s, 'uk', open.id, 'us', 'drone');
     s = resolveAll(s);
     expect(s.nations.uk.pendingDroneDamage).toBe(DRONE_DAMAGE);
+    expect(droneDamageFor(s.nations.uk.cities[1])).toBe(DRONE_DAMAGE);
   });
 
   it('keeps the shield up, so a nuke sent with the swarm only breaks the shield', () => {
@@ -152,17 +194,51 @@ describe('laser defence', () => {
 });
 
 describe('AI and laser defence', () => {
-  it('never sends a swarm at a city that will shoot it down', () => {
-    let s = table();
-    for (const city of s.nations.uk.cities.slice(0, 2)) {
-      s = buyLaser(s, city.id, 'uk');
-    }
-    const target = pickDroneTarget(s, 'us');
-    expect(target?.cityId).toBe(s.nations.uk.cities[2].id);
+  it('will not fly swarms it cannot push past the network', () => {
+    let s = table({ us: { drones: LASER_INTERCEPTS_PER_ROUND } });
+    s = buyLaser(s, s.nations.uk.cities[0].id, 'uk');
+    // Exactly as many swarms as the network has shots — every one dies
+    expect(pickDroneTarget(s, 'us')).toBeNull();
+  });
 
-    let allCovered = s;
-    allCovered = buyLaser(allCovered, s.nations.uk.cities[2].id, 'uk');
-    expect(pickDroneTarget(allCovered, 'us')).toBeNull();
+  it('flies into a network it has no eyes on', () => {
+    let s = table({
+      us: { drones: LASER_INTERCEPTS_PER_ROUND, hasSpyNetwork: false },
+    });
+    s = buyLaser(s, s.nations.uk.cities[0].id, 'uk');
+    // The network is invisible without a spy service, so the swarms go anyway
+    expect(pickDroneTarget(s, 'us')?.nationId).toBe('uk');
+
+    s = runAiNationTurn({ ...s, nations: { ...s.nations, us: { ...s.nations.us, isHuman: false } } }, 'us');
+    s = resolveAll(s);
+    expect(s.roundEvents.filter((e) => e.kind === 'dronesIntercepted')).toHaveLength(
+      LASER_INTERCEPTS_PER_ROUND,
+    );
+    expect(s.nations.uk.pendingDroneDamage ?? 0).toBe(0);
+  });
+
+  it('saturates the network when it holds one swarm more than the shots', () => {
+    let s = table({ us: { drones: LASER_INTERCEPTS_PER_ROUND + 1 } });
+    s = buyLaser(s, s.nations.uk.cities[0].id, 'uk');
+    expect(pickDroneTarget(s, 'us')?.nationId).toBe('uk');
+  });
+
+  it('spends decoys on the neighbours so the escort reaches a shielded city', () => {
+    let s = table({ us: { drones: LASER_INTERCEPTS_PER_ROUND + 1, bombs: 1 } });
+    const target = s.nations.uk.cities[0];
+    s = buyShield(s, target.id, 'uk');
+    s = buyLaser(s, s.nations.uk.cities[2].id, 'uk');
+
+    s = runAiNationTurn({ ...s, nations: { ...s.nations, us: { ...s.nations.us, isHuman: false } } }, 'us');
+    const swarms = s.pendingStrikes.filter((p) => p.weapon === 'drone');
+    expect(swarms.length).toBe(LASER_INTERCEPTS_PER_ROUND + 1);
+    expect(swarms.some((p) => p.cityId === target.id)).toBe(true);
+
+    s = resolveAll(s);
+    const shot = s.roundEvents.filter((e) => e.kind === 'dronesIntercepted').map((e) => e.cityId);
+    expect(shot).toHaveLength(LASER_INTERCEPTS_PER_ROUND);
+    expect(shot).not.toContain(target.id);
+    expect(s.nations.uk.cities[0].hasShield).toBe(false);
   });
 
   /** An AI that already has its tech, so the budget reaches the defences. */
@@ -179,7 +255,19 @@ describe('AI and laser defence', () => {
     expect(runAiBuyPhase(s).nations.uk.cities.some((c) => c.hasLaser)).toBe(true);
   });
 
-  it('leaves the batteries alone while nobody can field a swarm', () => {
-    expect(runAiBuyPhase(aiTable(0)).nations.uk.cities.some((c) => c.hasLaser)).toBe(false);
+  it('leaves the network alone while nobody can field a swarm', () => {
+    const grounded = aiTable(0);
+    const s = {
+      ...grounded,
+      nations: {
+        ...grounded.nations,
+        us: {
+          ...grounded.nations.us,
+          hasAerospaceTech: false,
+          aerospaceTechUnlockedRound: null,
+        },
+      },
+    };
+    expect(runAiBuyPhase(s).nations.uk.cities.some((c) => c.hasLaser)).toBe(false);
   });
 });

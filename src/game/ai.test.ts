@@ -28,9 +28,19 @@ function table(tweaks: Partial<Record<NationId, Partial<NationState>>> = {}): Ga
   });
 }
 
-/** Give a nation the arsenal to strike without going through the buy phase. */
+/**
+ * Give a nation the arsenal — and the intel — to strike without going through
+ * the buy phase. Targeting only reasons about defences it can actually see.
+ */
 function armed(extra: Partial<NationState> = {}): Partial<NationState> {
-  return { money: 0, hasNuclearTech: true, nuclearTechUnlockedRound: 0, bombs: 1, ...extra };
+  return {
+    money: 0,
+    hasNuclearTech: true,
+    nuclearTechUnlockedRound: 0,
+    bombs: 1,
+    hasSpyNetwork: true,
+    ...extra,
+  };
 }
 
 /** Bury every city so nothing the AI owns can be taken off the board. */
@@ -157,7 +167,9 @@ describe('AI purchasing', () => {
   });
 
   it('buys no warheads when nothing on the board can be levelled', () => {
-    let s = table({ uk: { money: 30, hasNuclearTech: true, nuclearTechUnlockedRound: 0 } });
+    let s = table({
+      uk: { money: 30, hasNuclearTech: true, nuclearTechUnlockedRound: 0, hasSpyNetwork: true },
+    });
     s = {
       ...s,
       currentTurnIndex: s.turnOrder.indexOf('uk'),
