@@ -255,23 +255,13 @@ export function runAiBuyPhase(state: GameState): GameState {
     if (spot) s = buyResearch(s, spot.id, id);
   }
 
-  // Eyes before warheads. The standings say how many shields a rival has put
-  // up, but not which city carries them, and a blind package is spent finding
-  // out: one bounced warhead costs more than the whole spy service.
-  const rivalShields = () =>
-    aliveNations(s)
-      .filter((nid) => nid !== id)
-      .reduce((total, nid) => total + computeScore(s, nid).shields, 0);
-  // Only out of genuinely spare cash: intel that costs a warhead is a bad
-  // trade, because a warhead aimed at a shield still burns the shield down.
-  // Simulation puts the line at two warheads of headroom — above it the
-  // service pays for itself, below it the money was better spent shooting.
-  if (
-    canBuySpyNetwork(s, id) &&
-    worthArming() &&
-    rivalShields() > 0 &&
-    budget() >= COSTS.spy + 2 * COSTS.bomb
-  ) {
+  // Eyes before warheads. Blind, barely a third of the AI's warheads take a
+  // city: the rest break on rock or burn a shield the attacker could not see,
+  // and the bunkers doing most of that damage never show up on the scoreboard.
+  // The service costs about what one match of those misses costs, so it only
+  // has to come out of what is left once the strike package is reserved —
+  // asking for more headroom than that priced it out of every round.
+  if (canBuySpyNetwork(s, id) && worthArming() && budget() >= COSTS.spy) {
     s = buySpyNetwork(s, id);
   }
 

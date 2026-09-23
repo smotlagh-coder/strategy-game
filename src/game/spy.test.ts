@@ -162,7 +162,24 @@ describe('AI and intel', () => {
     expect(runAiBuyPhase(aiTable(1)).nations.us.hasSpyNetwork).toBe(true);
   });
 
-  it('spends nothing on intel while the board is still bare', () => {
-    expect(runAiBuyPhase(aiTable(0)).nations.us.hasSpyNetwork).toBe(false);
+  it('buys them before a shield is up, because a bunker never shows at all', () => {
+    expect(runAiBuyPhase(aiTable(0)).nations.us.hasSpyNetwork).toBe(true);
+  });
+
+  it('waits out the opening round, when there is nothing built to look at', () => {
+    expect(runAiBuyPhase({ ...aiTable(1), round: 1 }).nations.us.hasSpyNetwork).toBe(false);
+  });
+
+  it('shoots rather than watch when the cash only covers one of the two', () => {
+    // A warhead's worth of change: the strike package comes first, and intel
+    // is bought out of what survives it
+    const s = aiTable(1);
+    const broke = {
+      ...s,
+      nations: { ...s.nations, us: { ...s.nations.us, money: COSTS.bomb + COSTS.spy } },
+    };
+    const after = runAiBuyPhase(broke);
+    expect(after.nations.us.hasSpyNetwork).toBe(false);
+    expect(after.nations.us.bombs).toBeGreaterThan(s.nations.us.bombs);
   });
 });
