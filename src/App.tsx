@@ -1,5 +1,5 @@
 import './App.css';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ART, SFX } from './data/art';
 import {
   NATIONS,
@@ -64,6 +64,8 @@ import {
   whoIsSanctioning,
 } from './game/engine';
 import { runAllAiUntilHumanOrSummary, runAiTurn, runOnlineAiPlanning } from './game/ai';
+import { buildRoundBriefing } from './game/briefing';
+import type { BriefingCityStatus, RoundBriefing } from './game/briefing';
 import type {
   City,
   GameMode,
@@ -107,7 +109,7 @@ import {
   REPORT_POLL_MS,
   REPORT_WAIT_MS,
   ROUND_BANNER_MS,
-  ROUND_BRIEFING_SLIDE_MS,
+  ROUND_BRIEFING_MS,
   SELECTION_IDLE_MS,
   STRIKE_CINEMA_MS,
 } from './lib/onlineConstants';
@@ -241,9 +243,11 @@ const STRIKE_IMPACT_MS = 1300;
 const LASER_INTERCEPT_AT = 0.6;
 
 function StrikeCinema({
+  state,
   strike,
   onComplete,
 }: {
+  state: GameState;
   strike: StrikeShow;
   onComplete: () => void;
 }) {
@@ -479,7 +483,7 @@ function StrikeCinema({
             <img
               ref={launcherRef}
               className="strike-cinema__leader"
-              src={ART.leaders[strike.from]}
+              src={leaderArt(state, strike.from)}
               alt=""
             />
             <strong>{from.name}</strong>
@@ -520,7 +524,11 @@ function StrikeCinema({
                         src={ART.cities[target.cityId]}
                         alt=""
                       />
-                      <img className="strike-cinema__leader-sm" src={ART.leaders[target.to]} alt="" />
+                      <img
+                        className="strike-cinema__leader-sm"
+                        src={leaderArt(state, target.to)}
+                        alt=""
+                      />
                       {booms[i]?.weapon === 'nuke' &&
                         (booms[i]?.absorbed ? (
                           <span className="strike-cinema__rubble" aria-hidden />
@@ -671,198 +679,313 @@ function formatRoundEvent(e: RoundWorldEvent): string {
     : `${e.cityName} (${nation}) was destroyed.`;
 }
 
-type RoundStartSlide =
-  | { kind: 'round'; round: number }
-  | { kind: 'attack'; attackers: { id: NationId; cities: string[] }[] }
-  | { kind: 'sanction'; from: NationId[] }
-  | { kind: 'drones'; attackers: { id: NationId; cities: string[] }[]; bill: number }
-  | { kind: 'money'; amount: number; income?: number; droneDamage?: number };
+/** Round 1, or any round we have nothing personal to report. */
+function RoundBannerOverlay({ round, onDone }: { round: number; onDone: () => void }) {
+  useEffect(() => {
+    const t = window.setTimeout(onDone, ROUND_BANNER_MS);
+    return () => window.clearTimeout(t);
+  }, [onDone]);
 
-function buildRoundStartSlides(state: GameState, myId: NationId | null): RoundStartSlide[] {
-  const slides: RoundStartSlide[] = [{ kind: 'round', round: state.round }];
-  if (!myId || state.round < 2) return slides;
-
-  const hits = (state.previousRoundEvents ?? []).filter(
-    (e) =>
-      e.nationId === myId &&
-      (e.kind === 'cityDestroyed' ||
-        e.kind === 'shieldDestroyed' ||
-        e.kind === 'strikeAbsorbed') &&
-      e.attackerId,
+  return (
+    <div className="round-banner round-start" role="status" aria-live="polite">
+      <div className="round-banner__veil" />
+      <div className="round-banner__panel round-start__panel round-start__panel--round enter-pop">
+        <h2 className="round-start__title">Round {round}</h2>
+        <p className="round-start__hint">Prepare your orders</p>
+      </div>
+    </div>
   );
-  if (hits.length > 0) {
-    const byAttacker = new Map<NationId, string[]>();
-    for (const h of hits) {
-      const attacker = h.attackerId as NationId;
-      const cities = byAttacker.get(attacker) ?? [];
-      if (h.cityName && !cities.includes(h.cityName)) cities.push(h.cityName);
-      byAttacker.set(attacker, cities);
-    }
-    slides.push({
-      kind: 'attack',
-      attackers: Array.from(byAttacker.entries()).map(([id, cities]) => ({ id, cities })),
-    });
-  }
-
-  const swarms = (state.previousRoundEvents ?? []).filter(
-    (e) => e.nationId === myId && e.kind === 'droneDamage' && e.attackerId,
-  );
-  if (swarms.length > 0) {
-    const byAttacker = new Map<NationId, string[]>();
-    let bill = 0;
-    for (const s of swarms) {
-      const attacker = s.attackerId as NationId;
-      const cities = byAttacker.get(attacker) ?? [];
-      if (s.cityName && !cities.includes(s.cityName)) cities.push(s.cityName);
-      byAttacker.set(attacker, cities);
-      bill += s.amount ?? DRONE_DAMAGE;
-    }
-    slides.push({
-      kind: 'drones',
-      attackers: Array.from(byAttacker.entries()).map(([id, cities]) => ({ id, cities })),
-      bill: +bill.toFixed(2),
-    });
-  }
-
-  const from = whoIsSanctioning(state, myId);
-  if (from.length > 0) slides.push({ kind: 'sanction', from });
-
-  const ledger = state.lastIncomeLedger.find((e) => e.nationId === myId);
-  slides.push({
-    kind: 'money',
-    amount: state.nations[myId]?.money ?? 0,
-    income: ledger?.revenue,
-    droneDamage: ledger?.droneDamage,
-  });
-  return slides;
 }
 
-function RoundStartOverlay({
-  slides,
+const CITY_STATUS_LABEL: Record<BriefingCityStatus, string> = {
+  quiet: 'Untouched',
+  rebuilt: 'Rebuilt',
+  intercepted: 'Swarm shot down',
+  swarmed: 'Drone damage',
+  shieldLost: 'Shield destroyed',
+  absorbed: 'Bunker held',
+  destroyed: 'Destroyed',
+};
+
+/**
+ * Everything that happened to a player between rounds on one page — cities,
+ * raiders, sanctions, treasury and the table — instead of a queue of banners
+ * they have to sit through. It clears itself so an online table keeps moving.
+ */
+function RoundBriefingOverlay({
+  state,
+  briefing,
   onDone,
 }: {
-  slides: RoundStartSlide[];
+  state: GameState;
+  briefing: RoundBriefing;
   onDone: () => void;
 }) {
-  const [index, setIndex] = useState(0);
-  const slide = slides[index];
+  const [secondsLeft, setSecondsLeft] = useState(Math.round(ROUND_BRIEFING_MS / 1000));
 
   useEffect(() => {
-    if (!slide) {
-      onDone();
-      return;
-    }
-    const ms = slide.kind === 'round' ? ROUND_BANNER_MS : ROUND_BRIEFING_SLIDE_MS;
-    const t = window.setTimeout(() => {
-      if (index >= slides.length - 1) onDone();
-      else setIndex((i) => i + 1);
-    }, ms);
-    return () => window.clearTimeout(t);
-  }, [index, slide, slides.length, onDone]);
+    const tick = window.setInterval(() => setSecondsLeft((s) => Math.max(0, s - 1)), 1000);
+    const end = window.setTimeout(onDone, ROUND_BRIEFING_MS);
+    return () => {
+      window.clearInterval(tick);
+      window.clearTimeout(end);
+    };
+  }, [onDone]);
 
-  if (!slide) return null;
-
-  let title = '';
-  let body: ReactNode = null;
-  let tone = 'round';
-  if (slide.kind === 'round') {
-    title = `Round ${slide.round}`;
-    body = <p className="round-start__hint">Prepare your orders</p>;
-    tone = 'round';
-  } else if (slide.kind === 'attack') {
-    title = 'Incoming strikes';
-    tone = 'attack';
-    body = (
-      <ul className="round-start__list">
-        {slide.attackers.map((a) => (
-          <li key={a.id} className="round-start__row">
-            <img src={ART.leaders[a.id]} alt="" />
-            <div>
-              <strong>{nationDef(a.id).name}</strong>
-              <span>
-                targeted your cities
-                {a.cities.length ? `: ${a.cities.join(' · ')}` : ''}
-              </span>
-            </div>
-          </li>
-        ))}
-      </ul>
-    );
-  } else if (slide.kind === 'drones') {
-    title = 'Drone damage';
-    tone = 'attack';
-    body = (
-      <ul className="round-start__list">
-        {slide.attackers.map((a) => (
-          <li key={a.id} className="round-start__row">
-            <img src={ART.leaders[a.id]} alt="" />
-            <div>
-              <strong>{nationDef(a.id).name}</strong>
-              <span>
-                swarmed {a.cities.length ? a.cities.join(' · ') : 'your cities'} with drones
-              </span>
-            </div>
-          </li>
-        ))}
-        <li className="round-start__row round-start__row--note">
-          <div>
-            <strong>−${formatMoney(slide.bill)}</strong>
-            <span>repair bill taken from this round&apos;s treasury</span>
-          </div>
-        </li>
-      </ul>
-    );
-  } else if (slide.kind === 'sanction') {
-    title = 'Sanctions';
-    tone = 'sanction';
-    body = (
-      <ul className="round-start__list">
-        {slide.from.map((id) => (
-          <li key={id} className="round-start__row">
-            <img src={ART.leaders[id]} alt="" />
-            <div>
-              <strong>{nationDef(id).name}</strong>
-              <span>sanctioned you (−10% income)</span>
-            </div>
-          </li>
-        ))}
-      </ul>
-    );
-  } else {
-    title = 'Treasury';
-    tone = 'money';
-    body = (
-      <div className="round-start__money">
-        <p className="round-start__cash">${formatMoney(slide.amount)}</p>
-        <p className="round-start__hint">
-          {slide.income != null && slide.income > 0
-            ? `Including $${formatMoney(slide.income)} income this round`
-            : 'Available for this round'}
-          {slide.droneDamage != null && slide.droneDamage > 0
-            ? ` · −$${formatMoney(slide.droneDamage)} drone damage`
-            : ''}
-        </p>
-      </div>
-    );
-  }
+  const me = nationDef(briefing.nationId);
+  const leadIndex = briefing.scores.findIndex((s) => !s.eliminated);
+  const netIncome = +(briefing.income - briefing.droneRepairs).toFixed(2);
 
   return (
     <div
-      className="round-banner round-start"
-      role="status"
-      aria-live="polite"
-      aria-label={title}
+      className="round-banner round-brief"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Round ${briefing.round} briefing`}
     >
       <div className="round-banner__veil" />
-      <div
-        key={`${slide.kind}-${index}`}
-        className={`round-banner__panel round-start__panel round-start__panel--${tone} enter-pop`}
-      >
-        <p className="round-start__eyebrow">
-          {index + 1} / {slides.length}
-        </p>
-        <h2 className="round-start__title">{title}</h2>
-        {body}
+      <div className="round-banner__panel round-brief__panel enter-pop">
+        <header className="round-brief__head">
+          <div>
+            <p className="round-start__eyebrow">{me.name} · situation report</p>
+            <h2 className="round-start__title">Round {briefing.round}</h2>
+          </div>
+          <button type="button" className="btn round-brief__skip" onClick={onDone}>
+            Continue{secondsLeft > 0 ? ` (${secondsLeft})` : ''}
+          </button>
+        </header>
+        <div
+          className="round-brief__timer"
+          style={{ animationDuration: `${ROUND_BRIEFING_MS}ms` }}
+          aria-hidden
+        />
+
+        <div className="round-brief__grid">
+          <section className="round-brief__section round-brief__section--cities">
+            <div className="round-brief__cities-head">
+              <h3 className="round-brief__label">
+                Your cities
+                {briefing.untouched ? ' · nobody fired on you' : ''}
+              </h3>
+              <ul className="round-brief__arsenal">
+                <li title="Warheads ready to launch">
+                  <img src={ART.missile} alt="" draggable={false} />
+                  {briefing.assets.bombs}
+                </li>
+                <li title="Drone packs ready to launch">
+                  <img src={ART.drone} alt="" draggable={false} />
+                  {briefing.assets.drones}
+                </li>
+                {briefing.assets.spyNetwork && (
+                  <li className="is-flag" title="Spy service — you can see enemy defences">
+                    Spy service
+                  </li>
+                )}
+                {!briefing.assets.canArmNukes && (
+                  <li className="is-missing" title="No nuclear tech, so no warheads">
+                    No nuclear tech
+                  </li>
+                )}
+              </ul>
+            </div>
+            <ul className="round-brief__cities">
+              {briefing.cities.map((city) => (
+                <li
+                  key={city.id}
+                  className={`round-brief__city is-${city.status} ${city.destroyed ? 'is-rubble' : ''}`}
+                >
+                  <img
+                    src={
+                      city.isUnderground && !city.destroyed
+                        ? ART.citiesUnderground[city.id]
+                        : ART.cities[city.id]
+                    }
+                    alt=""
+                    draggable={false}
+                  />
+                  {city.destroyed && (
+                    <span className="city-smoke" aria-hidden>
+                      <i />
+                      <i />
+                      <i />
+                    </span>
+                  )}
+                  <strong>{city.name}</strong>
+                  <span>{CITY_STATUS_LABEL[city.status]}</span>
+                  <div className="round-brief__city-assets">
+                    {city.hasShield && (
+                      <img src={ART.shield} alt="Shield" title="Shield" draggable={false} />
+                    )}
+                    {city.hasResearch && (
+                      <img
+                        src={ART.researchIcon}
+                        alt="Research centre"
+                        title={`Research centre · +$${formatMoney(RESEARCH_INCOME)} a round`}
+                        draggable={false}
+                      />
+                    )}
+                    {city.hasLaser && (
+                      <img
+                        src={ART.laserIcon}
+                        alt="Laser defence"
+                        title={`Laser defence · shoots down ${LASER_INTERCEPTS_PER_ROUND} swarms a round`}
+                        draggable={false}
+                      />
+                    )}
+                    {city.isUnderground && !city.destroyed && (
+                      <span className="is-bunker" title="Underground — cannot be nuked">
+                        Bunker
+                      </span>
+                    )}
+                    {!city.destroyed &&
+                      !city.hasShield &&
+                      !city.isUnderground &&
+                      !city.hasResearch &&
+                      !city.hasLaser && <span className="is-bare">No defences</span>}
+                  </div>
+                  {city.attackers.length > 0 && (
+                    <div className="round-brief__city-raiders">
+                      {city.attackers.map((id) => (
+                        <img
+                          key={id}
+                          src={leaderArt(state, id)}
+                          alt={nationDef(id).name}
+                          title={nationDef(id).name}
+                          draggable={false}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          <div className="round-brief__col">
+            <section className="round-brief__section round-brief__section--pressure">
+              <h3 className="round-brief__label">Against you</h3>
+              {briefing.raiders.length === 0 && briefing.sanctioners.length === 0 ? (
+                <p className="round-brief__none">No strikes, no sanctions. Enjoy it.</p>
+              ) : (
+                <ul className="round-brief__rows">
+                  {briefing.raiders.map((raider) => (
+                    <li key={`hit-${raider.id}`} className="round-brief__row round-brief__row--hit">
+                      <img src={leaderArt(state, raider.id)} alt="" draggable={false} />
+                      <p>
+                        <strong>{nationDef(raider.id).name}</strong>
+                        <span>
+                          {[
+                            raider.nukes > 0
+                              ? `${raider.nukes} warhead${raider.nukes === 1 ? '' : 's'}`
+                              : null,
+                            raider.swarms > 0
+                              ? `${raider.swarms} swarm${raider.swarms === 1 ? '' : 's'}`
+                              : null,
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
+                          {raider.cities.length ? ` → ${raider.cities.join(', ')}` : ''}
+                        </span>
+                      </p>
+                    </li>
+                  ))}
+                  {/* One line however many are squeezing you — the faces say who,
+                      and the only number that matters is what it costs */}
+                  {briefing.sanctioners.length > 0 && (
+                    <li className="round-brief__row round-brief__row--sanction">
+                      <div className="round-brief__faces">
+                        {briefing.sanctioners.map((id) => (
+                          <img
+                            key={id}
+                            src={leaderArt(state, id)}
+                            alt={nationDef(id).name}
+                            title={nationDef(id).name}
+                            draggable={false}
+                          />
+                        ))}
+                      </div>
+                      <p>
+                        <strong>
+                          Sanctioned by {briefing.sanctioners.length}
+                        </strong>
+                        <span>−{Math.round(briefing.sanctionPenalty * 100)}% income</span>
+                      </p>
+                    </li>
+                  )}
+                </ul>
+              )}
+            </section>
+
+            <section className="round-brief__section round-brief__section--scores">
+              <h3 className="round-brief__label">Standings</h3>
+              <ol className="round-brief__scores">
+                {briefing.scores.map((row, i) => (
+                  <li
+                    key={row.nationId}
+                    className={`round-brief__score ${row.eliminated ? 'is-out' : ''} ${
+                      i === leadIndex && !row.eliminated ? 'is-lead' : ''
+                    } ${row.nationId === briefing.nationId ? 'is-you' : ''}`}
+                  >
+                    <b>{row.eliminated ? 'OUT' : `#${i + 1}`}</b>
+                    <img src={leaderArt(state, row.nationId)} alt="" draggable={false} />
+                    <strong>{nationDef(row.nationId).name}</strong>
+                    <span title="Cities · research centres · shields">
+                      {row.citiesLeft}🏙 {row.researchCenters}🔍 {row.shields}🛡
+                    </span>
+                    <em>{row.total}</em>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          </div>
+
+          <div className="round-brief__col">
+            <section className="round-brief__section round-brief__section--money">
+              <div className="round-brief__money-head">
+                <h3 className="round-brief__label">Treasury</h3>
+                <p className="round-brief__cash">${formatMoney(briefing.money)}</p>
+              </div>
+              <ul className="round-brief__ledger">
+                <li>
+                  <span>Income</span>
+                  <em className="is-up">+${formatMoney(briefing.income)}</em>
+                </li>
+                {briefing.sanctionPenalty > 0 && (
+                  <li>
+                    <span>Sanctions ({briefing.sanctioners.length})</span>
+                    <em className="is-down">−{Math.round(briefing.sanctionPenalty * 100)}%</em>
+                  </li>
+                )}
+                {briefing.droneRepairs > 0 && (
+                  <li>
+                    <span>Drone repairs</span>
+                    <em className="is-down">−${formatMoney(briefing.droneRepairs)}</em>
+                  </li>
+                )}
+                <li className="round-brief__ledger-total">
+                  <span>Net this round</span>
+                  <em className={netIncome < 0 ? 'is-down' : 'is-up'}>
+                    {netIncome < 0 ? '−' : '+'}${formatMoney(Math.abs(netIncome))}
+                  </em>
+                </li>
+              </ul>
+            </section>
+
+            <section
+              className={`round-brief__section round-brief__section--risk is-${briefing.weakness.severity}`}
+            >
+              <h3 className="round-brief__label">
+                Biggest weakness
+                {briefing.weakness.severity !== 'none' && (
+                  <span className="round-brief__risk-flag">{briefing.weakness.severity}</span>
+                )}
+              </h3>
+              <strong className="round-brief__risk-title">{briefing.weakness.title}</strong>
+              <p className="round-brief__risk-detail">{briefing.weakness.detail}</p>
+              <p className="round-brief__risk-advice">{briefing.weakness.advice}</p>
+            </section>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -1112,7 +1235,7 @@ function StrikeTheater({
 
   return (
     <>
-      {cinema && <StrikeCinema strike={cinema} onComplete={onCinemaComplete} />}
+      {cinema && <StrikeCinema state={state} strike={cinema} onComplete={onCinemaComplete} />}
       {recap && <StrikeRecap events={recap} onContinue={onRecapContinue} />}
     </>
   );
@@ -3634,7 +3757,10 @@ export default function App() {
   // doesn't cut the animation short mid-flight.
   const cinemaHoldRef = useRef<{ round: number; until: number } | null>(null);
   const lastRoundBannerRef = useRef(0);
-  const [roundStartSlides, setRoundStartSlides] = useState<RoundStartSlide[] | null>(null);
+  const [roundIntro, setRoundIntro] = useState<{
+    round: number;
+    briefing: RoundBriefing | null;
+  } | null>(null);
   const [dropoutNotice, setDropoutNotice] = useState<{
     playerName: string;
     nationName: string;
@@ -3709,7 +3835,7 @@ export default function App() {
       state.mode === 'online' && sessionUid && state.uidToNation?.[sessionUid]
         ? state.uidToNation[sessionUid]
         : state.humanNations[0] ?? null;
-    setRoundStartSlides(buildRoundStartSlides(state, myId ?? null));
+    setRoundIntro({ round: state.round, briefing: buildRoundBriefing(state, myId ?? null) });
   }, [state, sessionUid]);
 
   /** True while the local strike cinema still owes this round its animation. */
@@ -3721,7 +3847,7 @@ export default function App() {
     return Number(remote.round) > hold.round;
   }, []);
 
-  const dismissRoundStart = useCallback(() => setRoundStartSlides(null), []);
+  const dismissRoundStart = useCallback(() => setRoundIntro(null), []);
   const dismissDropout = useCallback(() => setDropoutNotice(null), []);
 
   const notePublishedDropout = useCallback(
@@ -3968,13 +4094,21 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      {roundStartSlides && roundStartSlides.length > 0 && (
-        <RoundStartOverlay
-          key={`rs-${roundStartSlides[0].kind === 'round' ? roundStartSlides[0].round : 0}`}
-          slides={roundStartSlides}
-          onDone={dismissRoundStart}
-        />
-      )}
+      {roundIntro &&
+        (roundIntro.briefing ? (
+          <RoundBriefingOverlay
+            key={`brief-${roundIntro.round}`}
+            state={state}
+            briefing={roundIntro.briefing}
+            onDone={dismissRoundStart}
+          />
+        ) : (
+          <RoundBannerOverlay
+            key={`round-${roundIntro.round}`}
+            round={roundIntro.round}
+            onDone={dismissRoundStart}
+          />
+        ))}
       {dropoutNotice && (
         <DropoutOverlay
           key={`drop-${dropoutNotice.seq}`}
@@ -4053,7 +4187,7 @@ export default function App() {
           state={state}
           setState={setState}
           sessionUid={sessionUid}
-          roundBriefingActive={Boolean(roundStartSlides)}
+          roundBriefingActive={Boolean(roundIntro)}
           onKicked={(message) => {
             if (sessionUid) void setPlayerStatus(sessionUid, 'available', null);
             setSessionError(message);

@@ -17,6 +17,7 @@ import {
   aliveNations,
   aliveHumanNations,
   seatTable,
+  toggleSanction,
 } from '../game/engine';
 import { finishOnlineHumanPlanning } from '../game/ai';
 import { NATIONS, TABLE_SIZE } from '../data/nations';
@@ -164,6 +165,37 @@ describe('3-player online simulation', () => {
     );
     expect(merged.cities[0].hasResearch).toBe(true);
     expect(merged.cities[1].hasShield).toBe(true);
+  });
+
+  it('lets a player swap sanctions once both slots are full', () => {
+    const { state, uids } = makeThreePlayerGame();
+    const nationId = state.uidToNation![uids[0]] as NationId;
+    const [first, second, third] = state.turnOrder.filter((id) => id !== nationId);
+
+    // Every tap pushes on its own, so each one has to survive the round trip
+    const tap = (
+      client: GameState,
+      shared: GameState,
+      target: NationId,
+    ): [GameState, GameState] => {
+      const local = toggleSanction(client, target, nationId);
+      const merged = mergeHumanPlanningWrite(shared, local, nationId);
+      return [applyRemoteGameSnapshot(local, merged, nationId), merged];
+    };
+
+    let client = state;
+    let shared = state;
+    [client, shared] = tap(client, shared, first);
+    [client, shared] = tap(client, shared, second);
+    expect(shared.nations[nationId].sanctions).toEqual([first, second]);
+
+    // A later round: with both slots taken, a swap has to start with a lift
+    [client, shared] = tap(client, shared, first);
+    expect(shared.nations[nationId].sanctions).toEqual([second]);
+    [client, shared] = tap(client, shared, third);
+
+    expect(shared.nations[nationId].sanctions).toEqual([second, third]);
+    expect(client.nations[nationId].sanctions).toEqual([second, third]);
   });
 
   it('does not crash mergeNationPlanning with undefined (blank-screen guard)', () => {

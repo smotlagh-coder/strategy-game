@@ -248,6 +248,7 @@ export function initialNation(id: NationId): NationState {
     researchCenters: 0,
     eliminated: false,
     sanctions: [],
+    sanctionsVersion: 0,
     bombsUsed: 0,
     citiesStruckThisRound: [],
     bombsBoughtThisRound: 0,

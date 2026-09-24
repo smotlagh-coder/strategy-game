@@ -88,6 +88,33 @@ export function mergeDroneStock(remote: NationState, local: NationState): number
   return Math.max(0, stockAtRoundStart + bought - launched);
 }
 
+/**
+ * Only the nation's own client edits its sanctions, so the side with the
+ * higher version holds the newer choice — lifting one has to survive the round
+ * trip, which a "longest list wins" rule could never allow. Versions only tie
+ * for peers that have both seen the same edit (or for pre-version clients),
+ * where the longer list is still the safer guess. Trimmed either way in case a
+ * stale client still thinks sanctions are unlimited.
+ */
+function mergeSanctions(
+  remote: NationState,
+  local: NationState,
+): Pick<NationState, 'sanctions' | 'sanctionsVersion'> {
+  const remoteVersion = counter(remote.sanctionsVersion);
+  const localVersion = counter(local.sanctionsVersion);
+  let sanctions: NationId[];
+  if (remoteVersion !== localVersion) {
+    sanctions = remoteVersion > localVersion ? remote.sanctions : local.sanctions;
+  } else {
+    sanctions =
+      local.sanctions.length >= remote.sanctions.length ? local.sanctions : remote.sanctions;
+  }
+  return {
+    sanctions: sanctions.slice(0, MAX_SANCTIONS),
+    sanctionsVersion: Math.max(remoteVersion, localVersion),
+  };
+}
+
 /** Union city upgrades so a stale push cannot wipe research/shields. */
 export function mergeNationPlanning(
   remote: NationState | undefined,
@@ -206,12 +233,7 @@ export function mergeNationPlanning(
     citiesStruckThisRound: Array.from(
       new Set([...remote.citiesStruckThisRound, ...local.citiesStruckThisRound]),
     ),
-    // Whoever named more rivals wins the list, trimmed in case a stale client
-    // still thinks sanctions are unlimited
-    sanctions: (local.sanctions.length >= remote.sanctions.length
-      ? local.sanctions
-      : remote.sanctions
-    ).slice(0, MAX_SANCTIONS),
+    ...mergeSanctions(remote, local),
     eliminated,
     lockedScore: Math.max(remote.lockedScore ?? 0, local.lockedScore ?? 0),
     // Forfeit / kick sticks — never revive an AI-converted nation as human.

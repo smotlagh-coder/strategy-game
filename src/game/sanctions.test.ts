@@ -75,4 +75,32 @@ describe('sanction slots', () => {
     expect(mergeNationPlanning(mine, theirs).sanctions).toHaveLength(MAX_SANCTIONS);
     expect(mergeNationPlanning(theirs, mine).sanctions).toHaveLength(MAX_SANCTIONS);
   });
+
+  it('merges a lift online instead of restoring it from the peer snapshot', () => {
+    let s = table();
+    s = toggleSanction(s, 'uk', 'us');
+    s = toggleSanction(s, 'russia', 'us');
+    const published = s.nations.us;
+
+    // Both slots are full, so a later round has to start by lifting one
+    const lifted = toggleSanction(s, 'uk', 'us').nations.us;
+    expect(mergeNationPlanning(published, lifted).sanctions).toEqual(['russia']);
+    expect(mergeNationPlanning(lifted, published).sanctions).toEqual(['russia']);
+
+    // ...and the freed slot then goes to somebody else
+    const swapped = toggleSanction({ ...s, nations: { ...s.nations, us: lifted } }, 'china', 'us')
+      .nations.us;
+    expect(mergeNationPlanning(published, swapped).sanctions).toEqual(['russia', 'china']);
+  });
+
+  it('keeps a peer snapshot from rolling back a newer sanction list', () => {
+    let s = table();
+    s = toggleSanction(s, 'uk', 'us');
+    const stale = s.nations.us;
+    s = toggleSanction(s, 'russia', 'us');
+    const fresh = s.nations.us;
+
+    expect(mergeNationPlanning(stale, fresh).sanctions).toEqual(['uk', 'russia']);
+    expect(mergeNationPlanning(fresh, stale).sanctions).toEqual(['uk', 'russia']);
+  });
 });

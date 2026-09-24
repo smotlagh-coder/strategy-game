@@ -71,6 +71,12 @@ export interface NationState {
   eliminated: boolean;
   /** Nations this nation is currently sanctioning */
   sanctions: NationId[];
+  /**
+   * Bumped on every sanction change. Only the owning client edits the list, so
+   * the higher counter is always the owner's newer choice — without it an
+   * online merge cannot tell a lifted sanction from a stale peer snapshot.
+   */
+  sanctionsVersion?: number;
   /** Bombs used this game (for scoring flavor) */
   bombsUsed: number;
   /** City ids this nation already struck this round (can't hit same city twice per round) */

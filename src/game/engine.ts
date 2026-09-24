@@ -1683,7 +1683,10 @@ export function toggleSanction(state: GameState, target: NationId, nationId?: Na
   const sanctions = has ? n.sanctions.filter((s) => s !== target) : [...n.sanctions, target];
   return {
     ...state,
-    nations: { ...state.nations, [id]: { ...n, sanctions } },
+    nations: {
+      ...state.nations,
+      [id]: { ...n, sanctions, sanctionsVersion: (n.sanctionsVersion ?? 0) + 1 },
+    },
     log: [
       ...state.log,
       log(

@@ -1966,18 +1966,6 @@ img { max-width: 100%; display: block; }
   padding: 1.25rem 1.35rem 1.4rem;
 }
 
-.round-start__panel--attack {
-  border-color: rgba(255, 110, 90, 0.45);
-}
-
-.round-start__panel--sanction {
-  border-color: rgba(245, 197, 66, 0.45);
-}
-
-.round-start__panel--money {
-  border-color: rgba(61, 214, 140, 0.45);
-}
-
 .round-start__panel--dropout {
   border-color: rgba(255, 150, 90, 0.5);
 }
@@ -2010,83 +1998,566 @@ img { max-width: 100%; display: block; }
   font-size: 0.92rem;
 }
 
-.round-start__list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.65rem;
-  text-align: left;
-}
-
-.round-start__row {
-  display: grid;
-  grid-template-columns: 56px 1fr;
-  gap: 0.7rem;
-  align-items: center;
-  animation: roundStartRowIn 0.45s ease-out both;
-}
-
-.round-start__row:nth-child(2) { animation-delay: 0.12s; }
-.round-start__row:nth-child(3) { animation-delay: 0.24s; }
-.round-start__row:nth-child(4) { animation-delay: 0.36s; }
-
-.round-start__row img {
-  width: 56px;
-  height: 56px;
-  border-radius: 12px;
-  object-fit: cover;
-  object-position: top center;
-  border: 2px solid rgba(255, 255, 255, 0.28);
-}
-
-.round-start__row strong {
-  display: block;
-  font-family: var(--stencil);
-  letter-spacing: 0.04em;
-  font-size: 1rem;
-}
-
-.round-start__row span {
-  display: block;
-  color: var(--muted);
-  font-size: 0.88rem;
-  line-height: 1.3;
-}
-
-.round-start__row--note {
-  grid-template-columns: 1fr;
-  padding-top: 0.2rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.14);
-}
-
-.round-start__row--note strong {
-  color: #ffb4a0;
-}
-
-.round-start__money {
-  padding: 0.35rem 0 0.15rem;
-}
-
-.round-start__cash {
-  margin: 0;
-  font-family: var(--stencil);
-  font-size: clamp(2rem, 8vw, 3rem);
-  letter-spacing: 0.04em;
-  color: #3dd68c;
-  text-shadow: 0 0 22px rgba(61, 214, 140, 0.35);
-  animation: roundStartCashIn 0.55s ease-out both;
-}
-
 @keyframes roundStartRowIn {
   from { opacity: 0; transform: translateX(-12px); }
   to { opacity: 1; transform: translateX(0); }
 }
 
-@keyframes roundStartCashIn {
-  from { opacity: 0; transform: scale(0.86); }
-  to { opacity: 1; transform: scale(1); }
+/* One-page round briefing: cities, pressure, treasury and the table */
+.round-brief__panel {
+  width: min(780px, 96vw);
+  max-height: 97vh;
+  max-height: 97dvh;
+  overflow-y: auto;
+  padding: 0.6rem 0.75rem 0.7rem;
+  text-align: left;
+}
+
+.round-brief__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.round-brief__head .round-start__title {
+  margin: 0;
+  font-size: clamp(1.15rem, 4vw, 1.5rem);
+}
+
+.round-brief__skip {
+  flex-shrink: 0;
+  padding: 0.45rem 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.round-brief__timer {
+  height: 3px;
+  margin: 0.35rem 0 0.45rem;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--accent), #8fd0ff);
+  transform-origin: left center;
+  animation: roundBriefDrain linear both;
+}
+
+@keyframes roundBriefDrain {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
+
+.round-brief__grid {
+  display: grid;
+  gap: 0.45rem;
+  grid-template-columns: 1fr;
+}
+
+/* Paired columns rather than a strict matrix: a tall "against you" list must
+   not push the weakness card down past the fold */
+.round-brief__col {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+@media (min-width: 640px) {
+  .round-brief__grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .round-brief__section--cities {
+    grid-column: 1 / -1;
+  }
+}
+
+/* One phone column cannot show all four cards in the time the page is up, so
+   the columns dissolve and the order becomes what to read first: what was done
+   to you, who did it, then what to fix. Standings go last. */
+@media (max-width: 639px) {
+  .round-brief__col {
+    display: contents;
+  }
+
+  .round-brief__section--cities { order: 1; }
+  .round-brief__section--pressure { order: 2; }
+  .round-brief__section--risk { order: 3; }
+  .round-brief__section--money { order: 4; }
+  .round-brief__section--scores { order: 5; }
+
+  .round-brief__city img {
+    max-height: min(70px, 9vh);
+  }
+
+  .round-brief__row > img,
+  .round-brief__faces img {
+    width: 28px;
+    height: 28px;
+  }
+
+  .round-brief__score {
+    grid-template-columns: 1.7rem 24px minmax(0, 1fr) auto auto;
+  }
+
+  .round-brief__score img {
+    width: 24px;
+    height: 24px;
+  }
+}
+
+.round-brief__section {
+  padding: 0.45rem 0.6rem 0.5rem;
+  border: 1px solid rgba(140, 190, 255, 0.18);
+  border-radius: 14px;
+  background: rgba(3, 10, 24, 0.5);
+  animation: roundStartRowIn 0.4s ease-out both;
+}
+
+.round-brief__section--pressure { animation-delay: 0.08s; }
+.round-brief__section--money { animation-delay: 0.16s; }
+.round-brief__section--scores { animation-delay: 0.24s; }
+
+.round-brief__label {
+  margin: 0 0 0.35rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.round-brief__none {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.round-brief__cities-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* Arsenal and services, which belong to the nation rather than a city */
+.round-brief__arsenal {
+  list-style: none;
+  margin: 0 0 0.4rem;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.round-brief__arsenal li {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.12rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid rgba(140, 190, 255, 0.28);
+  background: rgba(10, 24, 48, 0.8);
+  font-size: 0.76rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.round-brief__arsenal img {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}
+
+.round-brief__arsenal .is-flag {
+  color: var(--accent);
+  border-color: rgba(77, 163, 255, 0.5);
+}
+
+.round-brief__arsenal .is-missing {
+  color: #ff9c8f;
+  border-color: rgba(255, 110, 90, 0.45);
+}
+
+/* Your cities, as a strip of tiles that report what they lived through */
+.round-brief__cities {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 0.5rem;
+}
+
+.round-brief__city {
+  position: relative;
+  padding: 0.35rem 0.35rem 0.45rem;
+  border-radius: 12px;
+  border: 1px solid rgba(140, 190, 255, 0.2);
+  background: rgba(10, 22, 44, 0.7);
+  overflow: hidden;
+}
+
+/* The skyline gives way first on a short screen — the labels under it are the
+   part that has to stay readable */
+.round-brief__city img {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  max-height: min(84px, 10vh);
+  object-fit: cover;
+  border-radius: 8px;
+}
+
+.round-brief__city strong {
+  display: block;
+  margin-top: 0.3rem;
+  font-size: 0.82rem;
+  letter-spacing: 0.02em;
+}
+
+.round-brief__city span {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.round-brief__city.is-rubble img {
+  filter: grayscale(1) brightness(0.45);
+}
+
+.round-brief__city.is-destroyed {
+  border-color: rgba(255, 90, 80, 0.6);
+  box-shadow: 0 0 18px rgba(255, 77, 77, 0.2);
+}
+
+.round-brief__city.is-destroyed span { color: #ff9c8f; }
+
+.round-brief__city.is-shieldLost,
+.round-brief__city.is-swarmed {
+  border-color: rgba(245, 197, 66, 0.5);
+}
+
+.round-brief__city.is-shieldLost span,
+.round-brief__city.is-swarmed span { color: var(--warn); }
+
+.round-brief__city.is-absorbed,
+.round-brief__city.is-intercepted,
+.round-brief__city.is-rebuilt {
+  border-color: rgba(61, 214, 140, 0.5);
+}
+
+.round-brief__city.is-absorbed span,
+.round-brief__city.is-intercepted span,
+.round-brief__city.is-rebuilt span { color: var(--good); }
+
+/* What the city is carrying right now */
+.round-brief__city-assets {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+  margin-top: 0.2rem;
+  min-height: 19px;
+}
+
+.round-brief__city-assets img {
+  width: 21px;
+  height: 21px;
+  max-height: none;
+  object-fit: contain;
+  aspect-ratio: auto;
+  border-radius: 0;
+}
+
+.round-brief__city-assets span {
+  display: inline-block;
+  padding: 0.05rem 0.35rem;
+  border-radius: 999px;
+  font-size: 0.64rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.round-brief__city-assets .is-bunker {
+  color: #0a1b12;
+  background: var(--good);
+  font-weight: 800;
+}
+
+.round-brief__city-assets .is-bare {
+  color: #ff9c8f;
+  border: 1px solid rgba(255, 110, 90, 0.4);
+}
+
+/* Who did it — portraits pinned to the tile they hit */
+.round-brief__city-raiders {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.45rem;
+  display: flex;
+  gap: 0.15rem;
+}
+
+.round-brief__city-raiders img {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  object-fit: cover;
+  object-position: top center;
+  border: 2px solid rgba(255, 120, 100, 0.8);
+  aspect-ratio: auto;
+}
+
+.round-brief__rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.round-brief__row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.round-brief__row > img {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  object-fit: cover;
+  object-position: top center;
+  border: 2px solid rgba(255, 255, 255, 0.24);
+}
+
+.round-brief__row--hit > img { border-color: rgba(255, 110, 90, 0.7); }
+
+/* Name and damage sit on one line and only wrap when they have to */
+.round-brief__row p {
+  margin: 0;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 0.4rem;
+}
+
+.round-brief__row strong {
+  font-family: var(--stencil);
+  font-size: 0.9rem;
+  line-height: 1.25;
+  letter-spacing: 0.03em;
+}
+
+.round-brief__row span {
+  font-size: 0.78rem;
+  line-height: 1.25;
+  color: var(--muted);
+}
+
+/* However many are sanctioning you, one line of overlapping portraits */
+.round-brief__faces {
+  flex: none;
+  display: flex;
+}
+
+.round-brief__faces img {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  object-fit: cover;
+  object-position: top center;
+  border: 2px solid rgba(245, 197, 66, 0.7);
+  background: var(--panel);
+}
+
+.round-brief__faces img + img {
+  margin-left: -9px;
+}
+
+.round-brief__money-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.round-brief__cash {
+  margin: 0 0 0.4rem;
+  font-family: var(--stencil);
+  font-size: clamp(1.3rem, 5vw, 1.7rem);
+  letter-spacing: 0.03em;
+  color: var(--good);
+  text-shadow: 0 0 22px rgba(61, 214, 140, 0.3);
+}
+
+.round-brief__ledger {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.82rem;
+}
+
+.round-brief__ledger li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: var(--muted);
+}
+
+.round-brief__ledger em {
+  font-style: normal;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.round-brief__ledger .is-up { color: var(--good); }
+.round-brief__ledger .is-down { color: #ff9c8f; }
+
+.round-brief__ledger-total {
+  margin-top: 0.15rem;
+  padding-top: 0.25rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--ink);
+}
+
+.round-brief__scores {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+/* One line a nation: rank, face, name, what it holds, score */
+.round-brief__score {
+  display: grid;
+  grid-template-columns: 1.85rem 26px minmax(0, 1fr) auto auto;
+  gap: 0.35rem;
+  align-items: center;
+  padding: 0.12rem 0.3rem;
+  border-radius: 10px;
+  border: 1px solid transparent;
+}
+
+.round-brief__score img {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  object-fit: cover;
+  object-position: top center;
+}
+
+.round-brief__score b {
+  font-size: 0.72rem;
+  color: var(--muted);
+  letter-spacing: 0.06em;
+}
+
+.round-brief__score strong {
+  font-size: 0.83rem;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.round-brief__score span {
+  font-size: 0.72rem;
+  line-height: 1.2;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.round-brief__score em {
+  font-style: normal;
+  font-weight: 900;
+  font-size: 1.05rem;
+  color: var(--warn);
+}
+
+.round-brief__score.is-lead { border-color: rgba(245, 197, 66, 0.55); }
+
+.round-brief__score.is-you {
+  border-color: rgba(77, 163, 255, 0.6);
+  background: rgba(20, 50, 90, 0.7);
+}
+
+.round-brief__score.is-out { opacity: 0.45; }
+
+/* Biggest weakness — the one thing to fix before the next round */
+.round-brief__section--risk {
+  align-self: start;
+  border-color: rgba(245, 197, 66, 0.4);
+  background: rgba(38, 28, 6, 0.4);
+}
+
+.round-brief__section--risk.is-critical {
+  border-color: rgba(255, 90, 80, 0.55);
+  background: rgba(48, 12, 10, 0.45);
+}
+
+.round-brief__section--risk.is-none {
+  border-color: rgba(61, 214, 140, 0.4);
+  background: rgba(8, 34, 22, 0.4);
+}
+
+.round-brief__risk-flag {
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  font-size: 0.6rem;
+  font-weight: 800;
+  color: #1a1403;
+  background: var(--warn);
+}
+
+.is-critical .round-brief__risk-flag {
+  color: #2a0806;
+  background: #ff6e5a;
+}
+
+.is-watch .round-brief__risk-flag {
+  color: #05131f;
+  background: #8fd0ff;
+}
+
+.round-brief__risk-title {
+  display: block;
+  font-family: var(--stencil);
+  font-size: 1rem;
+  letter-spacing: 0.03em;
+  color: var(--warn);
+}
+
+.is-critical .round-brief__risk-title { color: #ff9c8f; }
+.is-none .round-brief__risk-title { color: var(--good); }
+
+.round-brief__risk-detail,
+.round-brief__risk-advice {
+  margin: 0.25rem 0 0;
+  font-size: 0.8rem;
+  line-height: 1.3;
+  color: var(--muted);
+}
+
+.round-brief__risk-advice {
+  padding-top: 0.3rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .round-brief__timer,
+  .round-brief__section {
+    animation: none;
+  }
 }
 
 /* Nuclear launch cinema overlay */

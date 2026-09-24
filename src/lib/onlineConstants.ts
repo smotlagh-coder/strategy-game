@@ -23,8 +23,11 @@ export const REPORT_POLL_MS = 300;
 /** Round-start banner duration after advancing. */
 export const ROUND_BANNER_MS = 3_000;
 
-/** Each personal briefing slide after a round (attacks / sanctions / money). */
-export const ROUND_BRIEFING_SLIDE_MS = 2_500;
+/**
+ * The one-page round briefing (cities, sanctions, treasury, standings). It
+ * dismisses itself so an online table is never held up by a player reading.
+ */
+export const ROUND_BRIEFING_MS = 10_000;
 
 export function selectionIdleSeconds(): number {
   return Math.ceil(SELECTION_IDLE_MS / 1000);
