@@ -256,8 +256,7 @@ export function runAiBuyPhase(state: GameState): GameState {
   }
 
   // Eyes before warheads. Blind, barely a third of the AI's warheads take a
-  // city: the rest break on rock or burn a shield the attacker could not see,
-  // and the bunkers doing most of that damage never show up on the scoreboard.
+  // city: the rest break on rock or burn a shield the attacker could not see.
   // The service costs about what one match of those misses costs, so it only
   // has to come out of what is left once the strike package is reserved —
   // asking for more headroom than that priced it out of every round.

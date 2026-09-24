@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BASE_INCOME, RESEARCH_INCOME, SANCTION_PENALTY } from '../data/nations';
+import { INCOME_PER_CITY, RESEARCH_INCOME, SANCTION_PENALTY } from '../data/nations';
 import {
   applyIncome,
   createInitialState,
@@ -12,15 +12,15 @@ import { mergeNationPlanning } from '../lib/onlineSync';
 import type { NationId } from '../types';
 
 describe('economy constants', () => {
-  it('uses $5M base, $1.5M research, 10% sanctions', () => {
-    expect(BASE_INCOME).toBe(5);
+  it('pays $1.5M per city, $1.5M research, 10% sanctions', () => {
+    expect(INCOME_PER_CITY).toBe(1.5);
     expect(RESEARCH_INCOME).toBe(1.5);
     expect(SANCTION_PENALTY).toBe(0.1);
   });
 });
 
 describe('applyIncome', () => {
-  it('pays $5M once per round starting in round 2', () => {
+  it('pays $1.5M per standing city once per round starting in round 2', () => {
     let s = startGame({
       ...createInitialState(),
       mode: 'single',
@@ -37,11 +37,31 @@ describe('applyIncome', () => {
     s = { ...s, phase: 'roundSummary', round: 1 };
     s = nextRound(s);
     expect(s.round).toBe(2);
-    expect(s.nations.us.money).toBe(BASE_INCOME);
+    // Three cities still standing → 3 × $1.5M
+    expect(s.nations.us.money).toBe(INCOME_PER_CITY * 3);
     expect(s.nations.us.incomeRound).toBe(2);
 
     const again = applyIncome(s);
-    expect(again.nations.us.money).toBe(BASE_INCOME);
+    expect(again.nations.us.money).toBe(INCOME_PER_CITY * 3);
+  });
+
+  it('scales income down when cities are gone', () => {
+    const base = createInitialState();
+    const us = {
+      ...base.nations.us,
+      money: 0,
+      cities: base.nations.us.cities.map((c, i) =>
+        i === 0 ? c : { ...c, destroyed: true },
+      ),
+    };
+    const s = applyIncome({
+      ...base,
+      round: 2,
+      phase: 'buy',
+      turnOrder: seatTable(['us']),
+      nations: { ...base.nations, us },
+    });
+    expect(s.nations.us.money).toBe(INCOME_PER_CITY);
   });
 
   it('adds research income and applies 10% sanctions', () => {
@@ -64,8 +84,8 @@ describe('applyIncome', () => {
       turnOrder: seatTable(['us', 'uk']),
       nations: { ...base.nations, us, uk },
     });
-    // gross 5 + 1.5 = 6.5, −10% → 5.85, + previous 1 → 6.85
-    expect(s.nations.us.money).toBe(6.85);
+    // gross 4.5 + 1.5 = 6, −10% → 5.4, + previous 1 → 6.4
+    expect(s.nations.us.money).toBe(6.4);
   });
 
   it('ensureIncome pays nations missing incomeRound after sync', () => {
@@ -80,7 +100,7 @@ describe('applyIncome', () => {
         us: { ...base.nations.us, money: 2, incomeRound: undefined },
       },
     });
-    expect(s.nations.us.money).toBe(2 + BASE_INCOME);
+    expect(s.nations.us.money).toBe(2 + INCOME_PER_CITY * 3);
     expect(s.nations.us.incomeRound).toBe(2);
   });
 });

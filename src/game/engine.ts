@@ -1,6 +1,6 @@
 import {
-  BASE_INCOME,
   COSTS,
+  INCOME_PER_CITY,
   DRONE_DAMAGE,
   MAX_BOMBS_PER_ROUND,
   MAX_DRONES_PER_ROUND,
@@ -307,6 +307,10 @@ export function shieldsLeft(state: GameState, id: NationId): number {
   return state.nations[id].cities.filter((c) => !c.destroyed && c.hasShield).length;
 }
 
+export function bunkersLeft(state: GameState, id: NationId): number {
+  return state.nations[id].cities.filter((c) => !c.destroyed && c.isUnderground).length;
+}
+
 export function researchCount(state: GameState, id: NationId): number {
   return state.nations[id].cities.filter((c) => !c.destroyed && c.hasResearch).length;
 }
@@ -315,12 +319,15 @@ export function computeScore(state: GameState, id: NationId): RoundScore {
   const n = state.nations[id];
   const cities = citiesLeft(state, id);
   const shields = shieldsLeft(state, id);
+  const bunkers = bunkersLeft(state, id);
   const research = researchCount(state, id);
-  // City survival is scored each round (cities standing × points), then banked
+  // City survival is scored each round (cities standing × points), then banked.
+  // A bunker costs twice a shield and cannot be cracked by warheads, so it
+  // pays twice the shield points — otherwise the $6M dig never shows up.
   const survivalPoints = n.citySurvivalPoints;
   const liveTotal = Math.max(
     0,
-    cities * 30 + research * 12 + shields * 8 + survivalPoints,
+    cities * 30 + research * 12 + shields * 8 + bunkers * 16 + survivalPoints,
   );
   // Eliminated nations keep their frozen score from when they fell
   const total =
@@ -330,6 +337,7 @@ export function computeScore(state: GameState, id: NationId): RoundScore {
     citiesLeft: cities,
     researchCenters: research,
     shields,
+    bunkers,
     roundsSurvived: n.roundsSurvived,
     citySurvivalPoints: n.citySurvivalPoints,
     total: Math.round(total),
@@ -602,7 +610,7 @@ export function startGame(state: GameState): GameState {
     round: 1,
     log: [
       log(
-        'Round 1 begins. Spend your starting funds — $3M income starts in round 2.',
+        'Round 1 begins. Spend your starting funds — city income starts in round 2 ($1.5M per standing city).',
         'neutral',
       ),
     ],
@@ -610,7 +618,7 @@ export function startGame(state: GameState): GameState {
   return beginHumanPlanning(base);
 }
 
-/** Apply base + research income (sanctions cut total revenue 10% each) at round start.
+/** Apply city + research income (sanctions cut total revenue 10% each) at round start.
  *  Income begins in round 2 (not round 1). Safe to call more than once per round. */
 export function applyIncome(state: GameState): GameState {
   if (state.round < 2) return { ...state, lastIncomeLedger: [] };
@@ -629,9 +637,11 @@ export function applyIncome(state: GameState): GameState {
     const n = nations[id];
     if (n.eliminated) continue;
 
+    const standing = n.cities.filter((c) => !c.destroyed).length;
+    const cityIncome = standing * INCOME_PER_CITY;
     const researchIncome =
       n.cities.filter((c) => !c.destroyed && c.hasResearch).length * RESEARCH_INCOME;
-    const gross = BASE_INCOME + researchIncome;
+    const gross = cityIncome + researchIncome;
     const sanctioners = state.turnOrder.filter(
       (other) => other !== id && !nations[other].eliminated && nations[other].sanctions.includes(id),
     );
@@ -682,7 +692,7 @@ export function applyIncome(state: GameState): GameState {
     const droneNote = droneDamage > 0 ? `, −$${droneDamage}M drone damage` : '';
     logEntries.push(
       log(
-        `${nationDef(id).name} receives $${revenue}M (base $${BASE_INCOME}M + research $${researchIncome}M${sanctionNote}${droneNote}).`,
+        `${nationDef(id).name} receives $${revenue}M (${standing} cit${standing === 1 ? 'y' : 'ies'} $${cityIncome}M + research $${researchIncome}M${sanctionNote}${droneNote}).`,
         'money',
       ),
     );

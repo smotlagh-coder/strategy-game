@@ -173,7 +173,7 @@ export function mergeNationPlanning(
   const remoteIncome = remote.incomeRound ?? 0;
   const localIncome = local.incomeRound ?? 0;
   // Prefer the side that already received this round's income so Math.min
-  // cannot discard the +$3M grant against a stale pre-income snapshot.
+  // cannot discard the city-income grant against a stale pre-income snapshot.
   let money: number;
   let incomeRound: number | undefined;
   if (remoteIncome > localIncome) {

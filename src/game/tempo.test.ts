@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BASE_INCOME, COSTS, MAX_SHIELDS_PER_ROUND, STARTING_MONEY } from '../data/nations';
+import { INCOME_PER_CITY, COSTS, MAX_SHIELDS_PER_ROUND, STARTING_MONEY } from '../data/nations';
 import {
   buyBomb,
   buyNuclearTech,
@@ -38,8 +38,10 @@ describe('opening tempo', () => {
   });
 
   it('pays enough each round to fund a real move', () => {
-    expect(BASE_INCOME).toBeGreaterThanOrEqual(COSTS.shield);
-    expect(BASE_INCOME).toBeGreaterThanOrEqual(COSTS.bomb + COSTS.drone);
+    // A healthy nation (3 cities) must still cover a shield or a warhead pack
+    const healthyIncome = INCOME_PER_CITY * 3;
+    expect(healthyIncome).toBeGreaterThanOrEqual(COSTS.shield);
+    expect(healthyIncome).toBeGreaterThanOrEqual(COSTS.bomb + COSTS.drone);
   });
 
   it('lets a warhead fly the same round the tech is unlocked', () => {

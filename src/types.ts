@@ -118,6 +118,8 @@ export interface RoundScore {
   citiesLeft: number;
   researchCenters: number;
   shields: number;
+  /** Cities dug into rock — counted separately from shields */
+  bunkers: number;
   roundsSurvived: number;
   citySurvivalPoints: number;
   total: number;

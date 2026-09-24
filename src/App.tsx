@@ -3670,12 +3670,13 @@ function GameOver({
 
         <section className="panel panel--shop game-over-scores">
           <h2 className="round-report__panel-title">Final scores</h2>
-          <div className="score-cards score-cards--compact">
+          <div className="score-cards score-cards--compact score-cards--final">
             {(state.roundScores.length > 0
               ? state.roundScores
               : state.turnOrder.map((id) => computeScore(state, id))
             ).map((row, i) => {
               const nation = state.nations[row.nationId];
+              const live = computeScore(state, row.nationId);
               const isYou =
                 Boolean(sessionUid && nation.ownerUid === sessionUid) ||
                 (!isOnline && nation.isHuman && nation.playerSlot === 1);
@@ -3683,22 +3684,61 @@ function GameOver({
               return (
                 <div
                   key={row.nationId}
-                  className={`score-card ${row.eliminated ? 'is-out' : ''} ${isWinner ? 'is-lead' : ''} ${isYou ? 'is-you' : ''}`}
+                  className={`score-card score-card--final ${row.eliminated ? 'is-out' : ''} ${isWinner ? 'is-lead' : ''} ${isYou ? 'is-you' : ''}`}
                 >
-                  <img src={leaderArt(state, row.nationId)} alt="" />
-                  <div>
-                    <strong>
-                      #{i + 1} {nationDef(row.nationId).name}
-                      {nation.isHuman ? ` (${playerDisplayName(state, row.nationId)})` : ''}
-                      {isWinner ? ' ★' : ''}
-                    </strong>
-                    <span>
-                      Cities {row.citiesLeft} · Survived {row.citySurvivalPoints} · 🔍
-                      {row.researchCenters} · 🛡{row.shields}
-                      {isYou ? ' · You' : nation.isHuman ? ' · Player' : ' · AI'}
-                    </span>
+                  <div className="score-card__head">
+                    <img src={leaderArt(state, row.nationId)} alt="" />
+                    <div>
+                      <strong>
+                        #{i + 1} {nationDef(row.nationId).name}
+                        {nation.isHuman ? ` (${playerDisplayName(state, row.nationId)})` : ''}
+                        {isWinner ? ' ★' : ''}
+                      </strong>
+                      <span>
+                        Survived {row.citySurvivalPoints} · 🔍{live.researchCenters} · 🛡
+                        {live.shields}
+                        {live.bunkers > 0 ? ` · 🪨${live.bunkers}` : ''}
+                        {isYou ? ' · You' : nation.isHuman ? ' · Player' : ' · AI'}
+                      </span>
+                    </div>
+                    <em>{live.total}</em>
                   </div>
-                  <em>{row.total}</em>
+                  <ul
+                    className="score-card__cities"
+                    aria-label={`${nationDef(row.nationId).name} cities`}
+                  >
+                    {nation.cities.map((city) => (
+                      <li
+                        key={city.id}
+                        className={`score-city ${city.destroyed ? 'is-destroyed' : ''} ${
+                          city.isUnderground && !city.destroyed ? 'is-bunker' : ''
+                        } ${city.hasShield && !city.destroyed ? 'has-shield' : ''}`}
+                        title={`${city.name} — ${cityStatusLabel(city)}`}
+                      >
+                        <img src={cityArt(city)} alt="" draggable={false} />
+                        {city.destroyed && (
+                          <span className="city-smoke" aria-hidden>
+                            <i />
+                            <i />
+                            <i />
+                          </span>
+                        )}
+                        <strong>{city.name}</strong>
+                        <span>{cityStatusLabel(city)}</span>
+                        <div className="score-city__assets" aria-hidden>
+                          {city.hasResearch && !city.destroyed && (
+                            <img src={ART.researchIcon} alt="" draggable={false} />
+                          )}
+                          {city.hasLaser && !city.destroyed && (
+                            <img src={ART.laserIcon} alt="" draggable={false} />
+                          )}
+                          {city.hasShield && !city.destroyed && !city.isUnderground && (
+                            <img src={ART.shield} alt="" draggable={false} />
+                          )}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               );
             })}

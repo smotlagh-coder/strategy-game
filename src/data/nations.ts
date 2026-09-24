@@ -173,8 +173,12 @@ export const COSTS = {
 } as const;
 
 export const STARTING_MONEY = 14;
-/** Flat income every living nation receives each round (from round 2) */
-export const BASE_INCOME = 5;
+/**
+ * Income per standing city each round (from round 2). Three cities pay $4.5M
+ * before research and sanctions — losing a city cuts the treasury, not just
+ * the scoreboard.
+ */
+export const INCOME_PER_CITY = 1.5;
 export const RESEARCH_INCOME = 1.5;
 /** Each sanction cuts the target's total revenue by this fraction */
 export const SANCTION_PENALTY = 0.1;
