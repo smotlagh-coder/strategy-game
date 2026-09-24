@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_ROUNDS } from '../data/nations';
+import { COSTS, MAX_ROUNDS } from '../data/nations';
 import {
   applyQueuedStrike,
   createInitialState,
@@ -137,6 +137,65 @@ describe('round briefing', () => {
     const city = buildRoundBriefing(s, 'us')!.cities.find((c) => c.id === shielded.id)!;
     expect(city.status).toBe('shieldLost');
     expect(city.destroyed).toBe(false);
+  });
+
+  it('prices last-round losses at city + fixture replacement cost', () => {
+    let bare = table();
+    bare = playRound(nuke(bare, 'uk', 'us', 1));
+    expect(buildRoundBriefing(bare, 'us')!.assetLoss).toBe(COSTS.rebuild);
+
+    let shielded = table();
+    shielded = {
+      ...shielded,
+      nations: {
+        ...shielded.nations,
+        us: {
+          ...shielded.nations.us,
+          cities: shielded.nations.us.cities.map((c, i) =>
+            i === 0 ? { ...c, hasShield: true, hasResearch: true } : c,
+          ),
+        },
+      },
+    };
+    // Shield alone absorbs — only the shield is lost
+    shielded = playRound(nuke(shielded, 'uk', 'us', 0));
+    expect(buildRoundBriefing(shielded, 'us')!.assetLoss).toBe(COSTS.shield);
+
+    let loaded = table();
+    loaded = {
+      ...loaded,
+      nations: {
+        ...loaded.nations,
+        us: {
+          ...loaded.nations.us,
+          cities: loaded.nations.us.cities.map((c, i) =>
+            i === 1 ? { ...c, hasShield: true, hasResearch: true } : c,
+          ),
+        },
+      },
+    };
+    // Escort the shield so the warhead takes the whole seat
+    loaded = {
+      ...loaded,
+      pendingStrikes: [
+        {
+          attackerId: 'uk',
+          targetNationId: 'us',
+          cityId: loaded.nations.us.cities[1].id,
+          weapon: 'drone',
+        },
+        {
+          attackerId: 'uk',
+          targetNationId: 'us',
+          cityId: loaded.nations.us.cities[1].id,
+          weapon: 'nuke',
+        },
+      ],
+    };
+    loaded = playRound(loaded);
+    expect(buildRoundBriefing(loaded, 'us')!.assetLoss).toBe(
+      COSTS.rebuild + COSTS.shield + COSTS.research,
+    );
   });
 
   it('reports a quiet round with the standings and treasury only', () => {

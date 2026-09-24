@@ -34,7 +34,7 @@ describe('opening tempo', () => {
   it('prices a first strike inside the opening budget', () => {
     // Tech plus a warhead has to leave room for a defensive buy, or nobody
     // ever opens with an attack
-    expect(COSTS.nuclearTech + COSTS.bomb).toBeLessThan(STARTING_MONEY - COSTS.shield);
+    expect(COSTS.ballisticMissileTech + COSTS.bomb).toBeLessThan(STARTING_MONEY - COSTS.shield);
   });
 
   it('pays enough each round to fund a real move', () => {

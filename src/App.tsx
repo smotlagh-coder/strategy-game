@@ -7,6 +7,9 @@ import {
   COSTS,
   DRONE_DAMAGE,
   MAX_DRONES_PER_ROUND,
+  MAX_BOMBS_PER_ROUND,
+  MAX_HYDROGEN_PER_GAME,
+  MAX_MAGNETIC_PER_GAME,
   LASER_INTERCEPTS_PER_ROUND,
   MAX_SANCTIONS,
   RESEARCH_INCOME,
@@ -20,6 +23,8 @@ import {
   isHumanDisconnected,
   buyAerospaceTech,
   buyBombs,
+  buyHydrogenBomb,
+  buyMagneticBomb,
   buyLaser,
   buySpyNetwork,
   buyRebuild,
@@ -45,14 +50,20 @@ import {
   finishStrikeResolution,
   groupStrikesByAttacker,
   formatMoney,
+  assetLossFor,
   markHumanReady,
   markPromptDone,
   maxBombsPurchasable,
+  maxHydrogenPurchasable,
+  maxMagneticPurchasable,
+  canBuyAnyWarhead,
+  totalWarheads,
   maxDronesPurchasable,
   needsOvertime,
   nextRound,
   tiedForTheLead,
   pickCountry,
+  queueStrike,
   queueStrikes,
   setMode,
   setPlayerNames,
@@ -74,6 +85,8 @@ import type {
   NationId,
   PendingStrike,
   RoundWorldEvent,
+  StrikeWeapon,
+  WarheadKind,
 } from './types';
 import { isFirebaseConfigured } from './lib/firebase';
 import {
@@ -222,7 +235,7 @@ interface StrikeTarget {
   cityId: string;
   cityName: string;
   /** A city can catch a warhead and a drone swarm in the same volley */
-  weapons: ('nuke' | 'drone')[];
+  weapons: StrikeWeapon[];
   /** Repair bill per drone pack — halved when the city has a shield or bunker */
   droneBill?: number;
   /** The city's lasers downed the swarm, so it never reaches the skyline */
@@ -242,6 +255,45 @@ const STRIKE_IMPACT_MS = 1300;
 /** How far along its run a swarm gets before the lasers catch it */
 const LASER_INTERCEPT_AT = 0.6;
 
+function isBallisticWeapon(weapon: StrikeWeapon | undefined): boolean {
+  return weapon !== 'drone';
+}
+
+function craftArt(weapon: StrikeWeapon): string {
+  if (weapon === 'drone') return ART.drone;
+  if (weapon === 'hydrogen') return ART.missileHydrogen;
+  if (weapon === 'magnetic') return ART.missileMagnetic;
+  return ART.missile;
+}
+
+function boomArt(weapon: StrikeWeapon): string {
+  if (weapon === 'hydrogen') return ART.explosionHydrogen;
+  if (weapon === 'magnetic') return ART.explosionMagnetic;
+  return ART.explosion;
+}
+
+function strikeTitle(flightPlan: { weapon: StrikeWeapon }[], targetCount: number): string {
+  const nukes = flightPlan.filter((f) => f.weapon === 'nuke' || !f.weapon).length;
+  const hydro = flightPlan.filter((f) => f.weapon === 'hydrogen').length;
+  const mag = flightPlan.filter((f) => f.weapon === 'magnetic').length;
+  const drones = flightPlan.filter((f) => f.weapon === 'drone').length;
+  const warheads = nukes + hydro + mag;
+  if (warheads === 0) {
+    return drones > 1 ? `DRONE SWARMS — ${drones} PACKS` : 'DRONE SWARM';
+  }
+  const kinds: string[] = [];
+  if (hydro) kinds.push(hydro > 1 ? `${hydro} HYDROGEN` : 'HYDROGEN');
+  if (mag) kinds.push(mag > 1 ? `${mag} MAGNETIC` : 'MAGNETIC');
+  if (nukes) kinds.push(nukes > 1 ? `${nukes} NUCLEAR` : 'NUCLEAR');
+  const head =
+    kinds.length === 1
+      ? `${kinds[0].replace(/^\d+\s/, '')} LAUNCH`
+      : `MIXED WARHEADS — ${kinds.join(' · ')}`;
+  if (drones > 0) return `${head} — DRONES ESCORT`;
+  if (targetCount > 1 && kinds.length === 1) return `${head} — ${targetCount} MISSILES`;
+  return head;
+}
+
 function StrikeCinema({
   state,
   strike,
@@ -257,7 +309,7 @@ function StrikeCinema({
   const missileRefs = useRef<(HTMLDivElement | null)[]>([]);
   const pathRefs = useRef<(SVGPathElement | null)[]>([]);
   const [booms, setBooms] = useState<
-    ({ x: number; y: number; weapon: 'nuke' | 'drone'; absorbed?: boolean } | null)[]
+    ({ x: number; y: number; weapon: StrikeWeapon; absorbed?: boolean } | null)[]
   >([]);
   /** Where a laser caught a swarm, and the beam that did it */
   const [zaps, setZaps] = useState<
@@ -277,21 +329,10 @@ function StrikeCinema({
       targetIndex,
       weapon,
       intercepted: weapon === 'drone' && Boolean(target.lasered),
-      absorbed: weapon === 'nuke' && Boolean(target.absorbed),
+      absorbed: isBallisticWeapon(weapon) && Boolean(target.absorbed),
     })),
   );
-  const nukeCount = flightPlan.filter((f) => f.weapon === 'nuke').length;
-  const droneCount = flightPlan.length - nukeCount;
-  const title =
-    nukeCount === 0
-      ? droneCount > 1
-        ? `DRONE SWARMS — ${droneCount} PACKS`
-        : 'DRONE SWARM'
-      : droneCount > 0
-        ? 'COMBINED STRIKE — DRONES ESCORT THE WARHEADS'
-        : count > 1
-          ? `NUCLEAR LAUNCH — ${count} MISSILES`
-          : 'NUCLEAR LAUNCH';
+  const title = strikeTitle(flightPlan, count);
 
   const planRef = useRef(flightPlan);
   planRef.current = flightPlan;
@@ -422,7 +463,7 @@ function StrikeCinema({
           const impacts: ({
             x: number;
             y: number;
-            weapon: 'nuke' | 'drone';
+            weapon: StrikeWeapon;
             absorbed?: boolean;
           } | null)[] = strikeRef.current.targets.map(() => null);
           for (const arc of arcs) {
@@ -430,14 +471,18 @@ function StrikeCinema({
             if (arc.intercepted) continue;
             const landed = impacts[arc.targetIndex];
             // A warhead outshines any swarm sharing the same city
-            if (landed?.weapon === 'nuke') continue;
+            if (landed && isBallisticWeapon(landed.weapon)) continue;
             impacts[arc.targetIndex] = { ...arc.p2, weapon: arc.weapon, absorbed: arc.absorbed };
           }
           // A warhead that broke on rock gets a low, smothered thud rather than
           // the airburst — the blast went into the ground, not the skyline
-          const anyBlast = impacts.some((i) => i?.weapon === 'nuke' && !i.absorbed);
-          const anyRock = impacts.some((i) => i?.weapon === 'nuke' && i.absorbed);
-          if (anyBlast) playSfx(SFX.explosion, 0.95);
+          const anyBlast = impacts.some((i) => i && isBallisticWeapon(i.weapon) && !i.absorbed);
+          const anyRock = impacts.some((i) => i && isBallisticWeapon(i.weapon) && i.absorbed);
+          const anyMagnetic = impacts.some((i) => i?.weapon === 'magnetic' && !i.absorbed);
+          const anyHydrogen = impacts.some((i) => i?.weapon === 'hydrogen' && !i.absorbed);
+          if (anyHydrogen) playSfx(SFX.explosion, 1, 0.78);
+          else if (anyMagnetic) playSfx(SFX.explosion, 0.85, 1.55);
+          else if (anyBlast) playSfx(SFX.explosion, 0.95);
           else if (anyRock) playSfx(SFX.explosion, 0.5, 0.6);
           else playSfx(SFX.explosion, 0.3, 2.1);
           setBooms(impacts);
@@ -507,10 +552,14 @@ function StrikeCinema({
                   <div className="strike-cinema__target" key={`${target.to}-${target.cityId}`}>
                     <div
                       className={`strike-cinema__target-art ${
-                        booms[i]?.weapon === 'nuke'
+                        booms[i] && isBallisticWeapon(booms[i]!.weapon)
                           ? booms[i]?.absorbed
                             ? 'is-absorbed'
-                            : 'is-burning'
+                            : booms[i]?.weapon === 'magnetic'
+                              ? 'is-emp'
+                              : booms[i]?.weapon === 'hydrogen'
+                                ? 'is-fusion'
+                                : 'is-burning'
                           : booms[i]
                             ? 'is-rattled'
                             : ''
@@ -529,9 +578,12 @@ function StrikeCinema({
                         src={leaderArt(state, target.to)}
                         alt=""
                       />
-                      {booms[i]?.weapon === 'nuke' &&
+                      {booms[i] &&
+                        isBallisticWeapon(booms[i]!.weapon) &&
                         (booms[i]?.absorbed ? (
                           <span className="strike-cinema__rubble" aria-hidden />
+                        ) : booms[i]?.weapon === 'magnetic' ? (
+                          <span className="strike-cinema__emp" aria-hidden />
                         ) : (
                           <span className="strike-cinema__fire" aria-hidden />
                         ))}
@@ -541,15 +593,22 @@ function StrikeCinema({
                     </div>
                     <strong>{to.name}</strong>
                     <span>{target.cityName}</span>
-                    {(target.absorbed || target.weapons.includes('drone')) && (
+                    {(target.absorbed ||
+                      target.weapons.includes('drone') ||
+                      target.weapons.includes('hydrogen') ||
+                      target.weapons.includes('magnetic')) && (
                       <span className="strike-cinema__tag">
                         {target.absorbed
                           ? 'Broke against the bunker'
-                          : target.droneBill === 0
-                            ? 'Lasers shot the swarm down'
-                            : target.weapons.includes('nuke')
-                              ? 'Shield swarmed'
-                              : `−$${target.droneBill ?? DRONE_DAMAGE}M damages`}
+                          : target.weapons.includes('hydrogen')
+                            ? 'Hydrogen warhead'
+                            : target.weapons.includes('magnetic')
+                              ? 'Magnetic EMP'
+                              : target.droneBill === 0
+                                ? 'Lasers shot the swarm down'
+                                : target.weapons.some(isBallisticWeapon)
+                                  ? 'Shield swarmed'
+                                  : `−$${target.droneBill ?? DRONE_DAMAGE}M damages`}
                       </span>
                     )}
                   </div>
@@ -564,7 +623,15 @@ function StrikeCinema({
               {flightPlan.map((leg, i) => (
                 <path
                   key={`leg-${i}-path`}
-                  className={leg.weapon === 'drone' ? 'is-drone' : undefined}
+                  className={
+                    leg.weapon === 'drone'
+                      ? 'is-drone'
+                      : leg.weapon === 'hydrogen'
+                        ? 'is-hydrogen'
+                        : leg.weapon === 'magnetic'
+                          ? 'is-magnetic'
+                          : undefined
+                  }
                   ref={(el) => {
                     pathRefs.current[i] = el;
                   }}
@@ -579,11 +646,27 @@ function StrikeCinema({
                   missileRefs.current[i] = el;
                 }}
                 className={`strike-cinema__missile${
-                  leg.weapon === 'drone' ? ' strike-cinema__missile--drone' : ''
+                  leg.weapon === 'drone'
+                    ? ' strike-cinema__missile--drone'
+                    : leg.weapon === 'hydrogen'
+                      ? ' strike-cinema__missile--hydrogen'
+                      : leg.weapon === 'magnetic'
+                        ? ' strike-cinema__missile--magnetic'
+                        : ''
                 }`}
               >
-                <img src={leg.weapon === 'drone' ? ART.drone : ART.missile} alt="" draggable={false} />
-                {leg.weapon === 'nuke' && <span className="strike-cinema__flame" />}
+                <img src={craftArt(leg.weapon)} alt="" draggable={false} />
+                {isBallisticWeapon(leg.weapon) && (
+                  <span
+                    className={`strike-cinema__flame${
+                      leg.weapon === 'hydrogen'
+                        ? ' strike-cinema__flame--hydrogen'
+                        : leg.weapon === 'magnetic'
+                          ? ' strike-cinema__flame--magnetic'
+                          : ''
+                    }`}
+                  />
+                )}
               </div>
             ))}
             {zaps.map((zap, i) => (
@@ -618,6 +701,8 @@ function StrikeCinema({
                   key={`${strike.targets[i]?.cityId ?? i}-boom`}
                   className={`strike-cinema__boom${
                     boom.weapon === 'drone' ? ' strike-cinema__boom--drone' : ''
+                  }${boom.weapon === 'hydrogen' ? ' strike-cinema__boom--hydrogen' : ''}${
+                    boom.weapon === 'magnetic' ? ' strike-cinema__boom--magnetic' : ''
                   }${boom.absorbed ? ' strike-cinema__boom--rock' : ''}`}
                   style={{ left: boom.x, top: boom.y }}
                 >
@@ -630,7 +715,7 @@ function StrikeCinema({
                       ))}
                     </>
                   ) : (
-                    <img src={ART.explosion} alt="" />
+                    <img src={boomArt(boom.weapon)} alt="" />
                   )}
                 </div>
               ) : null,
@@ -747,7 +832,7 @@ function RoundBriefingOverlay({
       <div className="round-banner__panel round-brief__panel enter-pop">
         <header className="round-brief__head">
           <div>
-            <p className="round-start__eyebrow">{me.name} · situation report</p>
+            <p className="round-start__eyebrow">{me.name}</p>
             <h2 className="round-start__title">Round {briefing.round}</h2>
           </div>
           <button type="button" className="btn round-brief__skip" onClick={onDone}>
@@ -760,30 +845,52 @@ function RoundBriefingOverlay({
           aria-hidden
         />
 
+        {(briefing.assetLoss > 0 || briefing.droneRepairs > 0) && (
+          <p
+            className={`round-brief__toll ${briefing.assetLoss > 0 ? 'is-hit' : ''}`}
+            role="status"
+          >
+            {briefing.assetLoss > 0 ? (
+              <>
+                Last round cost you <strong>${formatMoney(briefing.assetLoss)}M</strong> in
+                assets
+                {briefing.droneRepairs > 0
+                  ? ` · $${formatMoney(briefing.droneRepairs)}M repairs`
+                  : ''}
+              </>
+            ) : (
+              <>
+                Last round: <strong>${formatMoney(briefing.droneRepairs)}M</strong> in drone
+                repairs
+              </>
+            )}
+          </p>
+        )}
+
         <div className="round-brief__grid">
           <section className="round-brief__section round-brief__section--cities">
             <div className="round-brief__cities-head">
               <h3 className="round-brief__label">
-                Your cities
-                {briefing.untouched ? ' · nobody fired on you' : ''}
+                Cities
+                {briefing.untouched ? ' · untouched' : ''}
               </h3>
               <ul className="round-brief__arsenal">
-                <li title="Warheads ready to launch">
+                <li title="Warheads">
                   <img src={ART.missile} alt="" draggable={false} />
                   {briefing.assets.bombs}
                 </li>
-                <li title="Drone packs ready to launch">
+                <li title="Drones">
                   <img src={ART.drone} alt="" draggable={false} />
                   {briefing.assets.drones}
                 </li>
                 {briefing.assets.spyNetwork && (
-                  <li className="is-flag" title="Spy service — you can see enemy defences">
-                    Spy service
+                  <li className="is-flag" title="Spy service">
+                    Spy
                   </li>
                 )}
                 {!briefing.assets.canArmNukes && (
-                  <li className="is-missing" title="No nuclear tech, so no warheads">
-                    No nuclear tech
+                  <li className="is-missing" title="No Ballistic Missile Tech">
+                    No tech
                   </li>
                 )}
               </ul>
@@ -819,21 +926,21 @@ function RoundBriefingOverlay({
                     {city.hasResearch && (
                       <img
                         src={ART.researchIcon}
-                        alt="Research centre"
-                        title={`Research centre · +$${formatMoney(RESEARCH_INCOME)} a round`}
+                        alt="Research"
+                        title="Research"
                         draggable={false}
                       />
                     )}
                     {city.hasLaser && (
                       <img
                         src={ART.laserIcon}
-                        alt="Laser defence"
-                        title={`Laser defence · shoots down ${LASER_INTERCEPTS_PER_ROUND} swarms a round`}
+                        alt="Laser"
+                        title="Laser"
                         draggable={false}
                       />
                     )}
                     {city.isUnderground && !city.destroyed && (
-                      <span className="is-bunker" title="Underground — cannot be nuked">
+                      <span className="is-bunker" title="Bunker">
                         Bunker
                       </span>
                     )}
@@ -841,7 +948,7 @@ function RoundBriefingOverlay({
                       !city.hasShield &&
                       !city.isUnderground &&
                       !city.hasResearch &&
-                      !city.hasLaser && <span className="is-bare">No defences</span>}
+                      !city.hasLaser && <span className="is-bare">Bare</span>}
                   </div>
                   {city.attackers.length > 0 && (
                     <div className="round-brief__city-raiders">
@@ -863,9 +970,9 @@ function RoundBriefingOverlay({
 
           <div className="round-brief__col">
             <section className="round-brief__section round-brief__section--pressure">
-              <h3 className="round-brief__label">Against you</h3>
+              <h3 className="round-brief__label">Pressure</h3>
               {briefing.raiders.length === 0 && briefing.sanctioners.length === 0 ? (
-                <p className="round-brief__none">No strikes, no sanctions. Enjoy it.</p>
+                <p className="round-brief__none">Quiet board.</p>
               ) : (
                 <ul className="round-brief__rows">
                   {briefing.raiders.map((raider) => (
@@ -889,8 +996,6 @@ function RoundBriefingOverlay({
                       </p>
                     </li>
                   ))}
-                  {/* One line however many are squeezing you — the faces say who,
-                      and the only number that matters is what it costs */}
                   {briefing.sanctioners.length > 0 && (
                     <li className="round-brief__row round-brief__row--sanction">
                       <div className="round-brief__faces">
@@ -905,9 +1010,7 @@ function RoundBriefingOverlay({
                         ))}
                       </div>
                       <p>
-                        <strong>
-                          Sanctioned by {briefing.sanctioners.length}
-                        </strong>
+                        <strong>Sanctions ×{briefing.sanctioners.length}</strong>
                         <span>−{Math.round(briefing.sanctionPenalty * 100)}% income</span>
                       </p>
                     </li>
@@ -929,9 +1032,6 @@ function RoundBriefingOverlay({
                     <b>{row.eliminated ? 'OUT' : `#${i + 1}`}</b>
                     <img src={leaderArt(state, row.nationId)} alt="" draggable={false} />
                     <strong>{nationDef(row.nationId).name}</strong>
-                    <span title="Cities · research centres · shields">
-                      {row.citiesLeft}🏙 {row.researchCenters}🔍 {row.shields}🛡
-                    </span>
                     <em>{row.total}</em>
                   </li>
                 ))}
@@ -943,29 +1043,23 @@ function RoundBriefingOverlay({
             <section className="round-brief__section round-brief__section--money">
               <div className="round-brief__money-head">
                 <h3 className="round-brief__label">Treasury</h3>
-                <p className="round-brief__cash">${formatMoney(briefing.money)}</p>
+                <p className="round-brief__cash">${formatMoney(briefing.money)}M</p>
               </div>
               <ul className="round-brief__ledger">
                 <li>
                   <span>Income</span>
-                  <em className="is-up">+${formatMoney(briefing.income)}</em>
+                  <em className="is-up">+${formatMoney(briefing.income)}M</em>
                 </li>
-                {briefing.sanctionPenalty > 0 && (
-                  <li>
-                    <span>Sanctions ({briefing.sanctioners.length})</span>
-                    <em className="is-down">−{Math.round(briefing.sanctionPenalty * 100)}%</em>
-                  </li>
-                )}
                 {briefing.droneRepairs > 0 && (
                   <li>
-                    <span>Drone repairs</span>
-                    <em className="is-down">−${formatMoney(briefing.droneRepairs)}</em>
+                    <span>Repairs</span>
+                    <em className="is-down">−${formatMoney(briefing.droneRepairs)}M</em>
                   </li>
                 )}
                 <li className="round-brief__ledger-total">
-                  <span>Net this round</span>
+                  <span>Net</span>
                   <em className={netIncome < 0 ? 'is-down' : 'is-up'}>
-                    {netIncome < 0 ? '−' : '+'}${formatMoney(Math.abs(netIncome))}
+                    {netIncome < 0 ? '−' : '+'}${formatMoney(Math.abs(netIncome))}M
                   </em>
                 </li>
               </ul>
@@ -975,13 +1069,12 @@ function RoundBriefingOverlay({
               className={`round-brief__section round-brief__section--risk is-${briefing.weakness.severity}`}
             >
               <h3 className="round-brief__label">
-                Biggest weakness
+                Focus
                 {briefing.weakness.severity !== 'none' && (
                   <span className="round-brief__risk-flag">{briefing.weakness.severity}</span>
                 )}
               </h3>
               <strong className="round-brief__risk-title">{briefing.weakness.title}</strong>
-              <p className="round-brief__risk-detail">{briefing.weakness.detail}</p>
               <p className="round-brief__risk-advice">{briefing.weakness.advice}</p>
             </section>
           </div>
@@ -1148,7 +1241,14 @@ function StrikeTheater({
           if (cancelled) break;
           const targets: StrikeTarget[] = [];
           for (const strike of volley.strikes) {
-            const weapon = strike.weapon === 'drone' ? 'drone' : 'nuke';
+            const weapon: StrikeWeapon =
+              strike.weapon === 'drone'
+                ? 'drone'
+                : strike.weapon === 'hydrogen'
+                  ? 'hydrogen'
+                  : strike.weapon === 'magnetic'
+                    ? 'magnetic'
+                    : 'nuke';
             const open = targets.find(
               (t) => t.to === strike.targetNationId && t.cityId === strike.cityId,
             );
@@ -1430,7 +1530,7 @@ function NationPod({
   /** Cities with locked drone swarms inbound */
   pendingDroneCityIds?: string[];
   /** Which weapon the open targeting step is spending */
-  selectionWeapon?: 'nuke' | 'drone';
+  selectionWeapon?: WarheadKind | 'drone';
   /** Cities to pulse (e.g. destroyed this round) */
   highlightCityIds?: string[];
   highlight?: boolean;
@@ -1488,14 +1588,20 @@ function NationPod({
           const droneSelected = Boolean(selected && selectionWeapon === 'drone');
           const justHit = pulsed.has(c.id);
           // A warhead has nothing to hit in a bunker city; drones still bill it
-          const bombProof = Boolean(c.isUnderground && selectionWeapon === 'nuke');
+          const bombProof = Boolean(
+            c.isUnderground &&
+              selectionWeapon !== 'drone' &&
+              selectionWeapon !== 'hydrogen',
+          );
           const canTarget = Boolean(targetable && !c.destroyed && !hitThisRound && !bombProof);
           const className = `city-tile ${c.destroyed ? 'is-destroyed' : ''} ${c.hasShield ? 'has-shield' : ''} ${c.hasResearch ? 'has-research' : ''} ${selected ? 'is-selected' : ''} ${canTarget ? 'is-targetable' : ''} ${hitThisRound && !c.destroyed && !bombLocked ? 'is-hit-this-round' : ''} ${bombLocked ? 'is-bomb-locked' : ''} ${droneLocked || droneSelected ? 'is-drone-locked' : ''} ${c.isUnderground && !c.destroyed ? 'is-underground' : ''} ${c.hasLaser && !c.destroyed ? 'has-laser' : ''} ${c.rebuiltRound != null && !c.destroyed ? 'is-rebuilt' : ''} ${justHit ? 'is-just-hit' : ''}`;
           const unknown = !open && !c.destroyed;
           const title = unknown
             ? `${c.name} — defences unknown: spy them, or send a swarm over`
             : c.isUnderground && !c.destroyed
-            ? `${c.name} — underground city, cannot be destroyed`
+            ? selectionWeapon === 'hydrogen'
+              ? `${c.name} — underground city, hydrogen can crack it`
+              : `${c.name} — underground city, cannot be destroyed`
             : bombLocked
             ? `${c.name} — targeted for bombing`
             : droneLocked
@@ -1529,15 +1635,21 @@ function NationPod({
                   <img src={ART.laserIcon} alt="" draggable={false} />
                 </span>
               )}
-              {(bombLocked || (selected && selectionWeapon === 'nuke')) && (
+              {(bombLocked || (selected && selectionWeapon !== 'drone')) && (
                 <span
                   className={`city-tile__bomb-lock ${
-                    selected && selectionWeapon === 'nuke' && !bombLocked ? 'is-pending' : ''
+                    selected && selectionWeapon !== 'drone' && !bombLocked ? 'is-pending' : ''
                   }`}
                   title={bombLocked ? 'Targeted for bombing' : 'Selected for bombing'}
                   aria-label={bombLocked ? 'Targeted for bombing' : 'Selected for bombing'}
                 >
-                  <img src={ART.missile} alt="" draggable={false} />
+                  <img
+                    src={
+                      selectionWeapon === 'drone' ? ART.missile : craftArt(selectionWeapon)
+                    }
+                    alt=""
+                    draggable={false}
+                  />
                 </span>
               )}
               {(droneLocked || droneSelected) && (
@@ -1761,7 +1873,7 @@ function CountrySelect({
 
 function canOfferTech(state: GameState, actorId: NationId): boolean {
   const n = state.nations[actorId];
-  return !n.hasNuclearTech && n.money >= COSTS.nuclearTech;
+  return !n.hasNuclearTech && n.money >= COSTS.ballisticMissileTech;
 }
 
 function canOfferAerospace(state: GameState, actorId: NationId): boolean {
@@ -1778,8 +1890,7 @@ function canOfferResearch(state: GameState, actorId: NationId): boolean {
 }
 
 function canOfferBombs(state: GameState, actorId: NationId): boolean {
-  const n = state.nations[actorId];
-  return n.money >= COSTS.bomb && maxBombsPurchasable(state, actorId) > 0;
+  return canBuyAnyWarhead(state, actorId);
 }
 
 function canOfferUnderground(state: GameState, actorId: NationId): boolean {
@@ -1808,7 +1919,7 @@ function canOfferSanction(state: GameState, actorId: NationId): boolean {
 }
 
 function canOfferStrike(state: GameState, actorId: NationId): boolean {
-  return state.nations[actorId].bombs > 0;
+  return totalWarheads(state.nations[actorId]) > 0;
 }
 
 function canOfferDroneStrike(state: GameState, actorId: NationId): boolean {
@@ -1888,10 +1999,13 @@ function GameBoard({
   /** Online: every human plans at once as their own nation; offline stays turn-based. */
   const actorId = isOnline && myNationId ? myNationId : turnId;
   const turn = state.nations[actorId];
-  const [targets, setTargets] = useState<{ nationId: NationId; cityId: string }[]>([]);
+  const [targets, setTargets] = useState<
+    { nationId: NationId; cityId: string; weapon: WarheadKind }[]
+  >([]);
   const [droneTargets, setDroneTargets] = useState<
     { nationId: NationId; cityId: string }[]
   >([]);
+  const [strikeWeapon, setStrikeWeapon] = useState<WarheadKind>('nuke');
   const [wizardStep, setWizardStep] = useState<WizardStep | null>(null);
   const [fx, setFx] = useState<FxEvent[]>([]);
   const [busy, setBusy] = useState(false);
@@ -1961,8 +2075,25 @@ function GameBoard({
   );
 
   useEffect(() => {
-    setTargets((prev) => (prev.length > turn.bombs ? prev.slice(0, turn.bombs) : prev));
-  }, [turn.bombs]);
+    const cap = totalWarheads(turn);
+    setTargets((prev) => (prev.length > cap ? prev.slice(0, cap) : prev));
+  }, [turn.bombs, turn.hydrogenBombs, turn.magneticBombs]);
+
+  useEffect(() => {
+    // Prefer a warhead type that still has free slots in the current pick list
+    const stock: Record<WarheadKind, number> = {
+      nuke: turn.bombs,
+      hydrogen: turn.hydrogenBombs ?? 0,
+      magnetic: turn.magneticBombs ?? 0,
+    };
+    const used = { nuke: 0, hydrogen: 0, magnetic: 0 };
+    for (const t of targets) used[t.weapon] += 1;
+    if (stock[strikeWeapon] > used[strikeWeapon]) return;
+    const next = (['nuke', 'hydrogen', 'magnetic'] as WarheadKind[]).find(
+      (k) => stock[k] > used[k],
+    );
+    if (next) setStrikeWeapon(next);
+  }, [turn.bombs, turn.hydrogenBombs, turn.magneticBombs, targets, strikeWeapon]);
 
   useEffect(() => {
     setDroneTargets((prev) => (prev.length > turn.drones ? prev.slice(0, turn.drones) : prev));
@@ -1978,7 +2109,7 @@ function GameBoard({
 
   const closeHumanTurn = useCallback(
     (
-      strikeTargets: { nationId: NationId; cityId: string }[],
+      strikeTargets: { nationId: NationId; cityId: string; weapon?: WarheadKind }[],
       swarmTargets: { nationId: NationId; cityId: string }[] = [],
     ) => {
       setWizardStep(null);
@@ -1992,7 +2123,9 @@ function GameBoard({
         if (!actor) return s;
 
         let next = s.phase === 'buy' ? finishBuyPhase(s) : s;
-        next = queueStrikes(next, strikeTargets, actor);
+        for (const t of strikeTargets) {
+          next = queueStrike(next, t.nationId, t.cityId, actor, t.weapon ?? 'nuke');
+        }
         next = queueStrikes(next, swarmTargets, actor, 'drone');
 
         if (s.mode === 'online' && s.onlineGameId) {
@@ -2413,22 +2546,45 @@ function GameBoard({
   const onSelectCity = (nationId: NationId, cityId: string) => {
     if (!strikeSelectMode || busy) return;
     if (nationId === actorId) return;
-    const limit = droneSelectMode ? turn.drones : turn.bombs;
-    if (limit < 1) return;
-    const spent = droneSelectMode ? turn.citiesDronedThisRound : turn.citiesStruckThisRound;
-    if (spent.includes(cityId)) return;
+    if (droneSelectMode) {
+      const limit = turn.drones;
+      if (limit < 1) return;
+      if (turn.citiesDronedThisRound.includes(cityId)) return;
+      bumpSelectionActivity();
+      setDroneTargets((prev) => {
+        const exists = prev.find((t) => t.cityId === cityId);
+        if (exists) return prev.filter((t) => t.cityId !== cityId);
+        if (prev.length >= limit) return [...prev.slice(1), { nationId, cityId }];
+        return [...prev, { nationId, cityId }];
+      });
+      return;
+    }
+
+    const stock: Record<WarheadKind, number> = {
+      nuke: turn.bombs,
+      hydrogen: turn.hydrogenBombs ?? 0,
+      magnetic: turn.magneticBombs ?? 0,
+    };
+    const cap = totalWarheads(turn);
+    if (cap < 1) return;
+    if (turn.citiesStruckThisRound.includes(cityId)) return;
     bumpSelectionActivity();
-    const pick = droneSelectMode ? setDroneTargets : setTargets;
-    pick((prev) => {
+    setTargets((prev) => {
       const exists = prev.find((t) => t.cityId === cityId);
       if (exists) return prev.filter((t) => t.cityId !== cityId);
-      if (prev.length >= limit) return [...prev.slice(1), { nationId, cityId }];
-      return [...prev, { nationId, cityId }];
+      const used = prev.filter((t) => t.weapon === strikeWeapon).length;
+      if (used >= stock[strikeWeapon]) return prev;
+      if (prev.length >= cap) {
+        return [...prev.slice(1), { nationId, cityId, weapon: strikeWeapon }];
+      }
+      return [...prev, { nationId, cityId, weapon: strikeWeapon }];
     });
   };
 
   /** Targeting runs bombs first, then drones, so the last step locks the turn in. */
-  const finishStrikeStep = (picked: { nationId: NationId; cityId: string }[]) => {
+  const finishStrikeStep = (
+    picked: { nationId: NationId; cityId: string; weapon: WarheadKind }[],
+  ) => {
     bumpSelectionActivity();
     setTargets(picked);
     if (canOfferDroneStrike(stateRef.current, actorId)) {
@@ -2439,6 +2595,9 @@ function GameBoard({
   };
 
   const bombMax = maxBombsPurchasable(state, actorId);
+  const hydrogenMax = maxHydrogenPurchasable(state, actorId);
+  const magneticMax = maxMagneticPurchasable(state, actorId);
+  const warheadCap = totalWarheads(turn);
   const droneMax = maxDronesPurchasable(state, actorId);
   const selectedCityIds = droneSelectMode
     ? droneTargets.map((t) => t.cityId)
@@ -2490,15 +2649,15 @@ function GameBoard({
 
             {wizardStep === 'tech' && (
               <>
-                <h3 className="turn-wizard__q">Do you want to purchase Nuclear Tech?</h3>
+                <h3 className="turn-wizard__q">Do you want to purchase Ballistic Missile Tech?</h3>
                 <p className="turn-wizard__hint">
-                  Unlocks warheads right away · {COSTS.nuclearTech}M
+                  Unlocks warheads right away · {COSTS.ballisticMissileTech}M
                 </p>
                 <div className="turn-wizard__actions">
                   <button
                     className="btn btn--xl btn--primary"
                     onClick={() => {
-                      pushFx({ kind: 'buy', label: 'Nuclear Tech Unlocked!' }, 700);
+                      pushFx({ kind: 'buy', label: 'Ballistic Missile Tech Unlocked!' }, 700);
                       const next = buyNuclearTech(stateRef.current, actorId);
                       setState(next);
                       advanceAfter(next, 'tech');
@@ -2610,30 +2769,84 @@ function GameBoard({
 
             {wizardStep === 'bombs' && (
               <>
-                <h3 className="turn-wizard__q">How many bombs do you want to buy?</h3>
+                <h3 className="turn-wizard__q">Arm your ballistic warheads</h3>
                 <p className="turn-wizard__hint">
-                  {COSTS.bomb}M each · max {bombMax} this round (cap 3)
+                  All three need Ballistic Missile Tech. Nuclear bombs refresh every
+                  round; hydrogen and magnetic are limited for the whole match.
                 </p>
-                <div className="turn-wizard__actions turn-wizard__actions--wrap">
-                  {[0, 1, 2, 3].map((n) => (
+                <div className="arsenal-buy">
+                  <div className="arsenal-buy__row">
+                    <div>
+                      <strong>Nuclear</strong>
+                      <span>
+                        {COSTS.bomb}M · max {MAX_BOMBS_PER_ROUND}/round · stock {turn.bombs}
+                      </span>
+                    </div>
+                    <div className="turn-wizard__actions turn-wizard__actions--wrap">
+                      {[0, 1, 2, 3].map((n) => (
+                        <button
+                          key={n}
+                          className="btn btn--xl btn--primary"
+                          disabled={n > bombMax}
+                          onClick={() => {
+                            if (n === 0) return;
+                            pushFx({ kind: 'buy', label: `+${n} Nuclear` }, 700);
+                            setState(buyBombs(stateRef.current, n, actorId));
+                          }}
+                        >
+                          {n === 0 ? '0' : `+${n}`}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="arsenal-buy__row">
+                    <div>
+                      <strong>Hydrogen</strong>
+                      <span>
+                        {COSTS.bombHydrogen}M · cracks bunkers ·{' '}
+                        {MAX_HYDROGEN_PER_GAME - (turn.hydrogenBought ?? 0)}/{MAX_HYDROGEN_PER_GAME}{' '}
+                        left this game · stock {turn.hydrogenBombs ?? 0}
+                      </span>
+                    </div>
                     <button
-                      key={n}
                       className="btn btn--xl btn--primary"
-                      disabled={n > bombMax}
+                      disabled={hydrogenMax < 1}
                       onClick={() => {
-                        if (n === 0) {
-                          advanceAfter(stateRef.current, 'bombs');
-                          return;
-                        }
-                        pushFx({ kind: 'buy', label: `+${n} Bomb${n > 1 ? 's' : ''}` }, 700);
-                        const next = buyBombs(stateRef.current, n, actorId);
-                        setState(next);
-                        advanceAfter(next, 'bombs');
+                        pushFx({ kind: 'buy', label: '+1 Hydrogen' }, 700);
+                        setState(buyHydrogenBomb(stateRef.current, actorId));
                       }}
                     >
-                      {n === 0 ? 'No Bomb' : `${n} Bomb${n > 1 ? 's' : ''}`}
+                      Buy
                     </button>
-                  ))}
+                  </div>
+                  <div className="arsenal-buy__row">
+                    <div>
+                      <strong>Magnetic</strong>
+                      <span>
+                        {COSTS.bombMagnetic}M · kills lasers this round ·{' '}
+                        {MAX_MAGNETIC_PER_GAME - (turn.magneticBought ?? 0)}/{MAX_MAGNETIC_PER_GAME}{' '}
+                        left this game · stock {turn.magneticBombs ?? 0}
+                      </span>
+                    </div>
+                    <button
+                      className="btn btn--xl btn--primary"
+                      disabled={magneticMax < 1}
+                      onClick={() => {
+                        pushFx({ kind: 'buy', label: '+1 Magnetic' }, 700);
+                        setState(buyMagneticBomb(stateRef.current, actorId));
+                      }}
+                    >
+                      Buy
+                    </button>
+                  </div>
+                </div>
+                <div className="turn-wizard__actions">
+                  <button
+                    className="btn btn--xl btn--primary"
+                    onClick={() => advanceAfter(stateRef.current, 'bombs')}
+                  >
+                    Done
+                  </button>
                 </div>
               </>
             )}
@@ -3048,24 +3261,45 @@ function GameBoard({
               state={state}
               nationId={actorId}
               money={turn.money}
-              bombs={turn.bombs}
+              bombs={warheadCap}
               drones={turn.drones}
               idleSecondsLeft={isOnline ? idleSecondsLeft : null}
               compact
             />
             <div className="turn-wizard__hero turn-wizard__hero--strike">
-              <img src={ART.missile} alt="" draggable={false} />
+              <img src={craftArt(strikeWeapon)} alt="" draggable={false} />
             </div>
-            <h3 className="turn-wizard__q">Hit enemy cities with your bombs?</h3>
+            <h3 className="turn-wizard__q">Hit enemy cities with your warheads?</h3>
             <p className="turn-wizard__hint">
-              Tap up to {turn.bombs} enemy cit{turn.bombs === 1 ? 'y' : 'ies'}
-              {targets.length > 0
-                ? ` · selected ${targets.length}/${turn.bombs}`
-                : ''}
-              . Strikes launch with everyone else at round end.
+              Pick a warhead type, then tap up to {warheadCap} enem
+              {warheadCap === 1 ? 'y city' : 'y cities'}
+              {targets.length > 0 ? ` · selected ${targets.length}/${warheadCap}` : ''}.
+              Strikes launch with everyone else at round end.
               {!turn.hasSpyNetwork &&
-                ' You have no eyes on their cities: a shield you cannot see will eat the warhead, and a bunker will break it. Send a swarm over first and it reports back what is down there.'}
+                ' You have no eyes on their cities: a shield you cannot see will eat the warhead, and a bunker will break a nuclear or magnetic shot. Hydrogen cracks bunkers. Magnetic kills lasers so drones can get through.'}
             </p>
+            <div className="warhead-picker" role="group" aria-label="Warhead type">
+              {(
+                [
+                  ['nuke', 'Nuclear', turn.bombs],
+                  ['hydrogen', 'Hydrogen', turn.hydrogenBombs ?? 0],
+                  ['magnetic', 'Magnetic', turn.magneticBombs ?? 0],
+                ] as const
+              ).map(([kind, label, stock]) => {
+                const used = targets.filter((t) => t.weapon === kind).length;
+                return (
+                  <button
+                    key={kind}
+                    type="button"
+                    className={`btn${strikeWeapon === kind ? ' btn--primary' : ''}`}
+                    disabled={stock < 1}
+                    onClick={() => setStrikeWeapon(kind)}
+                  >
+                    {label} · {used}/{stock}
+                  </button>
+                );
+              })}
+            </div>
             {targets.length > 0 && (
               <p className="target-label">
                 {targets
@@ -3073,7 +3307,9 @@ function GameBoard({
                     const name =
                       state.nations[t.nationId]?.cities.find((c) => c.id === t.cityId)?.name ??
                       t.cityId;
-                    return name;
+                    const tag =
+                      t.weapon === 'hydrogen' ? 'H' : t.weapon === 'magnetic' ? 'M' : 'N';
+                    return `${name} (${tag})`;
                   })
                   .join(' · ')}
               </p>
@@ -3295,7 +3531,7 @@ function GameBoard({
         <section className="board-right">
           <h3 className="board-section-title">
             {strikeSelectMode
-              ? `Enemies — tap up to ${turn.bombs} cities`
+              ? `Enemies — tap up to ${droneSelectMode ? turn.drones : warheadCap} cities`
               : isOnline
                 ? 'Everyone else'
                 : isHumanTurn
@@ -3318,7 +3554,7 @@ function GameBoard({
                 }
                 pendingBombCityIds={pendingBombCityIds}
                 pendingDroneCityIds={pendingDroneCityIds}
-                selectionWeapon={droneSelectMode ? 'drone' : 'nuke'}
+                selectionWeapon={droneSelectMode ? 'drone' : strikeWeapon}
                 highlight={id === actorId}
                 onSelectCity={strikeSelectMode ? onSelectCity : undefined}
               />
@@ -3394,9 +3630,16 @@ function RoundSummary({
   const worldIds = aftermathWorldIds(state.turnOrder, myCityIds) as NationId[];
   const isYouNation = (id: NationId) =>
     myNationId ? id === myNationId : Boolean(state.nations[id].isHuman);
-  // The aftermath board is read by whoever is at the screen: one spy service
-  // among the nations they play is enough to light the world panel up
   const worldRevealed = myCityIds.some((id) => state.nations[id].hasSpyNetwork);
+  const tollEvents = state.previousRoundEvents ?? state.roundEvents;
+  const myAssetLoss = myCityIds.reduce(
+    (sum, id) => sum + assetLossFor(tollEvents, id),
+    0,
+  );
+  const myRepairs = state.lastIncomeLedger
+    .filter((e) => myCityIds.includes(e.nationId))
+    .reduce((sum, e) => sum + (e.droneDamage ?? 0), 0);
+  const myLedger = state.lastIncomeLedger.filter((e) => myCityIds.includes(e.nationId));
 
   return (
     <div className="screen screen--board screen--round-report">
@@ -3423,6 +3666,25 @@ function RoundSummary({
 
           <div className="board-left__controls">
             <div className="panel panel--shop round-report__panel">
+              {(myAssetLoss > 0 || myRepairs > 0) && (
+                <p
+                  className={`round-report__toll ${myAssetLoss > 0 ? 'is-hit' : ''}`}
+                  role="status"
+                >
+                  {myAssetLoss > 0 ? (
+                    <>
+                      Last round cost you <strong>${formatMoney(myAssetLoss)}M</strong> in
+                      assets
+                      {myRepairs > 0 ? ` · $${formatMoney(myRepairs)}M repairs` : ''}
+                    </>
+                  ) : (
+                    <>
+                      Last round: <strong>${formatMoney(myRepairs)}M</strong> in drone repairs
+                    </>
+                  )}
+                </p>
+              )}
+
               <h2 className="round-report__panel-title">Scores</h2>
               <div className="score-cards score-cards--compact">
                 {state.roundScores.map((row, i) => {
@@ -3439,15 +3701,8 @@ function RoundSummary({
                       <div>
                         <strong>
                           {row.eliminated ? 'OUT' : `#${i + 1}`} {nationDef(row.nationId).name}
-                          {nation.isHuman
-                            ? ` (${playerDisplayName(state, row.nationId)})`
-                            : ''}
+                          {isYou ? ' · You' : nation.isHuman ? ' · Player' : ''}
                         </strong>
-                        <span>
-                          Cities {row.citiesLeft} · Survived {row.citySurvivalPoints} · 🔍
-                          {row.researchCenters} · 🛡{row.shields}
-                          {isYou ? ' · You' : nation.isHuman ? ' · Player' : ' · AI'}
-                        </span>
                       </div>
                       <em>{row.total}</em>
                     </div>
@@ -3455,38 +3710,26 @@ function RoundSummary({
                 })}
               </div>
 
-              {state.lastIncomeLedger.length > 0 && (
+              {myLedger.length > 0 && (
                 <>
                   <h2 className="round-report__panel-title">Treasury</h2>
                   <div className="income-ledger">
-                    {state.lastIncomeLedger
-                      .filter((e) =>
-                        myNationId
-                          ? e.nationId === myNationId
-                          : state.nations[e.nationId].isHuman,
-                      )
-                      .map((e) => (
-                        <div key={e.nationId} className="income-ledger__row">
-                          <strong>{nationDef(e.nationId).name}</strong>
-                          <span>
-                            Prev ${formatMoney(e.previousBalance)} → Revenue +$
-                            {formatMoney(e.revenue)} → Now $
-                            {formatMoney(state.nations[e.nationId].money)}
-                          </span>
-                          {e.sanctioners.length > 0 && (
-                            <small>
-                              Sanctioned by{' '}
-                              {e.sanctioners.map((id) => nationDef(id).name).join(' · ')} (−
-                              {Math.round(e.sanctionPenalty * 100)}%)
-                            </small>
-                          )}
-                          {(e.droneDamage ?? 0) > 0 && (
-                            <small>
-                              Drone damage repairs −${formatMoney(e.droneDamage ?? 0)}
-                            </small>
-                          )}
-                        </div>
-                      ))}
+                    {myLedger.map((e) => (
+                      <div key={e.nationId} className="income-ledger__row">
+                        <strong>
+                          ${formatMoney(state.nations[e.nationId].money)}M
+                        </strong>
+                        <span>
+                          +${formatMoney(e.revenue)}M income
+                          {(e.droneDamage ?? 0) > 0
+                            ? ` · −$${formatMoney(e.droneDamage ?? 0)}M repairs`
+                            : ''}
+                          {e.sanctioners.length > 0
+                            ? ` · −${Math.round(e.sanctionPenalty * 100)}% sanctions`
+                            : ''}
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 </>
               )}
@@ -3508,30 +3751,8 @@ function RoundSummary({
 
               <div className="round-report__world-mobile">
                 <h2 className="round-report__panel-title">
-                  {worldRevealed ? 'World — shields, research, lasers, ruins' : 'World — who is still standing'}
+                  {worldRevealed ? 'World' : 'World — standing'}
                 </h2>
-                <p className="round-report__legend">
-                  <span>🛡 Shield</span>
-                  <span>
-                    <img
-                      className="legend-icon"
-                      src={ART.researchIcon}
-                      alt=""
-                      draggable={false}
-                    />{' '}
-                    Research
-                  </span>
-                  <span>
-                    <img
-                      className="legend-icon"
-                      src={ART.laserIcon}
-                      alt=""
-                      draggable={false}
-                    />{' '}
-                    Lasers
-                  </span>
-                  <span className="round-report__legend-burnt">Burnt = destroyed</span>
-                </p>
                 <div className="round-report__world-list">
                   {worldIds.map((id) => (
                     <NationPod
@@ -3551,8 +3772,8 @@ function RoundSummary({
               <div className="round-report__actions">
                 <p className="round-report__auto-hint">
                   {isFinal
-                    ? `Final results in ${secondsLeft} ${secondsLeft === 1 ? 'second' : 'seconds'}…`
-                    : `Round ${state.round + 1} starts in ${secondsLeft} ${secondsLeft === 1 ? 'second' : 'seconds'} — study the board`}
+                    ? `Final results in ${secondsLeft}s…`
+                    : `Round ${state.round + 1} in ${secondsLeft}s`}
                 </p>
               </div>
             </div>
@@ -3561,28 +3782,8 @@ function RoundSummary({
 
         <section className="board-right round-report__world-desktop">
           <h3 className="board-section-title">
-            {worldRevealed ? 'World — shields, research, lasers, ruins' : 'World — who is still standing'}
+            {worldRevealed ? 'World' : 'World — standing'}
           </h3>
-          <p className="round-report__legend">
-            {worldRevealed ? (
-              <>
-                <span>🛡 Shield</span>
-                <span>
-                  <img className="legend-icon" src={ART.researchIcon} alt="" draggable={false} />{' '}
-                  Research
-                </span>
-                <span>
-                  <img className="legend-icon" src={ART.laserIcon} alt="" draggable={false} />{' '}
-                  Lasers
-                </span>
-              </>
-            ) : (
-              <span>
-                ? Defences unknown — a ${COSTS.spy}M spy service puts them on the board
-              </span>
-            )}
-            <span className="round-report__legend-burnt">Burnt = destroyed</span>
-          </p>
           <div className="board-right__nations">
             {worldIds.map((id) => (
               <NationPod

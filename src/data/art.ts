@@ -42,8 +42,12 @@ const CITY_ART = {
 export const ART = {
   map: '/art/map-bg.webp',
   missile: '/art/missile.webp',
+  missileHydrogen: '/art/missile-hydrogen.webp',
+  missileMagnetic: '/art/missile-magnetic.webp',
   drone: '/art/drone.webp',
   explosion: '/art/explosion.webp',
+  explosionHydrogen: '/art/explosion-hydrogen.webp',
+  explosionMagnetic: '/art/explosion-magnetic.webp',
   /* Wide 2:1 scenes, one per prompt in the turn wizard */
   nukeTech: '/art/nuke-tech.webp',
   aerospaceTech: '/art/aerospace-program.webp',

@@ -1,5 +1,13 @@
 import { COSTS, DRONE_DAMAGE, MAX_ROUNDS, MAX_SANCTIONS, RESEARCH_INCOME, nationDef } from '../data/nations';
-import { allScores, canBuyBombs, canBuyDrones, formatMoney, whoIsSanctioning } from './engine';
+import {
+  allScores,
+  assetLossFor,
+  canBuyBombs,
+  canBuyDrones,
+  formatMoney,
+  totalWarheads,
+  whoIsSanctioning,
+} from './engine';
 import type { GameState, NationId, RoundScore, RoundWorldEvent } from '../types';
 
 /** What one of your cities lived through in the round just played. */
@@ -104,6 +112,8 @@ export interface RoundBriefing {
   previousBalance: number;
   income: number;
   droneRepairs: number;
+  /** Cities + shields wiped last round, at replacement cost */
+  assetLoss: number;
   scores: RoundScore[];
   assets: BriefingAssets;
   weakness: BriefingWeakness;
@@ -133,7 +143,7 @@ function readAssets(state: GameState, myId: NationId): BriefingAssets {
     bunkers: alive.filter((c) => c.isUnderground).length,
     labs: alive.filter((c) => c.hasResearch).length,
     lasers: alive.filter((c) => c.hasLaser).length,
-    bombs: n.bombs,
+    bombs: totalWarheads(n),
     drones: n.drones,
     spyNetwork: Boolean(n.hasSpyNetwork),
     canArmNukes: canBuyBombs(state, myId),
@@ -276,10 +286,10 @@ function findWeakness(
       title: 'No warheads, no deterrent',
       detail: `You cannot take a city off anyone, and a nation that cannot hit back is the cheapest target at the table.`,
       advice:
-        money >= COSTS.nuclearTech
-          ? `Nuclear tech is ${cash(COSTS.nuclearTech)}, warheads ${cash(COSTS.bomb)} each after that — buy it this round.`
-          : `Nuclear tech is ${cash(COSTS.nuclearTech)} and you are ${cash(
-              COSTS.nuclearTech - money,
+        money >= COSTS.ballisticMissileTech
+          ? `Ballistic Missile Tech is ${cash(COSTS.ballisticMissileTech)}, warheads ${cash(COSTS.bomb)} each after that — buy it this round.`
+          : `Ballistic Missile Tech is ${cash(COSTS.ballisticMissileTech)} and you are ${cash(
+              COSTS.ballisticMissileTech - money,
             )} short. Hold the cash until you can.`,
     };
   }
@@ -409,6 +419,7 @@ export function buildRoundBriefing(
   const income = ledger?.revenue ?? 0;
   const scores = allScores(state);
   const assets = readAssets(state, myId);
+  const priorEvents = state.previousRoundEvents ?? [];
 
   return {
     round: state.round,
@@ -421,6 +432,7 @@ export function buildRoundBriefing(
     previousBalance: ledger?.previousBalance ?? money,
     income,
     droneRepairs: +droneRepairs.toFixed(2),
+    assetLoss: assetLossFor(priorEvents, myId),
     scores,
     assets,
     weakness: findWeakness(state, myId, assets, scores, sanctioners, income, sanctionPenalty),

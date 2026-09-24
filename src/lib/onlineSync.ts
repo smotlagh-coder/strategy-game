@@ -74,6 +74,21 @@ export function mergeBombStock(remote: NationState, local: NationState): number 
   return Math.max(0, stockAtRoundStart + bought - launched);
 }
 
+/**
+ * Specialty warheads use lifetime buy/launch counters (not a per-round buy
+ * reset), so the round-start stock is totalBought − totalUsed.
+ */
+export function mergeSpecialtyBombStock(
+  remote: NationState,
+  local: NationState,
+  boughtKey: 'hydrogenBought' | 'magneticBought',
+  usedKey: 'hydrogenUsed' | 'magneticUsed',
+): number {
+  const bought = Math.max(counter(remote[boughtKey]), counter(local[boughtKey]));
+  const used = Math.max(counter(remote[usedKey]), counter(local[usedKey]));
+  return Math.max(0, bought - used);
+}
+
 /** Same monotonic reasoning as bombs, for drone packs. */
 export function mergeDroneStock(remote: NationState, local: NationState): number {
   const stockAtRoundStart = Math.max(
@@ -200,6 +215,17 @@ export function mergeNationPlanning(
     bombs: eliminated ? 0 : mergeBombStock(remote, local),
     bombsBoughtThisRound: Math.max(remote.bombsBoughtThisRound, local.bombsBoughtThisRound),
     bombsUsed: Math.max(remote.bombsUsed, local.bombsUsed),
+    hydrogenBombs: eliminated
+      ? 0
+      : mergeSpecialtyBombStock(remote, local, 'hydrogenBought', 'hydrogenUsed'),
+    hydrogenBought: Math.max(counter(remote.hydrogenBought), counter(local.hydrogenBought)),
+    hydrogenUsed: Math.max(counter(remote.hydrogenUsed), counter(local.hydrogenUsed)),
+    magneticBombs: eliminated
+      ? 0
+      : mergeSpecialtyBombStock(remote, local, 'magneticBought', 'magneticUsed'),
+    magneticBought: Math.max(counter(remote.magneticBought), counter(local.magneticBought)),
+    magneticUsed: Math.max(counter(remote.magneticUsed), counter(local.magneticUsed)),
+    laserOfflineThisRound: Boolean(remote.laserOfflineThisRound || local.laserOfflineThisRound),
     hasAerospaceTech: Boolean(remote.hasAerospaceTech || local.hasAerospaceTech),
     hasSpyNetwork: Boolean(remote.hasSpyNetwork || local.hasSpyNetwork),
     scoutedCities: Array.from(

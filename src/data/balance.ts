@@ -4,14 +4,20 @@
  */
 
 export type CostTable = {
-  nuclearTech: number;
+  /** Ballistic Missile Tech — unlocks all warhead types */
+  ballisticMissileTech: number;
   aerospaceTech: number;
   underground: number;
   rebuild: number;
   shield: number;
   laser: number;
   spy: number;
+  /** Nuclear warhead — city killer, 3/round */
   bomb: number;
+  /** Hydrogen warhead — cracks bunkers, 1/game */
+  bombHydrogen: number;
+  /** Magnetic warhead — kills laser for the round, 2/game */
+  bombMagnetic: number;
   drone: number;
   research: number;
 };
@@ -37,7 +43,7 @@ export type BalanceProfile = {
 export const LEGACY_PROFILE: BalanceProfile = {
   name: 'legacy',
   costs: {
-    nuclearTech: 4,
+    ballisticMissileTech: 4,
     aerospaceTech: 2,
     underground: 6,
     rebuild: 4,
@@ -45,6 +51,8 @@ export const LEGACY_PROFILE: BalanceProfile = {
     laser: 3.5,
     spy: 3,
     bomb: 2,
+    bombHydrogen: 6,
+    bombMagnetic: 4,
     drone: 1,
     research: 2,
   },
@@ -69,7 +77,7 @@ export const LEGACY_PROFILE: BalanceProfile = {
 export const CURRENT_PROFILE: BalanceProfile = {
   name: 'current',
   costs: {
-    nuclearTech: 3,
+    ballisticMissileTech: 3,
     aerospaceTech: 2,
     underground: 6,
     rebuild: 3,
@@ -77,6 +85,8 @@ export const CURRENT_PROFILE: BalanceProfile = {
     laser: 3,
     spy: 3,
     bomb: 2,
+    bombHydrogen: 6,
+    bombMagnetic: 4,
     drone: 1,
     research: 2,
   },

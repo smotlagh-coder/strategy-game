@@ -203,7 +203,8 @@ describe('AI and laser defence', () => {
 
   it('flies into a network it has no eyes on', () => {
     let s = table({
-      us: { drones: LASER_INTERCEPTS_PER_ROUND, hasSpyNetwork: false },
+      // Broke — otherwise buy phase grabs a magnetic and the laser never fires
+      us: { money: 0, drones: LASER_INTERCEPTS_PER_ROUND, hasSpyNetwork: false },
     });
     s = buyLaser(s, s.nations.uk.cities[0].id, 'uk');
     // The network is invisible without a spy service, so the swarms go anyway
@@ -224,12 +225,31 @@ describe('AI and laser defence', () => {
   });
 
   it('spends decoys on the neighbours so the escort reaches a shielded city', () => {
-    let s = table({ us: { drones: LASER_INTERCEPTS_PER_ROUND + 1, bombs: 1 } });
+    let s = table({
+      // Broke so buy phase cannot grab a magnetic and rewrite this decoy case
+      us: { money: 0, drones: LASER_INTERCEPTS_PER_ROUND + 1, bombs: 1 },
+    });
     const target = s.nations.uk.cities[0];
     s = buyShield(s, target.id, 'uk');
     s = buyLaser(s, s.nations.uk.cities[2].id, 'uk');
 
-    s = runAiNationTurn({ ...s, nations: { ...s.nations, us: { ...s.nations.us, isHuman: false } } }, 'us');
+    // Force the warhead onto the shielded city — pickBombTarget prefers open
+    // ground when escorts can suppress, which would skip the decoy path.
+    s = {
+      ...s,
+      nations: {
+        ...s.nations,
+        us: { ...s.nations.us, isHuman: false },
+        uk: {
+          ...s.nations.uk,
+          cities: s.nations.uk.cities.map((c) =>
+            c.id === target.id ? c : { ...c, isUnderground: true },
+          ),
+        },
+      },
+    };
+
+    s = runAiNationTurn(s, 'us');
     const swarms = s.pendingStrikes.filter((p) => p.weapon === 'drone');
     expect(swarms.length).toBe(LASER_INTERCEPTS_PER_ROUND + 1);
     expect(swarms.some((p) => p.cityId === target.id)).toBe(true);
@@ -239,6 +259,30 @@ describe('AI and laser defence', () => {
     expect(shot).toHaveLength(LASER_INTERCEPTS_PER_ROUND);
     expect(shot).not.toContain(target.id);
     expect(s.nations.uk.cities[0].hasShield).toBe(false);
+  });
+
+  it('kills the laser with a magnetic bomb instead of burning decoys', () => {
+    let s = table({
+      us: {
+        money: 0,
+        drones: 1,
+        bombs: 0,
+        magneticBombs: 1,
+        hasSpyNetwork: true,
+      },
+    });
+    const target = s.nations.uk.cities[0];
+    s = buyShield(s, target.id, 'uk');
+    s = buyLaser(s, s.nations.uk.cities[2].id, 'uk');
+
+    s = runAiNationTurn({ ...s, nations: { ...s.nations, us: { ...s.nations.us, isHuman: false } } }, 'us');
+    expect(s.pendingStrikes.some((p) => p.weapon === 'magnetic' && p.targetNationId === 'uk')).toBe(
+      true,
+    );
+    expect(s.nations.uk.laserOfflineThisRound).toBe(true);
+
+    s = resolveAll(s);
+    expect(s.roundEvents.filter((e) => e.kind === 'dronesIntercepted')).toHaveLength(0);
   });
 
   /** An AI that already has its tech, so the budget reaches the defences. */

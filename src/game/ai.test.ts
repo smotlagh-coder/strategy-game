@@ -9,7 +9,7 @@ import {
   runAiNationTurn,
   threatScore,
 } from './ai';
-import type { GameState, NationId, NationState } from '../types';
+import type { City, GameState, NationId, NationState } from '../types';
 
 /** A five seat table where only 'us' is human, with per-nation tweaks. */
 function table(tweaks: Partial<Record<NationId, Partial<NationState>>> = {}): GameState {
@@ -177,6 +177,39 @@ describe('AI purchasing', () => {
     expect(round1.nations.uk.cities.filter((c) => c.hasShield).length).toBe(1);
   });
 
+  it('scatters labs, shields, lasers and bunkers across city seats', () => {
+    // Blind attackers used to lean on cities[0] because every AI stacked there.
+    const seats: NationId[] = ['uk', 'russia', 'china', 'france'];
+    const indices = { research: new Set<number>(), shield: new Set<number>(), laser: new Set<number>(), bunker: new Set<number>() };
+
+    for (const id of seats) {
+      let s = table({
+        // Aerospace + drones on the human so every AI sees a swarm threat and buys a laser
+        us: { hasAerospaceTech: true, drones: 2 },
+        [id]: {
+          isHuman: false,
+          money: 40,
+          hasNuclearTech: true,
+          nuclearTechUnlockedRound: 0,
+        },
+      });
+      s = { ...s, round: 2, currentTurnIndex: s.turnOrder.indexOf(id) };
+      const after = runAiBuyPhase(s);
+      const cities = after.nations[id].cities;
+      cities.forEach((c, i) => {
+        if (c.hasResearch) indices.research.add(i);
+        if (c.hasShield) indices.shield.add(i);
+        if (c.hasLaser) indices.laser.add(i);
+        if (c.isUnderground) indices.bunker.add(i);
+      });
+    }
+
+    expect(indices.research.size).toBeGreaterThan(1);
+    expect(indices.shield.size).toBeGreaterThan(1);
+    expect(indices.laser.size).toBeGreaterThan(1);
+    expect(indices.bunker.size).toBeGreaterThan(1);
+  });
+
   it('arms the same round it unlocks the tech, from round two on', () => {
     let s = table({ uk: { money: 20 } });
     s = { ...s, round: 2, currentTurnIndex: s.turnOrder.indexOf('uk') };
@@ -218,6 +251,106 @@ describe('AI purchasing', () => {
       },
     };
     expect(runAiBuyPhase(s).nations.uk.money).toBeGreaterThanOrEqual(COSTS.rebuild);
+  });
+
+  /** Fully built seat so the buy loop reaches specialty warheads. */
+  function arsenalReady(extra: Partial<NationState> = {}): Partial<NationState> {
+    return {
+      money: 0,
+      hasNuclearTech: true,
+      nuclearTechUnlockedRound: 0,
+      hasSpyNetwork: true,
+      hasAerospaceTech: true,
+      ...extra,
+    };
+  }
+
+  function fortified(state: GameState, id: NationId): City[] {
+    return state.nations[id].cities.map((c, i) => ({
+      ...c,
+      hasResearch: i < 2,
+      hasShield: true,
+    }));
+  }
+
+  it('buys a magnetic bomb when a rival is running a laser network', () => {
+    const base = table({
+      uk: arsenalReady({ money: COSTS.bombMagnetic }),
+    });
+    const s = {
+      ...base,
+      round: 2,
+      currentTurnIndex: base.turnOrder.indexOf('uk'),
+      nations: {
+        ...base.nations,
+        uk: { ...base.nations.uk, cities: fortified(base, 'uk') },
+        us: {
+          ...base.nations.us,
+          cities: base.nations.us.cities.map((c, i) =>
+            i === 0 ? { ...c, hasLaser: true } : c,
+          ),
+        },
+      },
+    };
+    const after = runAiBuyPhase(s);
+    expect(after.nations.uk.magneticBombs).toBe(1);
+  });
+
+  it('buys a hydrogen bomb when a rival has dug in', () => {
+    const base = table({
+      uk: arsenalReady({ money: COSTS.bombHydrogen }),
+    });
+    const s = {
+      ...base,
+      round: 2,
+      currentTurnIndex: base.turnOrder.indexOf('uk'),
+      nations: {
+        ...base.nations,
+        uk: { ...base.nations.uk, cities: fortified(base, 'uk') },
+        russia: {
+          ...base.nations.russia,
+          cities: base.nations.russia.cities.map((c, i) =>
+            i === 0 ? { ...c, isUnderground: true } : c,
+          ),
+        },
+      },
+    };
+    const after = runAiBuyPhase(s);
+    expect(after.nations.uk.hydrogenBombs).toBe(1);
+  });
+
+  it('fires magnetic at the lasered rival and hydrogen at a known bunker', () => {
+    const bunkerId = 'ru-1';
+    let s = table({
+      uk: arsenalReady({
+        money: 0,
+        magneticBombs: 1,
+        hydrogenBombs: 1,
+        bombs: 0,
+      }),
+    });
+    s = {
+      ...s,
+      nations: {
+        ...s.nations,
+        us: {
+          ...s.nations.us,
+          cities: s.nations.us.cities.map((c, i) =>
+            i === 0 ? { ...c, hasLaser: true } : c,
+          ),
+        },
+        russia: {
+          ...s.nations.russia,
+          cities: s.nations.russia.cities.map((c) =>
+            c.id === bunkerId ? { ...c, isUnderground: true } : c,
+          ),
+        },
+      },
+    };
+    s = runAiNationTurn(s, 'uk');
+    const strikes = s.pendingStrikes.filter((p) => p.attackerId === 'uk');
+    expect(strikes.some((p) => p.weapon === 'magnetic' && p.targetNationId === 'us')).toBe(true);
+    expect(strikes.some((p) => p.weapon === 'hydrogen' && p.cityId === bunkerId)).toBe(true);
   });
 });
 

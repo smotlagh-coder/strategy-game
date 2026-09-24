@@ -165,7 +165,7 @@ function planArchetype(s: GameState, id: NationId, kind: Archetype): GameState {
   }
 
   if (kind === 'rusher') {
-    if (!next.nations[id].hasNuclearTech && money() >= COSTS.nuclearTech + COSTS.bomb) {
+    if (!next.nations[id].hasNuclearTech && money() >= COSTS.ballisticMissileTech + COSTS.bomb) {
       next = buyNuclearTech(next, id);
     }
     while (
@@ -218,7 +218,7 @@ function planArchetype(s: GameState, id: NationId, kind: Archetype): GameState {
   if (canBuySpyNetwork(next, id) && next.round >= 2 && money() >= COSTS.spy + COSTS.bomb) {
     next = buySpyNetwork(next, id);
   }
-  if (!next.nations[id].hasNuclearTech && next.round >= 2 && money() >= COSTS.nuclearTech + COSTS.bomb) {
+  if (!next.nations[id].hasNuclearTech && next.round >= 2 && money() >= COSTS.ballisticMissileTech + COSTS.bomb) {
     next = buyNuclearTech(next, id);
   }
   if (next.nations[id].hasNuclearTech && money() >= COSTS.bomb) {

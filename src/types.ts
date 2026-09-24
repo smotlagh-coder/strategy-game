@@ -28,12 +28,20 @@ export type Phase =
   | 'gameOver'
   | 'leaderboard';
 
+/** Ballistic warhead kinds — all require Ballistic Missile Tech */
+export type WarheadKind = 'nuke' | 'hydrogen' | 'magnetic';
+
+export type StrikeWeapon = WarheadKind | 'drone';
+
 export interface PendingStrike {
   attackerId: NationId;
   targetNationId: NationId;
   cityId: string;
-  /** Missing means a nuke — drones were added later and old docs predate the field */
-  weapon?: 'nuke' | 'drone';
+  /**
+   * Missing means a nuclear warhead — drones and specialty bombs were added
+   * later and old docs predate the field.
+   */
+  weapon?: StrikeWeapon;
 }
 
 export interface City {
@@ -55,10 +63,26 @@ export interface NationState {
   id: NationId;
   money: number;
   cities: City[];
+  /** Ballistic Missile Tech — unlocks nuclear / hydrogen / magnetic warheads */
   hasNuclearTech: boolean;
-  /** Round when nuclear tech was unlocked; bombs require a later round */
+  /** Round when Ballistic Missile Tech was unlocked; warheads fire same round */
   nuclearTechUnlockedRound: number | null;
+  /** Nuclear warheads in stock (max 3 bought per round) */
   bombs: number;
+  /** Hydrogen warheads in stock (1 per game) — crack bunkers */
+  hydrogenBombs: number;
+  /** Magnetic warheads in stock (2 per game) — kill laser for the round */
+  magneticBombs: number;
+  /** Lifetime hydrogen purchases (cap MAX_HYDROGEN_PER_GAME) */
+  hydrogenBought: number;
+  /** Lifetime magnetic purchases (cap MAX_MAGNETIC_PER_GAME) */
+  magneticBought: number;
+  /** Hydrogen warheads launched this game (online merge) */
+  hydrogenUsed: number;
+  /** Magnetic warheads launched this game (online merge) */
+  magneticUsed: number;
+  /** A magnetic warhead queued this round shut the laser network down */
+  laserOfflineThisRound?: boolean;
   hasAerospaceTech: boolean;
   /** Round when aerospace tech was unlocked; drones require a later round */
   aerospaceTechUnlockedRound: number | null;
@@ -147,7 +171,7 @@ export interface RoundWorldEvent {
   cityId?: string;
   cityName?: string;
   attackerId?: NationId;
-  /** Drone damage in $M, billed at the next income */
+  /** Drone repair bill, or capital lost when a city / shield is wiped */
   amount?: number;
   /** Rebuild the treasury paid for on its own to keep a wiped-out nation alive */
   automatic?: boolean;

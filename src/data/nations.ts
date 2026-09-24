@@ -187,8 +187,12 @@ import { STARTING_MONEY } from './balance';
 export const MAX_SANCTIONS = 2;
 /** @deprecated Unused — survival is awarded per standing city instead. */
 export const SURVIVAL_POINTS_PER_ROUND = 25;
-/** Max bombs a nation may purchase in a single round */
+/** Max nuclear bombs a nation may purchase in a single round */
 export const MAX_BOMBS_PER_ROUND = 3;
+/** Hydrogen bombs allowed over an entire match */
+export const MAX_HYDROGEN_PER_GAME = 1;
+/** Magnetic bombs allowed over an entire match */
+export const MAX_MAGNETIC_PER_GAME = 2;
 /** Max drone packs a nation may purchase in a single round */
 export const MAX_DRONES_PER_ROUND = 3;
 /**
@@ -237,6 +241,13 @@ export function initialNation(id: NationId): NationState {
     hasNuclearTech: false,
     nuclearTechUnlockedRound: null,
     bombs: 0,
+    hydrogenBombs: 0,
+    magneticBombs: 0,
+    hydrogenBought: 0,
+    magneticBought: 0,
+    hydrogenUsed: 0,
+    magneticUsed: 0,
+    laserOfflineThisRound: false,
     hasAerospaceTech: false,
     hasSpyNetwork: false,
     scoutedCities: [],
