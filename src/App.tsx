@@ -1180,7 +1180,9 @@ function StrikeTheater({
   const [recap, setRecap] = useState<RoundWorldEvent[] | null>(null);
   const cinemaResolveRef = useRef<(() => void) | null>(null);
   const recapResolveRef = useRef<(() => void) | null>(null);
-  const playedRoundRef = useRef<number | null>(null);
+  /** Round whose cinema finished successfully — remounts may retry until then. */
+  const finishedRoundRef = useRef<number | null>(null);
+  const sessionRef = useRef(0);
   const stateRef = useRef(state);
   stateRef.current = state;
 
@@ -1202,14 +1204,19 @@ function StrikeTheater({
   const round = state.round;
   const summaryRound = state.previousRoundNumber;
   const showing = phase === 'roundSummary' || phase === 'gameOver';
+  // Peers often land on summary before the strike report syncs — bump this when
+  // the payload arrives so a timed-out empty wait can start the cinema.
+  const reportKey = `${(state.resolvedStrikes ?? []).length}:${(state.previousRoundEvents ?? []).length}`;
 
   useEffect(() => {
     if (!showing) return;
     if (summaryRound !== round) return;
-    if (playedRoundRef.current === round) return;
+    if (finishedRoundRef.current === round) return;
 
+    const session = ++sessionRef.current;
     let cancelled = false;
     let reportTimer = 0;
+    const alive = () => !cancelled && sessionRef.current === session;
 
     const armClock = () =>
       setState((cur) => {
@@ -1221,6 +1228,17 @@ function StrikeTheater({
         }
         return next;
       });
+
+    const clearTheater = () => {
+      setCinema(null);
+      setRecap(null);
+      const cinemaResolve = cinemaResolveRef.current;
+      cinemaResolveRef.current = null;
+      cinemaResolve?.();
+      const recapResolve = recapResolveRef.current;
+      recapResolveRef.current = null;
+      recapResolve?.();
+    };
 
     const play = async (strikes: PendingStrike[], events: RoundWorldEvent[]) => {
       // Keep a peer that already moved on from cutting our animation short
@@ -1238,7 +1256,7 @@ function StrikeTheater({
 
       try {
         for (const volley of groupStrikesByAttacker(strikes)) {
-          if (cancelled) break;
+          if (!alive()) break;
           const targets: StrikeTarget[] = [];
           for (const strike of volley.strikes) {
             const weapon: StrikeWeapon =
@@ -1284,32 +1302,47 @@ function StrikeTheater({
             });
           }
           await new Promise<void>((resolve) => {
+            if (!alive()) {
+              resolve();
+              return;
+            }
             cinemaResolveRef.current = resolve;
             setCinema({ from: volley.attackerId, targets });
           });
         }
-        if (!cancelled && events.length > 0) {
+        if (alive() && events.length > 0) {
           await new Promise<void>((resolve) => {
+            if (!alive()) {
+              resolve();
+              return;
+            }
             recapResolveRef.current = resolve;
             setRecap(events);
           });
         }
+        if (alive()) {
+          finishedRoundRef.current = round;
+          armClock();
+        }
       } finally {
-        cinemaHoldRef.current = null;
+        if (sessionRef.current === session) cinemaHoldRef.current = null;
       }
-      if (!cancelled) armClock();
     };
 
     /** The strike report can trail the phase change, so wait for it to land. */
     const attempt = (waitedMs: number) => {
-      if (cancelled || playedRoundRef.current === round) return;
+      if (!alive() || finishedRoundRef.current === round) return;
       const strikes = stateRef.current.resolvedStrikes ?? [];
       const events = stateRef.current.previousRoundEvents ?? [];
 
       if (strikes.length === 0 && events.length === 0) {
         // Start the countdown so the summary is never stuck waiting on a peer
         armClock();
-        if (waitedMs >= REPORT_WAIT_MS) return;
+        if (waitedMs >= REPORT_WAIT_MS) {
+          // Peaceful round (or report never came) — don't block forever
+          finishedRoundRef.current = round;
+          return;
+        }
         reportTimer = window.setTimeout(
           () => attempt(waitedMs + REPORT_POLL_MS),
           REPORT_POLL_MS,
@@ -1317,7 +1350,6 @@ function StrikeTheater({
         return;
       }
 
-      playedRoundRef.current = round;
       void play(strikes, events);
     };
     attempt(0);
@@ -1325,13 +1357,12 @@ function StrikeTheater({
     return () => {
       cancelled = true;
       window.clearTimeout(reportTimer);
-      cinemaHoldRef.current = null;
-      setCinema(null);
-      setRecap(null);
-      cinemaResolveRef.current = null;
-      recapResolveRef.current = null;
+      if (sessionRef.current === session) {
+        cinemaHoldRef.current = null;
+        clearTheater();
+      }
     };
-  }, [showing, round, summaryRound, setState, cinemaHoldRef]);
+  }, [showing, round, summaryRound, reportKey, setState, cinemaHoldRef]);
 
   return (
     <>
@@ -1513,6 +1544,8 @@ function NationPod({
   pendingBombCityIds,
   pendingDroneCityIds,
   selectionWeapon = 'nuke',
+  /** Per-city warhead already assigned — keeps badges stable when the picker changes */
+  cityWeapons,
   highlightCityIds,
   highlight,
   revealed = false,
@@ -1531,6 +1564,7 @@ function NationPod({
   pendingDroneCityIds?: string[];
   /** Which weapon the open targeting step is spending */
   selectionWeapon?: WarheadKind | 'drone';
+  cityWeapons?: Partial<Record<string, WarheadKind>>;
   /** Cities to pulse (e.g. destroyed this round) */
   highlightCityIds?: string[];
   highlight?: boolean;
@@ -1587,19 +1621,35 @@ function NationPod({
           const droneLocked = swarmed.has(c.id) && !c.destroyed;
           const droneSelected = Boolean(selected && selectionWeapon === 'drone');
           const justHit = pulsed.has(c.id);
+          const assignedWeapon: WarheadKind | 'drone' =
+            selectionWeapon === 'drone'
+              ? 'drone'
+              : (cityWeapons?.[c.id] ?? (selected ? selectionWeapon : 'nuke'));
           // A warhead has nothing to hit in a bunker city; drones still bill it
           const bombProof = Boolean(
             c.isUnderground &&
               selectionWeapon !== 'drone' &&
-              selectionWeapon !== 'hydrogen',
+              selectionWeapon !== 'hydrogen' &&
+              // Already-tagged hydrogen stays legal even if the picker moved on
+              !(selected && cityWeapons?.[c.id] === 'hydrogen'),
           );
-          const canTarget = Boolean(targetable && !c.destroyed && !hitThisRound && !bombProof);
+          const canTarget = Boolean(
+            targetable && !c.destroyed && !hitThisRound && (!bombProof || selected),
+          );
           const className = `city-tile ${c.destroyed ? 'is-destroyed' : ''} ${c.hasShield ? 'has-shield' : ''} ${c.hasResearch ? 'has-research' : ''} ${selected ? 'is-selected' : ''} ${canTarget ? 'is-targetable' : ''} ${hitThisRound && !c.destroyed && !bombLocked ? 'is-hit-this-round' : ''} ${bombLocked ? 'is-bomb-locked' : ''} ${droneLocked || droneSelected ? 'is-drone-locked' : ''} ${c.isUnderground && !c.destroyed ? 'is-underground' : ''} ${c.hasLaser && !c.destroyed ? 'has-laser' : ''} ${c.rebuiltRound != null && !c.destroyed ? 'is-rebuilt' : ''} ${justHit ? 'is-just-hit' : ''}`;
           const unknown = !open && !c.destroyed;
+          const weaponLabel =
+            assignedWeapon === 'hydrogen'
+              ? 'hydrogen'
+              : assignedWeapon === 'magnetic'
+                ? 'magnetic'
+                : assignedWeapon === 'drone'
+                  ? 'drones'
+                  : 'nuclear';
           const title = unknown
             ? `${c.name} — defences unknown: spy them, or send a swarm over`
             : c.isUnderground && !c.destroyed
-            ? selectionWeapon === 'hydrogen'
+            ? selectionWeapon === 'hydrogen' || cityWeapons?.[c.id] === 'hydrogen'
               ? `${c.name} — underground city, hydrogen can crack it`
               : `${c.name} — underground city, cannot be destroyed`
             : bombLocked
@@ -1607,7 +1657,7 @@ function NationPod({
             : droneLocked
               ? `${c.name} — drone swarm inbound`
               : selected
-                ? `${c.name} — selected for ${selectionWeapon === 'drone' ? 'drones' : 'bombing'}`
+                ? `${c.name} — selected for ${weaponLabel}`
                 : `${c.name} — ${cityStatusLabel(c)}`;
           const body = (
             <>
@@ -1640,13 +1690,19 @@ function NationPod({
                   className={`city-tile__bomb-lock ${
                     selected && selectionWeapon !== 'drone' && !bombLocked ? 'is-pending' : ''
                   }`}
-                  title={bombLocked ? 'Targeted for bombing' : 'Selected for bombing'}
-                  aria-label={bombLocked ? 'Targeted for bombing' : 'Selected for bombing'}
+                  title={
+                    bombLocked
+                      ? `Targeted — ${weaponLabel}`
+                      : `Selected — ${weaponLabel}`
+                  }
+                  aria-label={
+                    bombLocked
+                      ? `Targeted for ${weaponLabel}`
+                      : `Selected for ${weaponLabel}`
+                  }
                 >
                   <img
-                    src={
-                      selectionWeapon === 'drone' ? ART.missile : craftArt(selectionWeapon)
-                    }
+                    src={craftArt(assignedWeapon === 'drone' ? 'nuke' : assignedWeapon)}
                     alt=""
                     draggable={false}
                   />
@@ -2602,6 +2658,12 @@ function GameBoard({
   const selectedCityIds = droneSelectMode
     ? droneTargets.map((t) => t.cityId)
     : targets.map((t) => t.cityId);
+  const cityWeapons: Partial<Record<string, WarheadKind>> = {};
+  for (const t of targets) cityWeapons[t.cityId] = t.weapon;
+  for (const s of state.pendingStrikes) {
+    if (s.attackerId !== actorId || s.weapon === 'drone' || !s.weapon) continue;
+    cityWeapons[s.cityId] = s.weapon;
+  }
   // Fog of war: only show your own locked targets until simultaneous resolve
   const myStrikes = state.pendingStrikes.filter((s) => s.attackerId === actorId);
   const pendingBombCityIds = [
@@ -2638,7 +2700,7 @@ function GameBoard({
               state={state}
               nationId={actorId}
               money={turn.money}
-              bombs={turn.bombs}
+              bombs={totalWarheads(turn)}
               drones={turn.drones}
               idleSecondsLeft={isOnline ? idleSecondsLeft : null}
             />
@@ -2769,47 +2831,49 @@ function GameBoard({
 
             {wizardStep === 'bombs' && (
               <>
-                <h3 className="turn-wizard__q">Arm your ballistic warheads</h3>
+                <h3 className="turn-wizard__q">Arm your warheads</h3>
                 <p className="turn-wizard__hint">
-                  All three need Ballistic Missile Tech. Nuclear bombs refresh every
-                  round; hydrogen and magnetic are limited for the whole match.
+                  Nuclear refreshes each round. Hydrogen cracks bunkers (1/game). Magnetic
+                  kills lasers (2/game).
                 </p>
                 <div className="arsenal-buy">
                   <div className="arsenal-buy__row">
-                    <div>
-                      <strong>Nuclear</strong>
-                      <span>
-                        {COSTS.bomb}M · max {MAX_BOMBS_PER_ROUND}/round · stock {turn.bombs}
-                      </span>
-                    </div>
-                    <div className="turn-wizard__actions turn-wizard__actions--wrap">
-                      {[0, 1, 2, 3].map((n) => (
-                        <button
-                          key={n}
-                          className="btn btn--xl btn--primary"
-                          disabled={n > bombMax}
-                          onClick={() => {
-                            if (n === 0) return;
-                            pushFx({ kind: 'buy', label: `+${n} Nuclear` }, 700);
-                            setState(buyBombs(stateRef.current, n, actorId));
-                          }}
-                        >
-                          {n === 0 ? '0' : `+${n}`}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="arsenal-buy__row">
-                    <div>
-                      <strong>Hydrogen</strong>
-                      <span>
-                        {COSTS.bombHydrogen}M · cracks bunkers ·{' '}
-                        {MAX_HYDROGEN_PER_GAME - (turn.hydrogenBought ?? 0)}/{MAX_HYDROGEN_PER_GAME}{' '}
-                        left this game · stock {turn.hydrogenBombs ?? 0}
-                      </span>
+                    <div className="arsenal-buy__meta">
+                      <img src={ART.missile} alt="" draggable={false} />
+                      <div>
+                        <strong>Nuclear</strong>
+                        <span>
+                          {COSTS.bomb}M each · {turn.bombs}/{MAX_BOMBS_PER_ROUND} stock this round
+                        </span>
+                      </div>
                     </div>
                     <button
-                      className="btn btn--xl btn--primary"
+                      type="button"
+                      className="btn btn--primary arsenal-buy__add"
+                      disabled={bombMax < 1}
+                      onClick={() => {
+                        pushFx({ kind: 'buy', label: '+1 Nuclear' }, 700);
+                        setState(buyBombs(stateRef.current, 1, actorId));
+                      }}
+                    >
+                      +1
+                    </button>
+                  </div>
+                  <div className="arsenal-buy__row">
+                    <div className="arsenal-buy__meta">
+                      <img src={ART.missileHydrogen} alt="" draggable={false} />
+                      <div>
+                        <strong>Hydrogen</strong>
+                        <span>
+                          {COSTS.bombHydrogen}M · bunkers ·{' '}
+                          {MAX_HYDROGEN_PER_GAME - (turn.hydrogenBought ?? 0)} left · stock{' '}
+                          {turn.hydrogenBombs ?? 0}
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn--primary arsenal-buy__add"
                       disabled={hydrogenMax < 1}
                       onClick={() => {
                         pushFx({ kind: 'buy', label: '+1 Hydrogen' }, 700);
@@ -2820,16 +2884,20 @@ function GameBoard({
                     </button>
                   </div>
                   <div className="arsenal-buy__row">
-                    <div>
-                      <strong>Magnetic</strong>
-                      <span>
-                        {COSTS.bombMagnetic}M · kills lasers this round ·{' '}
-                        {MAX_MAGNETIC_PER_GAME - (turn.magneticBought ?? 0)}/{MAX_MAGNETIC_PER_GAME}{' '}
-                        left this game · stock {turn.magneticBombs ?? 0}
-                      </span>
+                    <div className="arsenal-buy__meta">
+                      <img src={ART.missileMagnetic} alt="" draggable={false} />
+                      <div>
+                        <strong>Magnetic</strong>
+                        <span>
+                          {COSTS.bombMagnetic}M · kills lasers ·{' '}
+                          {MAX_MAGNETIC_PER_GAME - (turn.magneticBought ?? 0)} left · stock{' '}
+                          {turn.magneticBombs ?? 0}
+                        </span>
+                      </div>
                     </div>
                     <button
-                      className="btn btn--xl btn--primary"
+                      type="button"
+                      className="btn btn--primary arsenal-buy__add"
                       disabled={magneticMax < 1}
                       onClick={() => {
                         pushFx({ kind: 'buy', label: '+1 Magnetic' }, 700);
@@ -3281,21 +3349,27 @@ function GameBoard({
             <div className="warhead-picker" role="group" aria-label="Warhead type">
               {(
                 [
-                  ['nuke', 'Nuclear', turn.bombs],
-                  ['hydrogen', 'Hydrogen', turn.hydrogenBombs ?? 0],
-                  ['magnetic', 'Magnetic', turn.magneticBombs ?? 0],
+                  ['nuke', 'Nuclear', turn.bombs, ART.missile],
+                  ['hydrogen', 'Hydrogen', turn.hydrogenBombs ?? 0, ART.missileHydrogen],
+                  ['magnetic', 'Magnetic', turn.magneticBombs ?? 0, ART.missileMagnetic],
                 ] as const
-              ).map(([kind, label, stock]) => {
+              ).map(([kind, label, stock, art]) => {
                 const used = targets.filter((t) => t.weapon === kind).length;
                 return (
                   <button
                     key={kind}
                     type="button"
-                    className={`btn${strikeWeapon === kind ? ' btn--primary' : ''}`}
+                    className={`btn warhead-picker__btn${strikeWeapon === kind ? ' btn--primary' : ''}`}
                     disabled={stock < 1}
                     onClick={() => setStrikeWeapon(kind)}
                   >
-                    {label} · {used}/{stock}
+                    <img src={art} alt="" draggable={false} />
+                    <span>
+                      {label}
+                      <small>
+                        {used}/{stock}
+                      </small>
+                    </span>
                   </button>
                 );
               })}
@@ -3555,6 +3629,7 @@ function GameBoard({
                 pendingBombCityIds={pendingBombCityIds}
                 pendingDroneCityIds={pendingDroneCityIds}
                 selectionWeapon={droneSelectMode ? 'drone' : strikeWeapon}
+                cityWeapons={cityWeapons}
                 highlight={id === actorId}
                 onSelectCity={strikeSelectMode ? onSelectCity : undefined}
               />

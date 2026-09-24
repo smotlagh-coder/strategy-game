@@ -60,6 +60,28 @@ describe('warhead arsenal', () => {
     expect(MAX_MAGNETIC_PER_GAME).toBe(2);
   });
 
+  it('lets a magnetic bomb destroy an open city on its own', () => {
+    let s = table({
+      us: { magneticBombs: 1, bombs: 0, hasSpyNetwork: true },
+    });
+    const city = s.nations.uk.cities[0];
+    s = queueStrike(s, 'uk', city.id, 'us', 'magnetic');
+    expect(s.pendingStrikes[0]?.weapon).toBe('magnetic');
+    s = applyQueuedStrike(s, s.pendingStrikes[0]);
+    expect(s.nations.uk.cities[0].destroyed).toBe(true);
+  });
+
+  it('lets a hydrogen bomb destroy an open city on its own', () => {
+    let s = table({
+      us: { hydrogenBombs: 1, bombs: 0, hasSpyNetwork: true },
+    });
+    const city = s.nations.uk.cities[1];
+    s = queueStrike(s, 'uk', city.id, 'us', 'hydrogen');
+    expect(s.pendingStrikes[0]?.weapon).toBe('hydrogen');
+    s = applyQueuedStrike(s, s.pendingStrikes[0]);
+    expect(s.nations.uk.cities[1].destroyed).toBe(true);
+  });
+
   it('lets a hydrogen bomb destroy a bunker city', () => {
     let s = table({
       us: { hydrogenBombs: 1, bombs: 0, hasSpyNetwork: true },

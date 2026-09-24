@@ -1626,13 +1626,23 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
   const defender = state.nations[strike.targetNationId];
   if (attacker.eliminated || defender.eliminated) return state;
 
-  const city = defender.cities.find((c) => c.id === strike.cityId);
-  if (city && !city.destroyed && strike.weapon === 'drone') {
-    return applyDroneStrike(state, strike, city);
+  // Normalize legacy / stripped payloads so specialty warheads cannot fall back
+  // to a plain nuke (which would bounce off bunkers).
+  const weapon: StrikeWeapon =
+    strike.weapon === 'drone' ||
+    strike.weapon === 'hydrogen' ||
+    strike.weapon === 'magnetic'
+      ? strike.weapon
+      : 'nuke';
+  const strikeNorm = weapon === strike.weapon ? strike : { ...strike, weapon };
+
+  const city = defender.cities.find((c) => c.id === strikeNorm.cityId);
+  if (city && !city.destroyed && weapon === 'drone') {
+    return applyDroneStrike(state, strikeNorm, city);
   }
 
-  const hydrogen = strike.weapon === 'hydrogen';
-  const magnetic = strike.weapon === 'magnetic';
+  const hydrogen = weapon === 'hydrogen';
+  const magnetic = weapon === 'magnetic';
   const warheadName = hydrogen ? 'hydrogen bomb' : magnetic ? 'magnetic bomb' : 'warhead';
 
   // A player can bunker a city in the same round a warhead was aimed at it —
