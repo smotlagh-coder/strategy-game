@@ -14,6 +14,11 @@ import {
   RESEARCH_INCOME,
   TABLE_SIZE,
   SANCTION_PENALTY,
+  MAX_SANCTION_CUT,
+  SCORE_BUNKER,
+  SCORE_CITY,
+  SCORE_RESEARCH,
+  SCORE_SHIELD,
   SURVIVAL_POINTS_PER_CITY,
   initialNation,
   nationDef,
@@ -327,7 +332,11 @@ export function computeScore(state: GameState, id: NationId): RoundScore {
   const survivalPoints = n.citySurvivalPoints;
   const liveTotal = Math.max(
     0,
-    cities * 30 + research * 12 + shields * 8 + bunkers * 16 + survivalPoints,
+    cities * SCORE_CITY +
+      research * SCORE_RESEARCH +
+      shields * SCORE_SHIELD +
+      bunkers * SCORE_BUNKER +
+      survivalPoints,
   );
   // Eliminated nations keep their frozen score from when they fell
   const total =
@@ -610,7 +619,7 @@ export function startGame(state: GameState): GameState {
     round: 1,
     log: [
       log(
-        'Round 1 begins. Spend your starting funds — city income starts in round 2 ($1.5M per standing city).',
+        'Round 1 begins. Spend your starting funds — city income starts in round 2 ($1.75M per standing city).',
         'neutral',
       ),
     ],
@@ -645,7 +654,7 @@ export function applyIncome(state: GameState): GameState {
     const sanctioners = state.turnOrder.filter(
       (other) => other !== id && !nations[other].eliminated && nations[other].sanctions.includes(id),
     );
-    const sanctionPenalty = Math.min(0.9, sanctioners.length * SANCTION_PENALTY);
+    const sanctionPenalty = Math.min(MAX_SANCTION_CUT, sanctioners.length * SANCTION_PENALTY);
     const revenue = +(gross * (1 - sanctionPenalty)).toFixed(2);
 
     if (n.incomeRound === state.round) {

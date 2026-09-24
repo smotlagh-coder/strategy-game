@@ -1,4 +1,4 @@
-import { COSTS, DRONE_DAMAGE, MAX_ROUNDS, MAX_SANCTIONS, nationDef } from '../data/nations';
+import { COSTS, DRONE_DAMAGE, MAX_ROUNDS, MAX_SANCTIONS, RESEARCH_INCOME, nationDef } from '../data/nations';
 import { allScores, canBuyBombs, canBuyDrones, formatMoney, whoIsSanctioning } from './engine';
 import type { GameState, NationId, RoundScore, RoundWorldEvent } from '../types';
 
@@ -264,7 +264,7 @@ function findWeakness(
       )}) or a rebuild (${cash(COSTS.rebuild)}).`,
       advice:
         assets.labs < assets.standing && money >= COSTS.research
-          ? `A research centre is ${cash(COSTS.research)} and pays ${cash(1.5)} every round after — the only buy that fixes this.`
+          ? `A research centre is ${cash(COSTS.research)} and pays ${cash(RESEARCH_INCOME)} every round after — the only buy that fixes this.`
           : `Spend nothing and let the income stack; you cannot defend or attack from here.`,
     };
   }
@@ -311,7 +311,7 @@ function findWeakness(
         sanctionPenalty * 100,
       )}% off everything you earn, ${cash(gross - income)} gone this round.`,
       advice: `A sanction list is a target list: they are squeezing you because they mean to shoot at you. Cover your cities, and a research centre still nets ${cash(
-        1.5 * (1 - sanctionPenalty),
+        RESEARCH_INCOME * (1 - sanctionPenalty),
       )} a round through the squeeze.`,
     };
   }

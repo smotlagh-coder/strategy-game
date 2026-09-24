@@ -133,14 +133,23 @@ describe('attacking blind', () => {
   });
 
   it('aims at a shielded city it cannot see is shielded', () => {
-    let s = table({ us: { drones: 0 } });
-    const [shielded, open] = s.nations.uk.cities;
+    let s = table({
+      us: { drones: 0 },
+      // Clear top threat so the warhead lands on this board, not a peer city
+      uk: { money: 40, bombs: 3, hasNuclearTech: true, nuclearTechUnlockedRound: 0 },
+    });
+    const [shielded] = s.nations.uk.cities;
     s = buyShield(s, shielded.id, 'uk');
 
-    // Blind, the first city looks as good as any other
-    expect(pickBombTarget(s, 'us')?.cityId).toBe(shielded.id);
+    // Blind, every UK city looks the same — any of them is a fair pick
+    const blind = pickBombTarget(s, 'us');
+    expect(blind?.nationId).toBe('uk');
+    expect(s.nations.uk.cities.map((c) => c.id)).toContain(blind!.cityId);
     // With eyes on it, the warhead goes where it will actually land
-    expect(pickBombTarget(buySpyNetwork(s, 'us'), 'us')?.cityId).toBe(open.id);
+    const eyed = pickBombTarget(buySpyNetwork(s, 'us'), 'us');
+    expect(eyed?.nationId).toBe('uk');
+    expect(eyed?.cityId).not.toBe(shielded.id);
+    expect(s.nations.uk.cities.find((c) => c.id === eyed?.cityId)?.hasShield).toBe(false);
   });
 });
 

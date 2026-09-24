@@ -1,4 +1,11 @@
-import { COSTS, MAX_BOMBS_PER_ROUND, SURVIVAL_POINTS_PER_CITY } from '../data/nations';
+import {
+  COSTS,
+  MAX_BOMBS_PER_ROUND,
+  RESEARCH_INCOME,
+  SCORE_CITY,
+  SCORE_RESEARCH,
+  SURVIVAL_POINTS_PER_CITY,
+} from '../data/nations';
 import {
   aliveNations,
   allAliveHumansReady,
@@ -42,6 +49,39 @@ const GRUDGE = 30;
 const SWAP_MARGIN = 20;
 
 /**
+ * Stable 0..n-1 pick from a string seed. Blind AIs use this so each nation
+ * fans out across cities instead of every seat dumping on cities[0].
+ */
+function hashPick(seed: string, n: number): number {
+  if (n <= 1) return 0;
+  let h = 2166136261;
+  for (let i = 0; i < seed.length; i += 1) {
+    h ^= seed.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0) % n;
+}
+
+/** Highest-scoring items; ties broken by seed so different attackers diverge. */
+function pickBest<T>(items: T[], score: (item: T) => number, seed: string): T | null {
+  if (items.length === 0) return null;
+  let best = -Infinity;
+  for (const item of items) best = Math.max(best, score(item));
+  const tied = items.filter((item) => score(item) === best);
+  return tied[hashPick(seed, tied.length)];
+}
+
+/** Seeded shuffle — used when blind so rival order is not identical for every AI. */
+function seededOrder<T>(items: T[], seed: string): T[] {
+  const out = [...items];
+  for (let i = out.length - 1; i > 0; i -= 1) {
+    const j = hashPick(`${seed}:${i}`, i + 1);
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+/**
  * How dangerous a rival looks at the *end* of the match, not today: the score
  * they already hold, the survival points their cities will keep banking, the
  * research paying for it, and the arsenal pointed back at us.
@@ -51,11 +91,13 @@ export function threatScore(state: GameState, id: NationId): number {
   if (n.eliminated) return -1;
   const cities = citiesLeft(state, id);
   const roundsLeft = Math.max(0, state.maxRounds - state.round);
-  const arsenal = (n.hasNuclearTech ? 8 : 0) + n.bombs * 12 + n.drones * 3;
+  // A live warhead is a standing city about to leave the board
+  const arsenal =
+    (n.hasNuclearTech ? COSTS.nuclearTech : 0) + n.bombs * SCORE_CITY + n.drones * (SCORE_CITY / 4);
   return (
     computeScore(state, id).total +
     cities * SURVIVAL_POINTS_PER_CITY * roundsLeft +
-    researchCount(state, id) * 8 +
+    researchCount(state, id) * (SCORE_RESEARCH + RESEARCH_INCOME * roundsLeft) +
     arsenal
   );
 }
@@ -88,7 +130,9 @@ function weighRivals(
       // Taking a rival's last city puts them out of the running entirely,
       // unless their treasury can pay for the automatic rebuild.
       const finishable =
-        citiesLeft(state, id) === 1 && state.nations[id].money < COSTS.rebuild ? 120 : 0;
+        citiesLeft(state, id) === 1 && state.nations[id].money < COSTS.rebuild
+          ? SCORE_CITY * 3
+          : 0;
       // Sanctions are a declaration: a rival squeezing our income has already
       // picked a fight, and answering it is cheaper than bleeding all match.
       const grudge = state.nations[id].sanctions.includes(attackerId) ? GRUDGE : 0;
@@ -108,29 +152,51 @@ export function pickBombTarget(
 ): { nationId: NationId; cityId: string } | null {
   const alreadyHit = new Set(state.nations[attackerId].citiesStruckThisRound);
   const escorts = freeDrones(state, attackerId);
-  const rivals = rankedRivals(state, attackerId);
+  const weighed = weighRivals(state, attackerId);
+  const blind = !state.nations[attackerId].hasSpyNetwork;
 
   const eligible = (c: City) => !c.destroyed && !c.isUnderground && !alreadyHit.has(c.id);
-  // A research city is worth 12 pts and $1.5M a round on top of the city itself
+  // Research is recurring income + end score; a bare city is still the clean kill
   const worth = (c: City) => (c.hasResearch ? 2 : 0) + (c.hasShield ? 0 : 1);
 
-  // A warhead only pays for itself if the city actually falls: unshielded, or
-  // shielded with a swarm free to tie the shield up. Against a laser network
-  // the escort has to survive first, so we need more swarms in hand than the
-  // network has shots left this round.
-  for (const rival of rivals) {
+  const killableOn = (rival: NationId) => {
     const suppressible = escorts > laserShotsKnownTo(state, attackerId, rival);
-    const killable = seenCities(state, attackerId, rival)
-      .filter((c) => eligible(c) && (!c.hasShield || suppressible))
-      .sort((a, b) => worth(b) - worth(a));
-    if (killable.length > 0) return { nationId: rival, cityId: killable[0].id };
+    return seenCities(state, attackerId, rival).filter(
+      (c) => eligible(c) && (!c.hasShield || suppressible),
+    );
+  };
+
+  // Blind, every capital looks the same and every AI used to dump on cities[0]
+  // of the top threat. Near-peer rivals are shuffled per attacker so the table
+  // fans out; city ties break on a seed too.
+  const topWeight = weighed[0]?.weight ?? 0;
+  const rivalQueue = blind
+    ? seededOrder(
+        weighed.filter((r) => r.weight >= topWeight - 40),
+        `${attackerId}:${state.round}:rivals`,
+      )
+    : weighed;
+
+  for (const rival of rivalQueue) {
+    const pick = pickBest(
+      killableOn(rival.id),
+      worth,
+      `${attackerId}:${state.round}:nuke:${rival.id}`,
+    );
+    if (pick) return { nationId: rival.id, cityId: pick.id };
   }
-  // Nothing dies this round — strip the leader's shield so it dies next round
-  for (const rival of rivals) {
-    const shielded = seenCities(state, attackerId, rival).find(
+
+  // Nothing dies this round — strip a shield so it dies next round
+  for (const rival of rivalQueue) {
+    const shielded = seenCities(state, attackerId, rival.id).filter(
       (c) => eligible(c) && c.hasShield,
     );
-    if (shielded) return { nationId: rival, cityId: shielded.id };
+    const pick = pickBest(
+      shielded,
+      () => 1,
+      `${attackerId}:${state.round}:strip:${rival.id}`,
+    );
+    if (pick) return { nationId: rival.id, cityId: pick.id };
   }
   return null;
 }
@@ -141,10 +207,8 @@ export function pickDroneTarget(
   attackerId: NationId,
 ): { nationId: NationId; cityId: string } | null {
   const swarmed = new Set(state.nations[attackerId].citiesDronedThisRound);
-  const rivals = aliveNations(state)
-    .filter((id) => id !== attackerId && citiesLeft(state, id) > 0)
-    .map((id) => ({ id, score: computeScore(state, id).total }))
-    .sort((a, b) => b.score - a.score);
+  const weighed = weighRivals(state, attackerId);
+  const blind = !state.nations[attackerId].hasSpyNetwork;
 
   // A shield or bunker halves the bill, so undefended cities are worth more —
   // unless a warhead is already inbound, where the swarm ties up the shield.
@@ -153,34 +217,42 @@ export function pickDroneTarget(
       .filter((s) => s.attackerId === attackerId && s.weapon !== 'drone')
       .map((s) => `${s.targetNationId}:${s.cityId}`),
   );
-  const blind = !state.nations[attackerId].hasSpyNetwork;
   const value = (rivalId: NationId, city: City) => {
     if (nuking.has(`${rivalId}:${city.id}`)) return 3;
     // Blind, a swarm is also a scout: the city it flies over is readable for
     // the rest of the war, which is worth more than a marginal repair bill.
     if (blind && !seesCity(state, attackerId, rivalId, city.id)) return 2.5;
     if (!city.hasShield && !city.isUnderground) return 2;
+    if (city.hasResearch) return 1.5;
     return 1;
   };
 
   const swarmsInHand = freeDrones(state, attackerId);
-  for (const rival of rivals) {
+  const topWeight = weighed[0]?.weight ?? 0;
+  const rivalQueue = blind
+    ? seededOrder(
+        weighed.filter((r) => r.weight >= topWeight - 40),
+        `${attackerId}:${state.round}:drone-rivals`,
+      )
+    : weighed;
+
+  for (const rival of rivalQueue) {
     // A network with shots left burns swarms for nothing. Only send them at a
     // covered nation when there are enough to saturate it, or when a warhead
     // is already inbound and the escort has to get through.
     const shots = laserShotsKnownTo(state, attackerId, rival.id);
     const saturating = swarmsInHand > shots;
-    if (shots > 0 && !saturating) continue;
+    const needsEscort = [...nuking].some((key) => key.startsWith(`${rival.id}:`));
+    if (shots > 0 && !saturating && !needsEscort) continue;
     const cities = seenCities(state, attackerId, rival.id).filter(
       (c) => !c.destroyed && !swarmed.has(c.id),
     );
-    const best = [...cities].sort(
-      (a, b) =>
-        value(rival.id, b) - value(rival.id, a) ||
-        Number(b.hasResearch) - Number(a.hasResearch) ||
-        cities.indexOf(a) - cities.indexOf(b),
-    )[0];
-    if (best) return { nationId: rival.id, cityId: best.id };
+    const pick = pickBest(
+      cities,
+      (c) => value(rival.id, c),
+      `${attackerId}:${state.round}:drone:${rival.id}`,
+    );
+    if (pick) return { nationId: rival.id, cityId: pick.id };
   }
   return null;
 }
@@ -237,7 +309,7 @@ export function runAiBuyPhase(state: GameState): GameState {
   const worthArming = () => s.round > 1 && openTargets(s, id).length > 0;
   const budget = () => Math.max(0, spare() - (worthArming() ? strikeCost() : 0));
 
-  // Rubble scores nothing: a rebuilt city is 30 pts back plus survival points
+  // Rubble scores nothing: a rebuilt city is SCORE_CITY back plus survival points
   if (canBuyRebuild(s, id) && spare() >= COSTS.rebuild) {
     const rubble = me().cities.find((c) => c.destroyed);
     if (rubble) s = buyRebuild(s, rubble.id, id);
@@ -247,9 +319,8 @@ export function runAiBuyPhase(state: GameState): GameState {
     s = buyNuclearTech(s, id);
   }
 
-  // Two centres is the sweet spot: the third costs a shield's worth of cash and
-  // paints the city as the juiciest target on the board. Only one site a round,
-  // so the second centre waits for next round's budget like everyone else's.
+  // One centre pays for itself in two rounds at the live research income; a
+  // second is still good value, a third paints a bullseye. One site a round.
   if (researchCount(s, id) < 2 && canBuyResearch(s, id) && budget() >= COSTS.research) {
     const spot = me().cities.find((c) => !c.destroyed && !c.hasResearch);
     if (spot) s = buyResearch(s, spot.id, id);

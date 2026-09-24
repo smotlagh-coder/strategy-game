@@ -56,7 +56,7 @@ describe('drone economy', () => {
   it('prices packs at $1M and the tech at $2M', () => {
     expect(COSTS.drone).toBe(1);
     expect(COSTS.aerospaceTech).toBe(2);
-    expect(DRONE_DAMAGE).toBe(1.5);
+    expect(DRONE_DAMAGE).toBe(2);
   });
 
   it('lets packs fly the same round Aerospace Tech is bought', () => {

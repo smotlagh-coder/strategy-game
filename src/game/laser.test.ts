@@ -64,8 +64,8 @@ function resolveAll(state: GameState): GameState {
 }
 
 describe('laser defence', () => {
-  it('costs $3.5M and needs Aerospace Tech first', () => {
-    expect(COSTS.laser).toBe(3.5);
+  it('costs $3M and needs Aerospace Tech first', () => {
+    expect(COSTS.laser).toBe(3);
 
     const noTech = table({ uk: { hasAerospaceTech: false, aerospaceTechUnlockedRound: null } });
     expect(canBuyLaser(noTech, 'uk')).toBe(false);

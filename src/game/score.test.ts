@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { SCORE_BUNKER } from '../data/nations';
 import {
   bunkersLeft,
   computeScore,
@@ -37,8 +38,7 @@ describe('computeScore', () => {
     expect(bunkersLeft(dug, 'us')).toBe(1);
     const scored = computeScore(dug, 'us');
     expect(scored.bunkers).toBe(1);
-    // One bunker is worth twice a shield (16 pts) — the dig costs twice as much
-    expect(scored.total).toBe(open.total + 16);
+    expect(scored.total).toBe(open.total + SCORE_BUNKER);
   });
 
   it('stops counting a bunker once the city is rubble', () => {

@@ -136,6 +136,25 @@ describe('AI target selection', () => {
     expect(nuke).toBeDefined();
     expect(strikes.some((p) => p.weapon === 'drone' && p.cityId === nuke!.cityId)).toBe(true);
   });
+
+  it('fans blind attackers across cities instead of always dumping on the first', () => {
+    // One clear leader; every AI fires blind at that board. Equal-worth cities
+    // must not all resolve to cities[0] the way the old sort did.
+    const attackers: NationId[] = ['uk', 'russia', 'china', 'france'];
+    const s = table({
+      us: { money: 40, bombs: 4, hasNuclearTech: true, nuclearTechUnlockedRound: 0 },
+      ...Object.fromEntries(
+        attackers.map((id) => [id, armed({ hasSpyNetwork: false })]),
+      ),
+    });
+    const cityIds = new Set(
+      attackers
+        .map((id) => pickBombTarget(s, id))
+        .filter((t): t is { nationId: NationId; cityId: string } => t?.nationId === 'us')
+        .map((t) => t.cityId),
+    );
+    expect(cityIds.size).toBeGreaterThan(1);
+  });
 });
 
 describe('AI purchasing', () => {

@@ -159,39 +159,34 @@ export const NATIONS: NationDef[] = [
 /** Nations seated in a single match — the rest of the roster sits it out. */
 export const TABLE_SIZE = 5;
 
-export const COSTS = {
-  nuclearTech: 4,
-  aerospaceTech: 2,
-  underground: 6,
-  rebuild: 4,
-  shield: 3,
-  laser: 3.5,
-  spy: 3,
-  bomb: 2,
-  drone: 1,
-  research: 2,
-} as const;
+export {
+  COSTS,
+  STARTING_MONEY,
+  INCOME_PER_CITY,
+  RESEARCH_INCOME,
+  SANCTION_PENALTY,
+  MAX_SANCTION_CUT,
+  SURVIVAL_POINTS_PER_CITY,
+  DRONE_DAMAGE,
+  SCORE_CITY,
+  SCORE_RESEARCH,
+  SCORE_SHIELD,
+  SCORE_BUNKER,
+  applyBalanceProfile,
+  CURRENT_PROFILE,
+  LEGACY_PROFILE,
+  PROPOSED_PROFILE,
+} from './balance';
+import { STARTING_MONEY } from './balance';
 
-export const STARTING_MONEY = 14;
-/**
- * Income per standing city each round (from round 2). Three cities pay $4.5M
- * before research and sanctions — losing a city cuts the treasury, not just
- * the scoreboard.
- */
-export const INCOME_PER_CITY = 1.5;
-export const RESEARCH_INCOME = 1.5;
-/** Each sanction cuts the target's total revenue by this fraction */
-export const SANCTION_PENALTY = 0.1;
 /**
  * Sanctions one nation may run at once. Unlimited free sanctions meant
  * everyone sanctioned everyone and the choice said nothing; at two, naming a
  * target is a public statement about who you intend to go after.
  */
 export const MAX_SANCTIONS = 2;
-/** Points awarded each time a nation survives a completed round */
+/** @deprecated Unused — survival is awarded per standing city instead. */
 export const SURVIVAL_POINTS_PER_ROUND = 25;
-/** Points per standing city when a nation survives a round */
-export const SURVIVAL_POINTS_PER_CITY = 10;
 /** Max bombs a nation may purchase in a single round */
 export const MAX_BOMBS_PER_ROUND = 3;
 /** Max drone packs a nation may purchase in a single round */
@@ -211,8 +206,6 @@ export const MAX_RESEARCH_PER_ROUND = 1;
  * rival has to overwhelm.
  */
 export const LASER_INTERCEPTS_PER_ROUND = 2;
-/** Repair bill a drone pack inflicts on the city it swarms */
-export const DRONE_DAMAGE = 1.5;
 export const MAX_ROUNDS = 5;
 /**
  * Extra rounds a deadlocked final round can buy. Two nations with untouchable
