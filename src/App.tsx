@@ -3651,8 +3651,19 @@ function GameOver({
 
   return (
     <div className="screen screen--board screen--round-report screen--game-over">
-      <MapBackdrop />
-      <div className="splash-veil splash-veil--fire" />
+      {state.winner ? (
+        <div
+          className="flag-backdrop"
+          style={{
+            ['--flag-color' as string]: nationDef(state.winner).color,
+            backgroundImage: `url(${leaderArt(state, state.winner)})`,
+          }}
+          aria-hidden
+        />
+      ) : (
+        <MapBackdrop />
+      )}
+      <div className="splash-veil splash-veil--flag" />
       <div className="game-over-layout">
         <header className="game-over-hero enter-pop">
           {state.winner && (
@@ -3662,8 +3673,8 @@ function GameOver({
             <h1 className="stencil-title">SUPERPOWER</h1>
             <p className="tagline">
               {winnerPlayer
-                ? `${winnerName} — ${winnerPlayer} dominates the board.`
-                : `${winnerName} dominates the board.`}
+                ? `${winnerName} — ${winnerPlayer} dominated the world.`
+                : `${winnerName} dominated the world.`}
             </p>
           </div>
         </header>
@@ -3694,10 +3705,21 @@ function GameOver({
                         {nation.isHuman ? ` (${playerDisplayName(state, row.nationId)})` : ''}
                         {isWinner ? ' ★' : ''}
                       </strong>
-                      <span>
-                        Survived {row.citySurvivalPoints} · 🔍{live.researchCenters} · 🛡
-                        {live.shields}
-                        {live.bunkers > 0 ? ` · 🪨${live.bunkers}` : ''}
+                      <span className="score-card__meta">
+                        Survived {row.citySurvivalPoints}
+                        <span className="score-card__stat" title="Research centres">
+                          <img src={ART.researchIcon} alt="" draggable={false} />
+                          {live.researchCenters}
+                        </span>
+                        <span className="score-card__stat" title="Shields">
+                          <img src={ART.shield} alt="" draggable={false} />
+                          {live.shields}
+                        </span>
+                        {live.bunkers > 0 && (
+                          <span className="score-card__stat" title="Bunkers">
+                            🪨{live.bunkers}
+                          </span>
+                        )}
                         {isYou ? ' · You' : nation.isHuman ? ' · Player' : ' · AI'}
                       </span>
                     </div>
@@ -3715,16 +3737,20 @@ function GameOver({
                         } ${city.hasShield && !city.destroyed ? 'has-shield' : ''}`}
                         title={`${city.name} — ${cityStatusLabel(city)}`}
                       >
-                        <img src={cityArt(city)} alt="" draggable={false} />
-                        {city.destroyed && (
-                          <span className="city-smoke" aria-hidden>
-                            <i />
-                            <i />
-                            <i />
-                          </span>
-                        )}
+                        <span className="score-city__frame">
+                          <img src={cityArt(city)} alt="" draggable={false} />
+                          {city.hasShield && !city.destroyed && (
+                            <span className="city-dome" aria-hidden />
+                          )}
+                          {city.destroyed && (
+                            <span className="city-smoke" aria-hidden>
+                              <i />
+                              <i />
+                              <i />
+                            </span>
+                          )}
+                        </span>
                         <strong>{city.name}</strong>
-                        <span>{cityStatusLabel(city)}</span>
                         <div className="score-city__assets" aria-hidden>
                           {city.hasResearch && !city.destroyed && (
                             <img src={ART.researchIcon} alt="" draggable={false} />
@@ -3732,9 +3758,10 @@ function GameOver({
                           {city.hasLaser && !city.destroyed && (
                             <img src={ART.laserIcon} alt="" draggable={false} />
                           )}
-                          {city.hasShield && !city.destroyed && !city.isUnderground && (
-                            <img src={ART.shield} alt="" draggable={false} />
+                          {city.isUnderground && !city.destroyed && (
+                            <span className="score-city__bunker">Bunker</span>
                           )}
+                          {city.destroyed && <span className="score-city__ruin">Out</span>}
                         </div>
                       </li>
                     ))}
