@@ -172,6 +172,10 @@ export {
   SCORE_RESEARCH,
   SCORE_SHIELD,
   SCORE_BUNKER,
+  SCORE_KILL,
+  SCORE_ELIMINATION,
+  SCORE_ANGEL,
+  SCORE_EVIL,
   applyBalanceProfile,
   CURRENT_PROFILE,
   LEGACY_PROFILE,
@@ -271,6 +275,10 @@ export function initialNation(id: NationId): NationState {
     lockedScore: null,
     roundsSurvived: 0,
     citySurvivalPoints: 0,
+    attackPoints: 0,
+    angelPoints: 0,
+    infamyPoints: 0,
+    emergencyRebuildsUsed: 0,
     isHuman: false,
   };
 }

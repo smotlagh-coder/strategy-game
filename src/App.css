@@ -3495,6 +3495,15 @@ img { max-width: 100%; display: block; }
   opacity: 0.95;
 }
 
+.aftermath-countdown__reputation {
+  font-family: var(--body);
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: #ffd59a;
+  opacity: 0.95;
+}
+
 .your-cities {
   display: flex;
   flex-direction: column;
@@ -4083,15 +4092,15 @@ img { max-width: 100%; display: block; }
   box-shadow: 0 0 40px rgba(245, 197, 66, 0.45);
 }
 
-/* Winner flag fills the end screen — colour wash + portrait flag art */
+/* Winner flag fills the end screen — national flag wash, not the portrait */
 .flag-backdrop {
   position: absolute;
   inset: 0;
   background-color: var(--flag-color, #040b16);
   background-size: cover;
-  background-position: center top;
+  background-position: center;
   background-repeat: no-repeat;
-  filter: saturate(1.15);
+  filter: saturate(1.2) contrast(1.05);
 }
 
 .flag-backdrop::before {
@@ -4099,8 +4108,8 @@ img { max-width: 100%; display: block; }
   position: absolute;
   inset: 0;
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--flag-color, #040b16) 72%, transparent) 0%, transparent 42%),
-    linear-gradient(0deg, rgba(2, 6, 14, 0.78) 0%, rgba(2, 6, 14, 0.45) 45%, rgba(2, 6, 14, 0.62) 100%);
+    linear-gradient(180deg, rgba(2, 6, 14, 0.35) 0%, transparent 35%),
+    linear-gradient(0deg, rgba(2, 6, 14, 0.82) 0%, rgba(2, 6, 14, 0.35) 48%, rgba(2, 6, 14, 0.55) 100%);
 }
 
 .flag-backdrop::after {
@@ -4110,9 +4119,9 @@ img { max-width: 100%; display: block; }
   background: repeating-linear-gradient(
     -18deg,
     transparent 0 18px,
-    color-mix(in srgb, var(--flag-color, #fff) 18%, transparent) 18px 20px
+    color-mix(in srgb, var(--flag-color, #fff) 12%, transparent) 18px 20px
   );
-  opacity: 0.35;
+  opacity: 0.28;
   pointer-events: none;
 }
 

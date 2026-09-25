@@ -131,6 +131,14 @@ export interface NationState {
   roundsSurvived: number;
   /** Cumulative points from cities still standing at each round end */
   citySurvivalPoints: number;
+  /** Cumulative points from cities this nation destroyed (and eliminations) */
+  attackPoints: number;
+  /** Banked prestige from being the round's angel (most peaceful) */
+  angelPoints: number;
+  /** Banked infamy from being the round's evil seat (subtracted from score) */
+  infamyPoints: number;
+  /** Automatic last-city rebuilds used this match (capped at one) */
+  emergencyRebuildsUsed: number;
   isHuman: boolean;
   playerSlot?: number;
   /** Online multiplayer owner uid (if human) */
@@ -146,6 +154,9 @@ export interface RoundScore {
   bunkers: number;
   roundsSurvived: number;
   citySurvivalPoints: number;
+  attackPoints: number;
+  angelPoints: number;
+  infamyPoints: number;
   total: number;
   eliminated: boolean;
 }
@@ -241,6 +252,10 @@ export interface GameState {
   previousRoundEvents?: RoundWorldEvent[];
   /** Round number those previousRoundEvents belong to */
   previousRoundNumber?: number | null;
+  /** Living seat crowned most peaceful last resolution (angel portrait + prestige) */
+  angelNationId?: NationId | null;
+  /** Living seat crowned most offensive last resolution (evil portrait + infamy) */
+  evilNationId?: NationId | null;
 }
 
 /** Firestore player presence doc */

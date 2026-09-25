@@ -83,6 +83,16 @@ describe('buying an underground city', () => {
     expect(after.nations.uk.cities[0].hasShield).toBeFalsy();
     expect(after.nations.uk.money).toBe(s.nations.uk.money);
   });
+
+  it('scraps a surface shield when the city is dug in', () => {
+    let s = table();
+    const city = s.nations.uk.cities[0];
+    s = buyShield(s, city.id, 'uk');
+    expect(s.nations.uk.cities[0].hasShield).toBe(true);
+    s = buyUnderground(s, city.id, 'uk');
+    expect(s.nations.uk.cities[0].isUnderground).toBe(true);
+    expect(s.nations.uk.cities[0].hasShield).toBe(false);
+  });
 });
 
 describe('surviving attacks underground', () => {

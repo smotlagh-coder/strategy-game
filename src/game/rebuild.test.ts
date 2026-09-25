@@ -136,6 +136,33 @@ describe('the emergency rebuild when the last city falls', () => {
     expect(s.nations.uk.eliminated).toBe(true);
     expect(s.roundEvents.some((e) => e.kind === 'nationEliminated')).toBe(true);
   });
+
+  it('only allows one automatic last-city rebuild per match', () => {
+    // First wipe triggers the emergency rebuild; bank enough for a second
+    // phoenix attempt that must fail.
+    let s = levelTheUk(table(COSTS.rebuild * 2 + 1, 6));
+    expect(s.nations.uk.eliminated).toBe(false);
+    expect(s.nations.uk.emergencyRebuildsUsed).toBe(1);
+    const standing = s.nations.uk.cities.find((c) => !c.destroyed)!;
+    // Arm another finishing shot and spend leftover cash so only emergency
+    // would have saved them — but the free pass is already used.
+    s = {
+      ...s,
+      nations: {
+        ...s.nations,
+        us: {
+          ...s.nations.us,
+          bombs: 1,
+          citiesStruckThisRound: [],
+        },
+        uk: { ...s.nations.uk, money: COSTS.rebuild },
+      },
+      pendingStrikes: [],
+    };
+    s = queueStrike(s, 'uk', standing.id, 'us');
+    s = applyQueuedStrike(s, s.pendingStrikes[0]);
+    expect(s.nations.uk.eliminated).toBe(true);
+  });
 });
 
 describe('online merge of a rebuilt city', () => {

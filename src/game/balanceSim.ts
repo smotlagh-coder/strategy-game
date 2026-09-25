@@ -243,6 +243,15 @@ export type MatchStats = {
   killsByRound: number[];
   finalScores: number[];
   eliminated: number;
+  /** Spread between 1st and 2nd living score at game end */
+  scoreSpread: number;
+  angelAwards: number;
+  evilAwards: number;
+  totalAttackPoints: number;
+  totalAngelPoints: number;
+  totalInfamyPoints: number;
+  winnerAttackShare: number;
+  winnerSurvivalShare: number;
 };
 
 function playMatch(seed: number): MatchStats {
@@ -270,6 +279,8 @@ function playMatch(seed: number): MatchStats {
   const killsByRound: number[] = [];
   let citiesDestroyed = 0;
   let quietRounds = 0;
+  let angelAwards = 0;
+  let evilAwards = 0;
   let guard = 0;
 
   while (s.phase !== 'gameOver' && guard++ < 60) {
@@ -302,6 +313,8 @@ function playMatch(seed: number): MatchStats {
       killsByRound[s.round - 1] = (killsByRound[s.round - 1] ?? 0) + destroyed;
       citiesDestroyed += destroyed;
       if (destroyed === 0) quietRounds += 1;
+      if (s.angelNationId) angelAwards += 1;
+      if (s.evilNationId) evilAwards += 1;
       s = nextRound(s);
       continue;
     }
@@ -310,7 +323,17 @@ function playMatch(seed: number): MatchStats {
   }
 
   const winner = s.winner;
-  const scores = s.turnOrder.map((id) => computeScore(s, id).total);
+  const scored = s.turnOrder.map((id) => computeScore(s, id));
+  const living = scored.filter((r) => !r.eliminated).sort((a, b) => b.total - a.total);
+  const scoreSpread =
+    living.length >= 2 ? living[0].total - living[1].total : living[0]?.total ?? 0;
+  const scores = scored.map((r) => r.total);
+  const totalAttackPoints = scored.reduce((sum, r) => sum + (r.attackPoints ?? 0), 0);
+  const totalAngelPoints = scored.reduce((sum, r) => sum + (r.angelPoints ?? 0), 0);
+  const totalInfamyPoints = scored.reduce((sum, r) => sum + (r.infamyPoints ?? 0), 0);
+  const winRow = winner ? scored.find((r) => r.nationId === winner) : null;
+  const winTotal = Math.max(1, winRow?.total ?? 1);
+
   return {
     winnerArchetype: winner ? byNation[winner] : null,
     seatArchetypes: kinds,
@@ -320,6 +343,14 @@ function playMatch(seed: number): MatchStats {
     killsByRound,
     finalScores: scores,
     eliminated: s.turnOrder.filter((id) => s.nations[id].eliminated).length,
+    scoreSpread,
+    angelAwards,
+    evilAwards,
+    totalAttackPoints,
+    totalAngelPoints,
+    totalInfamyPoints,
+    winnerAttackShare: (winRow?.attackPoints ?? 0) / winTotal,
+    winnerSurvivalShare: (winRow?.citySurvivalPoints ?? 0) / winTotal,
   };
 }
 
@@ -334,6 +365,18 @@ export type SuiteResult = {
   winRate: Record<Archetype, number>;
   winGap: number;
   pointlessShare: number;
+  avgScoreSpread: number;
+  avgAngelAwards: number;
+  avgEvilAwards: number;
+  avgAttackPoints: number;
+  avgAngelPoints: number;
+  avgInfamyPoints: number;
+  avgWinnerAttackShare: number;
+  avgWinnerSurvivalShare: number;
+  /** Share of matches where at least 2 cities fell */
+  eventfulShare: number;
+  /** Share of matches decided by ≤20 points */
+  closeFinishShare: number;
 };
 
 export function runSuite(profile: BalanceProfile, matches: number, seed0: number): SuiteResult {
@@ -351,8 +394,18 @@ export function runSuite(profile: BalanceProfile, matches: number, seed0: number
   let rounds = 0;
   let eliminated = 0;
   let pointless = 0;
+  let eventful = 0;
+  let closeFinish = 0;
+  let scoreSpread = 0;
+  let angelAwards = 0;
+  let evilAwards = 0;
+  let attackPoints = 0;
+  let angelPoints = 0;
+  let infamyPoints = 0;
+  let winnerAttack = 0;
+  let winnerSurvival = 0;
   const killsByRound = [0, 0, 0, 0, 0, 0, 0, 0];
-  let appearances: Record<Archetype, number> = {
+  const appearances: Record<Archetype, number> = {
     economy: 0,
     turtle: 0,
     rusher: 0,
@@ -367,10 +420,20 @@ export function runSuite(profile: BalanceProfile, matches: number, seed0: number
     quiet += m.quietRounds;
     rounds += m.roundsPlayed;
     eliminated += m.eliminated;
+    scoreSpread += m.scoreSpread;
+    angelAwards += m.angelAwards;
+    evilAwards += m.evilAwards;
+    attackPoints += m.totalAttackPoints;
+    angelPoints += m.totalAngelPoints;
+    infamyPoints += m.totalInfamyPoints;
+    winnerAttack += m.winnerAttackShare;
+    winnerSurvival += m.winnerSurvivalShare;
     for (let r = 0; r < m.killsByRound.length; r += 1) {
       killsByRound[r] = (killsByRound[r] ?? 0) + m.killsByRound[r];
     }
     if (m.citiesDestroyed === 0) pointless += 1;
+    if (m.citiesDestroyed >= 2) eventful += 1;
+    if (m.scoreSpread <= 20) closeFinish += 1;
     if (m.winnerArchetype) wins[m.winnerArchetype] += 1;
     for (const a of m.seatArchetypes) appearances[a] += 1;
   }
@@ -392,6 +455,16 @@ export function runSuite(profile: BalanceProfile, matches: number, seed0: number
     winRate,
     winGap,
     pointlessShare: pointless / matches,
+    avgScoreSpread: scoreSpread / matches,
+    avgAngelAwards: angelAwards / matches,
+    avgEvilAwards: evilAwards / matches,
+    avgAttackPoints: attackPoints / matches,
+    avgAngelPoints: angelPoints / matches,
+    avgInfamyPoints: infamyPoints / matches,
+    avgWinnerAttackShare: winnerAttack / matches,
+    avgWinnerSurvivalShare: winnerSurvival / matches,
+    eventfulShare: eventful / matches,
+    closeFinishShare: closeFinish / matches,
   };
 }
 

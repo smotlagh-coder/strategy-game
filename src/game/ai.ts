@@ -228,9 +228,15 @@ export function pickDroneTarget(
 
   // A shield or bunker halves the bill, so undefended cities are worth more —
   // unless a warhead is already inbound, where the swarm ties up the shield.
+  // Hydrogen needs no escort — boosting those cities only wastes packs.
   const nuking = new Set(
     state.pendingStrikes
-      .filter((s) => s.attackerId === attackerId && s.weapon !== 'drone')
+      .filter(
+        (s) =>
+          s.attackerId === attackerId &&
+          s.weapon !== 'drone' &&
+          s.weapon !== 'hydrogen',
+      )
       .map((s) => `${s.targetNationId}:${s.cityId}`),
   );
   const value = (rivalId: NationId, city: City) => {
@@ -480,10 +486,16 @@ export function runAiBuyPhase(state: GameState): GameState {
   }
 
   // One city in the rock is a guaranteed seat at the final scores — hashed so
-  // the bunker is not always under the capital.
+  // the bunker is not always under the capital. Never dig under a shield: that
+  // scrapes the shield for free and wastes the install.
   if (canBuyUnderground(s, id) && spare() >= COSTS.underground) {
+    const candidates = me().cities.filter(
+      (c) => !c.destroyed && !c.isUnderground && !c.hasShield,
+    );
     const keep = pickCity(
-      me().cities.filter((c) => !c.destroyed && !c.isUnderground),
+      candidates.length > 0
+        ? candidates
+        : me().cities.filter((c) => !c.destroyed && !c.isUnderground),
       `${id}:${s.round}:bunker`,
     );
     if (keep) s = buyUnderground(s, keep.id, id);
@@ -606,10 +618,15 @@ export function runAiNationTurn(state: GameState, nationId: NationId): GameState
     s = queueStrike(s, target.nationId, target.cityId, nationId, weapon);
     if (s === before) break;
 
-    // Shielded targets need a drone escort; magnetic already killed the laser
+    // Shielded targets need a drone escort (magnetic / nuke). Hydrogen cracks
+    // shields on its own — escorting it just burns packs for no effect.
     const city = seenCities(s, nationId, target.nationId).find((c) => c.id === target.cityId);
     const shots = weapon === 'magnetic' ? 0 : laserShotsKnownTo(s, nationId, target.nationId);
-    if (city?.hasShield && s.nations[nationId].drones > shots) {
+    if (
+      weapon !== 'hydrogen' &&
+      city?.hasShield &&
+      s.nations[nationId].drones > shots
+    ) {
       let burnt = 0;
       for (const decoy of s.nations[target.nationId].cities) {
         if (burnt >= shots || s.nations[nationId].drones <= 1) break;

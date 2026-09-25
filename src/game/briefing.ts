@@ -196,7 +196,7 @@ function findWeakness(
       }.${armedRivals.length > 0 ? ` ${plural(armedRivals.length, 'rival')} holding warheads.` : ''}`,
       advice:
         money >= COSTS.underground
-          ? `Move it underground for ${cash(COSTS.underground)} — a bunker city cannot be nuked at all.`
+          ? `Move it underground for ${cash(COSTS.underground)} — only a hydrogen bomb cracks a bunker.`
           : !lastCity.hasShield && money >= COSTS.shield
             ? `Put the ${cash(COSTS.shield)} shield up now; it absorbs the next warhead outright.`
             : `Keep ${cash(COSTS.rebuild)} in the bank — without the rebuild you are out the moment it falls.`,

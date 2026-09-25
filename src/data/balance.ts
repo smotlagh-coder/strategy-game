@@ -37,6 +37,14 @@ export type BalanceProfile = {
   scoreResearch: number;
   scoreShield: number;
   scoreBunker: number;
+  /** Points banked by the attacker when a city is destroyed */
+  scoreKill: number;
+  /** Bonus when an attacker's strike eliminates a nation */
+  scoreElimination: number;
+  /** Prestige for the round's most peaceful seat (angel) */
+  scoreAngel: number;
+  /** Infamy deducted from the round's most offensive seat (evil) */
+  scoreEvil: number;
 };
 
 /** Pre-rebalance snapshot — kept so the Monte Carlo harness can A/B. */
@@ -67,12 +75,16 @@ export const LEGACY_PROFILE: BalanceProfile = {
   scoreResearch: 12,
   scoreShield: 8,
   scoreBunker: 16,
+  scoreKill: 0,
+  scoreElimination: 0,
+  scoreAngel: 0,
+  scoreEvil: 0,
 };
 
 /**
- * Sim-validated live pack. Sanctions stay at 10%: four rivals already cut 40%,
- * and maxSanctionCut stops any future rate bump from stacking past that.
- * (15% was rejected — four pile-ons would have stolen 60%.)
+ * Aggression and defence both have to earn the title. Kill points reward
+ * strikes; rebuilt cities are worth half; a dear rebuild stops endless phoenix
+ * turtling from banking the same survival score forever.
  */
 export const CURRENT_PROFILE: BalanceProfile = {
   name: 'current',
@@ -80,7 +92,7 @@ export const CURRENT_PROFILE: BalanceProfile = {
     ballisticMissileTech: 3,
     aerospaceTech: 2,
     underground: 6,
-    rebuild: 3,
+    rebuild: 5,
     shield: 3,
     laser: 3,
     spy: 3,
@@ -95,12 +107,16 @@ export const CURRENT_PROFILE: BalanceProfile = {
   researchIncome: 1.0,
   sanctionPenalty: 0.1,
   maxSanctionCut: 0.4,
-  survivalPointsPerCity: 5,
+  survivalPointsPerCity: 4,
   droneDamage: 2.0,
   scoreCity: 35,
   scoreResearch: 8,
-  scoreShield: 10,
-  scoreBunker: 18,
+  scoreShield: 8,
+  scoreBunker: 14,
+  scoreKill: 20,
+  scoreElimination: 25,
+  scoreAngel: 10,
+  scoreEvil: 12,
 };
 
 /** @deprecated Alias — the validated pack is now current. */
@@ -120,6 +136,10 @@ export let SCORE_CITY = CURRENT_PROFILE.scoreCity;
 export let SCORE_RESEARCH = CURRENT_PROFILE.scoreResearch;
 export let SCORE_SHIELD = CURRENT_PROFILE.scoreShield;
 export let SCORE_BUNKER = CURRENT_PROFILE.scoreBunker;
+export let SCORE_KILL = CURRENT_PROFILE.scoreKill;
+export let SCORE_ELIMINATION = CURRENT_PROFILE.scoreElimination;
+export let SCORE_ANGEL = CURRENT_PROFILE.scoreAngel;
+export let SCORE_EVIL = CURRENT_PROFILE.scoreEvil;
 
 export function applyBalanceProfile(profile: BalanceProfile): void {
   Object.assign(COSTS, profile.costs);
@@ -134,6 +154,10 @@ export function applyBalanceProfile(profile: BalanceProfile): void {
   SCORE_RESEARCH = profile.scoreResearch;
   SCORE_SHIELD = profile.scoreShield;
   SCORE_BUNKER = profile.scoreBunker;
+  SCORE_KILL = profile.scoreKill;
+  SCORE_ELIMINATION = profile.scoreElimination;
+  SCORE_ANGEL = profile.scoreAngel;
+  SCORE_EVIL = profile.scoreEvil;
 }
 
 export function activeBalanceName(): BalanceProfile['name'] {

@@ -21,6 +21,10 @@ import {
   SCORE_CITY,
   SCORE_RESEARCH,
   SCORE_SHIELD,
+  SCORE_KILL,
+  SCORE_ELIMINATION,
+  SCORE_ANGEL,
+  SCORE_EVIL,
   SURVIVAL_POINTS_PER_CITY,
   initialNation,
   nationDef,
@@ -184,6 +188,8 @@ export function createInitialState(): GameState {
     aftermathEndsAt: null,
     previousRoundEvents: [],
     previousRoundNumber: null,
+    angelNationId: null,
+    evilNationId: null,
   };
 }
 
@@ -347,6 +353,7 @@ export function concludeRoundTurns(state: GameState): GameState {
     };
   }
   next = awardRoundSurvival(next);
+  next = awardRoundReputation(next);
   const scores = allScores(next);
   next = rememberScores(next, scores);
   return {
@@ -388,21 +395,32 @@ export function researchCount(state: GameState, id: NationId): number {
 
 export function computeScore(state: GameState, id: NationId): RoundScore {
   const n = state.nations[id];
-  const cities = citiesLeft(state, id);
+  const standing = n.cities.filter((c) => !c.destroyed);
+  const cities = standing.length;
+  const pristine = standing.filter((c) => c.rebuiltRound == null).length;
+  const rebuilt = cities - pristine;
   const shields = shieldsLeft(state, id);
   const bunkers = bunkersLeft(state, id);
   const research = researchCount(state, id);
   // City survival is scored each round (cities standing × points), then banked.
-  // A bunker costs twice a shield and cannot be cracked by warheads, so it
-  // pays twice the shield points — otherwise the $6M dig never shows up.
+  // Rebuilt rubble is half a city — phoenix turtling cannot bank full value forever.
+  // Kill points reward the side that actually ends rival cities.
+  // Angel prestige / evil infamy are the international-reputation ledger.
   const survivalPoints = n.citySurvivalPoints;
+  const attackPoints = n.attackPoints ?? 0;
+  const angelPoints = n.angelPoints ?? 0;
+  const infamyPoints = n.infamyPoints ?? 0;
   const liveTotal = Math.max(
     0,
-    cities * SCORE_CITY +
+    pristine * SCORE_CITY +
+      rebuilt * Math.round(SCORE_CITY / 2) +
       research * SCORE_RESEARCH +
       shields * SCORE_SHIELD +
       bunkers * SCORE_BUNKER +
-      survivalPoints,
+      survivalPoints +
+      attackPoints +
+      angelPoints -
+      infamyPoints,
   );
   // Eliminated nations keep their frozen score from when they fell
   const total =
@@ -415,6 +433,9 @@ export function computeScore(state: GameState, id: NationId): RoundScore {
     bunkers,
     roundsSurvived: n.roundsSurvived,
     citySurvivalPoints: n.citySurvivalPoints,
+    attackPoints,
+    angelPoints,
+    infamyPoints,
     total: Math.round(total),
     eliminated: n.eliminated,
   };
@@ -451,8 +472,17 @@ function awardRoundSurvival(state: GameState): GameState {
   for (const id of state.turnOrder) {
     const n = nations[id];
     if (n.eliminated) continue;
-    const cities = n.cities.filter((c) => !c.destroyed).length;
-    const gained = cities * SURVIVAL_POINTS_PER_CITY;
+    const standing = n.cities.filter((c) => !c.destroyed);
+    // Rebuilt cities bank half the survival chip — reconstruction is survival,
+    // not a free copy of an untouched capital.
+    const gained = standing.reduce(
+      (sum, c) =>
+        sum +
+        (c.rebuiltRound != null
+          ? Math.ceil(SURVIVAL_POINTS_PER_CITY / 2)
+          : SURVIVAL_POINTS_PER_CITY),
+      0,
+    );
     nations[id] = {
       ...n,
       roundsSurvived: n.roundsSurvived + 1,
@@ -460,12 +490,105 @@ function awardRoundSurvival(state: GameState): GameState {
     };
     logEntries.push(
       log(
-        `${nationDef(id).name} survived round ${state.round} with ${cities} cit${cities === 1 ? 'y' : 'ies'} (+${gained} pts).`,
+        `${nationDef(id).name} survived round ${state.round} with ${standing.length} cit${standing.length === 1 ? 'y' : 'ies'} (+${gained} pts).`,
         'money',
       ),
     );
   }
   return { ...state, nations, log: logEntries };
+}
+
+/**
+ * How aggressive a seat was this resolution — used to crown one angel and
+ * one evil for prestige / international reputation.
+ */
+export function roundOffenseScore(state: GameState, id: NationId): number {
+  const strikes = state.resolvedStrikes ?? state.pendingStrikes;
+  let score = 0;
+  for (const s of strikes) {
+    if (s.attackerId !== id) continue;
+    score += s.weapon === 'drone' ? 1 : 10;
+  }
+  for (const e of state.roundEvents) {
+    if (e.attackerId !== id) continue;
+    if (e.kind === 'cityDestroyed') score += 100;
+    else if (e.kind === 'shieldDestroyed') score += 20;
+    else if (e.kind === 'droneDamage') score += 2;
+    else if (e.kind === 'nationEliminated') score += 50;
+  }
+  return score;
+}
+
+/** Living seats crowned most peaceful / most offensive for this round. */
+export function pickRoundStance(state: GameState): {
+  angel: NationId | null;
+  evil: NationId | null;
+} {
+  const living = state.turnOrder.filter((id) => !state.nations[id]?.eliminated);
+  if (living.length < 2) return { angel: null, evil: null };
+
+  const ranked = [...living].sort((a, b) => {
+    const diff = roundOffenseScore(state, b) - roundOffenseScore(state, a);
+    if (diff !== 0) return diff;
+    return a.localeCompare(b);
+  });
+  const evil = ranked[0];
+  const angel = ranked[ranked.length - 1];
+  if (evil === angel) return { angel: null, evil: null };
+  // Quiet table / identical aggression — no prestige or infamy this round
+  if (roundOffenseScore(state, evil) === roundOffenseScore(state, angel)) {
+    return { angel: null, evil: null };
+  }
+  return { angel, evil };
+}
+
+/** Bank angel prestige / evil infamy and remember who wears those portraits. */
+function awardRoundReputation(state: GameState): GameState {
+  if (SCORE_ANGEL <= 0 && SCORE_EVIL <= 0) {
+    return { ...state, angelNationId: null, evilNationId: null };
+  }
+  const { angel, evil } = pickRoundStance(state);
+  if (!angel && !evil) {
+    return { ...state, angelNationId: null, evilNationId: null };
+  }
+
+  const nations = { ...state.nations };
+  const logEntries = [...state.log];
+
+  if (angel && SCORE_ANGEL > 0) {
+    const n = nations[angel];
+    nations[angel] = {
+      ...n,
+      angelPoints: (n.angelPoints ?? 0) + SCORE_ANGEL,
+    };
+    logEntries.push(
+      log(
+        `${nationDef(angel).name} is this round's angel of peace (+${SCORE_ANGEL} prestige).`,
+        'money',
+      ),
+    );
+  }
+  if (evil && SCORE_EVIL > 0) {
+    const n = nations[evil];
+    nations[evil] = {
+      ...n,
+      infamyPoints: (n.infamyPoints ?? 0) + SCORE_EVIL,
+    };
+    logEntries.push(
+      log(
+        `${nationDef(evil).name} is this round's aggressor (−${SCORE_EVIL} international reputation).`,
+        'attack',
+      ),
+    );
+  }
+
+  return {
+    ...state,
+    nations,
+    log: logEntries,
+    angelNationId: angel,
+    evilNationId: evil,
+  };
 }
 
 /** The city that just fell, so an emergency rebuild raises the one they lost last. */
@@ -485,14 +608,19 @@ function checkEliminations(state: GameState): GameState {
   const roundEvents = [...state.roundEvents];
   for (const id of state.turnOrder) {
     const n = nations[id];
-    // Last city gone but the treasury can cover a rebuild: stay in the game
-    if (!n.eliminated && n.cities.every((c) => c.destroyed) && n.money >= COSTS.rebuild) {
+    // Last city gone: one automatic rebuild per match if the treasury covers it
+    const canEmergency =
+      (n.emergencyRebuildsUsed ?? 0) < 1 && n.money >= COSTS.rebuild;
+    if (!n.eliminated && n.cities.every((c) => c.destroyed) && canEmergency) {
       const lost = lastCityLost({ ...state, roundEvents }, n);
       if (lost) {
-        nations[id] = raiseFromRubble(n, lost.id, state.round);
+        nations[id] = {
+          ...raiseFromRubble(n, lost.id, state.round),
+          emergencyRebuildsUsed: (n.emergencyRebuildsUsed ?? 0) + 1,
+        };
         logEntries.push(
           log(
-            `${nationDef(id).name} spent $${COSTS.rebuild}M rebuilding ${lost.name} — the nation survives.`,
+            `${nationDef(id).name} spent $${COSTS.rebuild}M rebuilding ${lost.name} — the nation survives (last automatic rebuild).`,
             'money',
           ),
         );
@@ -523,6 +651,29 @@ function checkEliminations(state: GameState): GameState {
       roundEvents.push(
         worldEvent({ kind: 'nationEliminated', nationId: id }),
       );
+      // Credit the attacker who landed the finishing city for ending the nation
+      if (SCORE_ELIMINATION > 0) {
+        let finisher: NationId | null = null;
+        for (let i = roundEvents.length - 1; i >= 0; i -= 1) {
+          const e = roundEvents[i];
+          if (e.kind === 'cityDestroyed' && e.nationId === id && e.attackerId) {
+            finisher = e.attackerId;
+            break;
+          }
+        }
+        if (finisher && nations[finisher] && !nations[finisher].eliminated) {
+          nations[finisher] = {
+            ...nations[finisher],
+            attackPoints: (nations[finisher].attackPoints ?? 0) + SCORE_ELIMINATION,
+          };
+          logEntries.push(
+            log(
+              `${nationDef(finisher).name} scored +${SCORE_ELIMINATION} for eliminating ${nationDef(id).name}.`,
+              'attack',
+            ),
+          );
+        }
+      }
     }
   }
   return { ...state, nations, log: logEntries, roundEvents };
@@ -560,9 +711,10 @@ function pickLivingSuperpower(state: GameState): NationId | null {
   const top = contenders[0].total;
   const tied = contenders.filter((s) => s.total === top);
   if (tied.length === 1) return tied[0].nationId;
-  // Break ties: more cities, then higher survival points, then nation id
+  // Break ties: more cities, then attack points, then survival, then id
   tied.sort((a, b) => {
     if (b.citiesLeft !== a.citiesLeft) return b.citiesLeft - a.citiesLeft;
+    if (b.attackPoints !== a.attackPoints) return b.attackPoints - a.attackPoints;
     if (b.citySurvivalPoints !== a.citySurvivalPoints) {
       return b.citySurvivalPoints - a.citySurvivalPoints;
     }
@@ -1259,6 +1411,7 @@ export function buyUnderground(
   const target = n.cities.find((c) => c.id === cityId && !c.destroyed && !c.isUnderground);
   if (!target) return state;
 
+  // A bunker replaces surface cover — stacking a shield under rock is wasted
   return {
     ...state,
     nations: {
@@ -1266,13 +1419,17 @@ export function buyUnderground(
       [id]: {
         ...n,
         money: +(n.money - COSTS.underground).toFixed(2),
-        cities: n.cities.map((c) => (c.id === cityId ? { ...c, isUnderground: true } : c)),
+        cities: n.cities.map((c) =>
+          c.id === cityId ? { ...c, isUnderground: true, hasShield: false } : c,
+        ),
       },
     },
     log: [
       ...state.log,
       log(
-        `${nationDef(id).name} moved ${target.name} underground — the city can no longer be destroyed.`,
+        `${nationDef(id).name} moved ${target.name} underground — only a hydrogen bomb can crack it${
+          target.hasShield ? ' (the surface shield was scrapped)' : ''
+        }.`,
         'money',
       ),
     ],
@@ -1687,8 +1844,10 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
   let cities = defender.cities;
   let message: string;
   let hitEvent: RoundWorldEvent;
-  // Drones swarming this city keep its shield occupied, so the warhead lands
+  // Hydrogen punches through shields and bunkers alike — no escort required.
+  // Other warheads need the shield busy (drone swarm) or they only strip it.
   const shielded =
+    !hydrogen &&
     city.hasShield &&
     !shieldIsBusy(state, strike.targetNationId, strike.cityId);
   if (shielded) {
@@ -1717,11 +1876,14 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
           }
         : c,
     );
-    message = city.isUnderground && hydrogen
-      ? `${nationDef(strike.attackerId).name}'s hydrogen bomb cracked the bunker under ${city.name} (${nationDef(strike.targetNationId).name}) — the city is gone!`
-      : city.hasShield
-        ? `${nationDef(strike.attackerId).name}'s ${warheadName} destroyed ${city.name} (${nationDef(strike.targetNationId).name}) — drones kept the shield busy!`
-        : `${nationDef(strike.attackerId).name}'s ${warheadName} destroyed ${city.name} (${nationDef(strike.targetNationId).name})!`;
+    message =
+      city.isUnderground && hydrogen
+        ? `${nationDef(strike.attackerId).name}'s hydrogen bomb cracked the bunker under ${city.name} (${nationDef(strike.targetNationId).name}) — the city is gone!`
+        : city.hasShield && hydrogen
+          ? `${nationDef(strike.attackerId).name}'s hydrogen bomb vaporized ${city.name} (${nationDef(strike.targetNationId).name}) — the shield did not matter!`
+          : city.hasShield
+            ? `${nationDef(strike.attackerId).name}'s ${warheadName} destroyed ${city.name} (${nationDef(strike.targetNationId).name}) — drones kept the shield busy!`
+            : `${nationDef(strike.attackerId).name}'s ${warheadName} destroyed ${city.name} (${nationDef(strike.targetNationId).name})!`;
     hitEvent = worldEvent({
       kind: 'cityDestroyed',
       nationId: strike.targetNationId,
@@ -1754,10 +1916,22 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
     ? state.roundEvents.filter((e) => !swarmedThisCity(e))
     : state.roundEvents;
 
+  const killCredit = !shielded && SCORE_KILL > 0 ? SCORE_KILL : 0;
+  const attackerPatch =
+    killCredit > 0
+      ? {
+          [strike.attackerId]: {
+            ...attacker,
+            attackPoints: (attacker.attackPoints ?? 0) + killCredit,
+          },
+        }
+      : {};
+
   let next: GameState = {
     ...state,
     nations: {
       ...state.nations,
+      ...attackerPatch,
       [strike.targetNationId]: {
         ...defender,
         cities,
@@ -1768,6 +1942,14 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
     log: [
       ...state.log,
       log(message, 'attack'),
+      ...(killCredit > 0
+        ? [
+            log(
+              `${nationDef(strike.attackerId).name} scored +${killCredit} for destroying ${city.name}.`,
+              'attack',
+            ),
+          ]
+        : []),
       ...(writtenOff > 0
         ? [
             log(
@@ -1793,6 +1975,7 @@ export function finishStrikeResolution(state: GameState): GameState {
   };
   next = checkEliminations(next);
   next = awardRoundSurvival(next);
+  next = awardRoundReputation(next);
   const scores = allScores(next);
   next = rememberScores(next, scores);
   next = checkWinner({

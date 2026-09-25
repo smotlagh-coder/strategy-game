@@ -194,11 +194,19 @@ function wizardArt(step: WizardStep): string {
 }
 
 /**
- * A nation running a spy service is drawn in the cap and shades, so the table
- * can see who is watching without a badge sitting over the portrait.
+ * Angel / evil portraits follow the seats crowned at the last resolution.
+ * Spy hoodies combine with those looks when both apply.
  */
 function leaderArt(state: GameState, id: NationId): string {
-  return state.nations[id]?.hasSpyNetwork ? ART.leadersSpy[id] : ART.leaders[id];
+  const spy = Boolean(state.nations[id]?.hasSpyNetwork);
+  const angel = state.angelNationId === id;
+  const evil = state.evilNationId === id;
+  if (spy && angel) return ART.leadersSpyAngel[id];
+  if (spy && evil) return ART.leadersSpyEvil[id];
+  if (spy) return ART.leadersSpy[id];
+  if (angel) return ART.leadersAngel[id];
+  if (evil) return ART.leadersEvil[id];
+  return ART.leaders[id];
 }
 
 /**
@@ -3015,7 +3023,7 @@ function GameBoard({
               <>
                 <h3 className="turn-wizard__q">Which city goes underground?</h3>
                 <p className="turn-wizard__hint">
-                  This is your one bunker city — it can never be destroyed
+                  This is your one bunker city — only a hydrogen bomb can crack it
                 </p>
                 <div className="turn-wizard__city-grid">
                   {turn.cities.map((c) => (
@@ -3053,8 +3061,9 @@ function GameBoard({
               <>
                 <h3 className="turn-wizard__q">Rebuild a burnt city?</h3>
                 <p className="turn-wizard__hint">
-                  ${COSTS.rebuild}M · the city stands again and scores as normal, but it comes
-                  back bare — no shield, no research, no bunker.
+                  ${COSTS.rebuild}M · stands again at half score, comes back bare (no
+                  shield, research, or bunker). Only one automatic last-city rebuild per
+                  match.
                 </p>
                 <div className="turn-wizard__actions">
                   <button
@@ -3763,6 +3772,17 @@ function RoundSummary({
               ? `${overtimeLeaders.map((id) => nationDef(id).name).join(' and ')} finish level — round ${state.round + 1} decides the superpower`
               : 'Use this time to plan your strategy'}
         </span>
+        {(state.angelNationId || state.evilNationId) && (
+          <span className="aftermath-countdown__reputation">
+            {state.angelNationId && (
+              <>Angel of peace: {nationDef(state.angelNationId).name}</>
+            )}
+            {state.angelNationId && state.evilNationId ? ' · ' : null}
+            {state.evilNationId && (
+              <>International aggressor: {nationDef(state.evilNationId).name}</>
+            )}
+          </span>
+        )}
       </div>
       <div className="board-split round-report__split">
         <section className="board-left round-report__main">
@@ -3963,7 +3983,7 @@ function GameOver({
           className="flag-backdrop"
           style={{
             ['--flag-color' as string]: nationDef(state.winner).color,
-            backgroundImage: `url(${leaderArt(state, state.winner)})`,
+            backgroundImage: `url(${ART.flags[state.winner]})`,
           }}
           aria-hidden
         />
@@ -4014,6 +4034,9 @@ function GameOver({
                       </strong>
                       <span className="score-card__meta">
                         Survived {row.citySurvivalPoints}
+                        {(row.attackPoints ?? 0) > 0 && <> · Attack {row.attackPoints}</>}
+                        {(row.angelPoints ?? 0) > 0 && <> · Angel {row.angelPoints}</>}
+                        {(row.infamyPoints ?? 0) > 0 && <> · Infamy −{row.infamyPoints}</>}
                         <span className="score-card__stat" title="Research centres">
                           <img src={ART.researchIcon} alt="" draggable={false} />
                           {live.researchCenters}

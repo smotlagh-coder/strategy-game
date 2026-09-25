@@ -310,7 +310,7 @@ describe('round briefing', () => {
 
       const { weakness } = buildRoundBriefing(s, 'us')!;
       expect(weakness.id).toBe('rubbleIdle');
-      expect(weakness.advice).toContain('3');
+      expect(weakness.advice).toContain(`$${COSTS.rebuild}M`);
     });
 
     it('calls out cities with nothing over them', () => {
@@ -364,8 +364,16 @@ describe('round briefing', () => {
 
     it('tells a trailing player the final round is not won by defending', () => {
       let s = healthy(playRound(table()));
-      // Russia banks two extra cities' worth of score, and the clock runs out
-      s = { ...s, round: MAX_ROUNDS, nations: { ...s.nations, us: { ...s.nations.us, citySurvivalPoints: 0 } } };
+      // Russia banks a clear lead, and the clock runs out
+      s = {
+        ...s,
+        round: MAX_ROUNDS,
+        nations: {
+          ...s.nations,
+          us: { ...s.nations.us, citySurvivalPoints: 0, angelPoints: 0 },
+          russia: { ...s.nations.russia, citySurvivalPoints: 200 },
+        },
+      };
 
       const { weakness } = buildRoundBriefing(s, 'us')!;
       expect(weakness.id).toBe('finalPush');

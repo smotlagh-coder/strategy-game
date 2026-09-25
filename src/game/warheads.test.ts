@@ -106,6 +106,86 @@ describe('warhead arsenal', () => {
     expect(s.nations.uk.cities[0].isUnderground).toBe(false);
   });
 
+  it('lets a hydrogen bomb destroy a shielded city without a drone escort', () => {
+    let s = table({
+      us: { hydrogenBombs: 1, bombs: 0, hasSpyNetwork: true },
+    });
+    const city = s.nations.uk.cities[0];
+    s = {
+      ...s,
+      nations: {
+        ...s.nations,
+        uk: {
+          ...s.nations.uk,
+          cities: s.nations.uk.cities.map((c) =>
+            c.id === city.id ? { ...c, hasShield: true } : c,
+          ),
+        },
+      },
+    };
+    s = queueStrike(s, 'uk', city.id, 'us', 'hydrogen');
+    s = applyQueuedStrike(s, s.pendingStrikes[0]);
+    const hit = s.nations.uk.cities.find((c) => c.id === city.id)!;
+    expect(hit.destroyed).toBe(true);
+    expect(hit.hasShield).toBe(false);
+  });
+
+  it('lets a magnetic bomb strip a shield alone, or destroy the city with a drone', () => {
+    let alone = table({
+      us: { magneticBombs: 1, bombs: 0, hasSpyNetwork: true },
+    });
+    const city = alone.nations.uk.cities[0];
+    alone = {
+      ...alone,
+      nations: {
+        ...alone.nations,
+        uk: {
+          ...alone.nations.uk,
+          cities: alone.nations.uk.cities.map((c) =>
+            c.id === city.id ? { ...c, hasShield: true } : c,
+          ),
+        },
+      },
+    };
+    alone = queueStrike(alone, 'uk', city.id, 'us', 'magnetic');
+    alone = applyQueuedStrike(alone, alone.pendingStrikes[0]);
+    expect(alone.nations.uk.cities[0].destroyed).toBe(false);
+    expect(alone.nations.uk.cities[0].hasShield).toBe(false);
+
+    let escorted = table({
+      us: {
+        magneticBombs: 1,
+        bombs: 0,
+        drones: 1,
+        hasAerospaceTech: true,
+        aerospaceTechUnlockedRound: 0,
+        hasSpyNetwork: true,
+      },
+    });
+    const target = escorted.nations.uk.cities[1];
+    escorted = {
+      ...escorted,
+      nations: {
+        ...escorted.nations,
+        uk: {
+          ...escorted.nations.uk,
+          cities: escorted.nations.uk.cities.map((c) =>
+            c.id === target.id ? { ...c, hasShield: true } : c,
+          ),
+        },
+      },
+    };
+    escorted = queueStrike(escorted, 'uk', target.id, 'us', 'magnetic');
+    escorted = queueStrike(escorted, 'uk', target.id, 'us', 'drone');
+    for (const strike of orderStrikesForResolution(escorted.pendingStrikes)) {
+      escorted = applyQueuedStrike(escorted, strike);
+    }
+    expect(escorted.nations.uk.cities.find((c) => c.id === target.id)?.destroyed).toBe(true);
+    // City died — the escort's repair bill is written off
+    expect(escorted.nations.uk.pendingDroneDamage).toBe(0);
+    expect(escorted.roundEvents.some((e) => e.kind === 'droneDamage')).toBe(false);
+  });
+
   it('kills laser cover when a magnetic bomb is locked, so a drone gets through', () => {
     let s = table({
       us: {

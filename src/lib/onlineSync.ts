@@ -262,6 +262,18 @@ export function mergeNationPlanning(
     ...mergeSanctions(remote, local),
     eliminated,
     lockedScore: Math.max(remote.lockedScore ?? 0, local.lockedScore ?? 0),
+    citySurvivalPoints: Math.max(
+      counter(remote.citySurvivalPoints),
+      counter(local.citySurvivalPoints),
+    ),
+    attackPoints: Math.max(counter(remote.attackPoints), counter(local.attackPoints)),
+    angelPoints: Math.max(counter(remote.angelPoints), counter(local.angelPoints)),
+    infamyPoints: Math.max(counter(remote.infamyPoints), counter(local.infamyPoints)),
+    emergencyRebuildsUsed: Math.max(
+      counter(remote.emergencyRebuildsUsed),
+      counter(local.emergencyRebuildsUsed),
+    ),
+    roundsSurvived: Math.max(counter(remote.roundsSurvived), counter(local.roundsSurvived)),
     // Forfeit / kick sticks — never revive an AI-converted nation as human.
     // Being wiped out is not a forfeit: the seat stays so that player can watch
     // the rest of the match.

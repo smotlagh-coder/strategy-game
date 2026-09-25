@@ -352,6 +352,52 @@ describe('AI purchasing', () => {
     expect(strikes.some((p) => p.weapon === 'magnetic' && p.targetNationId === 'us')).toBe(true);
     expect(strikes.some((p) => p.weapon === 'hydrogen' && p.cityId === bunkerId)).toBe(true);
   });
+
+  it('never stacks a shield on the bunker city', () => {
+    let s = table({
+      uk: { money: 40, hasNuclearTech: true, nuclearTechUnlockedRound: 0 },
+    });
+    s = { ...s, currentTurnIndex: s.turnOrder.indexOf('uk') };
+    const after = runAiBuyPhase(s);
+    const bunker = after.nations.uk.cities.find((c) => c.isUnderground);
+    expect(bunker).toBeTruthy();
+    expect(bunker!.hasShield).toBe(false);
+    // Prefer digging a different seat than the one that already has the plate
+    const shielded = after.nations.uk.cities.filter((c) => c.hasShield);
+    if (shielded.length > 0 && bunker) {
+      expect(shielded.some((c) => c.id === bunker.id)).toBe(false);
+    }
+  });
+
+  it('does not escort a hydrogen strike with drones', () => {
+    const bunkerId = 'ru-1';
+    let s = table({
+      uk: arsenalReady({
+        money: 0,
+        hydrogenBombs: 1,
+        bombs: 0,
+        drones: 2,
+      }),
+    });
+    s = {
+      ...s,
+      nations: {
+        ...s.nations,
+        russia: {
+          ...s.nations.russia,
+          cities: s.nations.russia.cities.map((c) =>
+            c.id === bunkerId
+              ? { ...c, isUnderground: true, hasShield: true }
+              : c,
+          ),
+        },
+      },
+    };
+    s = runAiNationTurn(s, 'uk');
+    const strikes = s.pendingStrikes.filter((p) => p.attackerId === 'uk');
+    expect(strikes.some((p) => p.weapon === 'hydrogen' && p.cityId === bunkerId)).toBe(true);
+    expect(strikes.some((p) => p.weapon === 'drone' && p.cityId === bunkerId)).toBe(false);
+  });
 });
 
 describe('AI diplomacy', () => {
