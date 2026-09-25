@@ -586,13 +586,11 @@ img { max-width: 100%; display: block; }
   z-index: 2;
 }
 
-.stance-badges,
-.score-card__shot .stance-mark {
-  position: absolute;
-  top: 0.15rem;
-  right: 0.15rem;
-  z-index: 5;
+.stance-badges {
+  position: static;
   display: flex;
+  justify-content: center;
+  z-index: auto;
   pointer-events: none;
 }
 
@@ -600,10 +598,10 @@ img { max-width: 100%; display: block; }
   display: inline-flex;
   align-items: center;
   gap: 0.15rem;
-  min-height: 1.35rem;
-  padding: 0.12rem 0.38rem;
+  min-height: 1.15rem;
+  padding: 0.08rem 0.32rem;
   border-radius: 999px;
-  font-size: 0.68rem;
+  font-size: 0.62rem;
   font-weight: 800;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -4321,16 +4319,6 @@ img { max-width: 100%; display: block; }
   width: 88px;
   max-height: 100%;
   overflow: visible;
-}
-
-.game-over-ranking .nation-card__shot .stance-mark {
-  top: auto;
-  right: auto;
-  left: 50%;
-  bottom: -0.35rem;
-  transform: translateX(-50%);
-  font-size: 0.62rem;
-  z-index: 6;
 }
 
 .game-over-ranking .nation-card__portrait img {
