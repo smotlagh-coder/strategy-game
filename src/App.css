@@ -579,6 +579,44 @@ img { max-width: 100%; display: block; }
   width: min(96px, 30cqi, 24vh);
 }
 
+.nation-card__shot {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+.stance-badges,
+.score-card__shot .stance-mark {
+  position: absolute;
+  top: -0.2rem;
+  right: -0.28rem;
+  z-index: 4;
+  display: flex;
+  pointer-events: none;
+}
+
+.stance-mark {
+  display: grid;
+  place-items: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 50%;
+  font-size: 0.72rem;
+  line-height: 1;
+  border: 1.5px solid rgba(255, 255, 255, 0.75);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+}
+
+.stance-mark--peace {
+  background: #f4fff8;
+  color: #147a45;
+}
+
+.stance-mark--evil {
+  background: #2a0c0c;
+  color: #ff5c4a;
+}
+
 /* Keep a true square — cover + a shorter max-height was cropping crowns/hoods */
 .nation-card__portrait img {
   width: min(100%, 14vh);
@@ -3434,7 +3472,23 @@ img { max-width: 100%; display: block; }
   gap: 0.45rem;
 }
 
+.score-card__shot {
+  position: relative;
+  display: block;
+  width: 40px;
+  height: 40px;
+}
+
+.score-card__shot > img {
+  width: 100%;
+  height: 100%;
+  border-radius: 10px;
+  object-fit: contain;
+}
+
 .score-cards--compact .score-card > img,
+.score-cards--compact .score-card__shot,
+.score-cards--compact .score-card__shot > img,
 .score-cards--compact .score-card__head > img {
   width: 40px;
   height: 40px;
@@ -4613,6 +4667,8 @@ img { max-width: 100%; display: block; }
   }
 
   .screen--round-report .score-cards--compact .score-card > img,
+  .screen--round-report .score-cards--compact .score-card__shot,
+  .screen--round-report .score-cards--compact .score-card__shot > img,
   .screen--round-report .score-cards--compact .score-card__head > img {
     width: 32px;
     height: 32px;

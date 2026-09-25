@@ -1624,17 +1624,35 @@ function NationPod({
   const swarmed = new Set(pendingDroneCityIds ?? []);
   const pulsed = new Set(highlightCityIds ?? []);
   const interactive = Boolean(onSelectCity);
+  const isAngel = state.angelNationId === id;
+  const isEvil = state.evilNationId === id;
   return (
     <div
       className={`nation-card nation-card--${variant} ${n.eliminated ? 'is-out' : ''} ${highlight ? 'is-turn' : ''}`}
       data-nation-id={id}
     >
       <div className="nation-card__portrait" data-nation-portrait={id}>
-        <img
-          src={leaderArt(state, id)}
-          alt={def.leader}
-          title={n.hasSpyNetwork ? "Spy service — reads every nation's city defences" : undefined}
-        />
+        <span className="nation-card__shot">
+          <img
+            src={leaderArt(state, id)}
+            alt={def.leader}
+            title={n.hasSpyNetwork ? "Spy service — reads every nation's city defences" : undefined}
+          />
+          {(isAngel || isEvil) && (
+            <span className="stance-badges">
+              {isAngel && (
+                <span className="stance-mark stance-mark--peace" title="Most peaceful this round">
+                  ☮
+                </span>
+              )}
+              {isEvil && (
+                <span className="stance-mark stance-mark--evil" title="Aggressor this round">
+                  ☠
+                </span>
+              )}
+            </span>
+          )}
+        </span>
         <div className="nation-card__meta">
           <strong>
             {rank != null ? `#${rank} ` : ''}
@@ -3843,7 +3861,19 @@ function RoundSummary({
                       key={row.nationId}
                       className={`score-card ${row.eliminated ? 'is-out' : ''} ${isLead ? 'is-lead' : ''} ${isYou ? 'is-you' : ''}`}
                     >
-                      <img src={leaderArt(state, row.nationId)} alt="" />
+                      <span className="score-card__shot">
+                        <img src={leaderArt(state, row.nationId)} alt="" />
+                        {state.angelNationId === row.nationId && (
+                          <span className="stance-mark stance-mark--peace" title="Most peaceful this round">
+                            ☮
+                          </span>
+                        )}
+                        {state.evilNationId === row.nationId && (
+                          <span className="stance-mark stance-mark--evil" title="Aggressor this round">
+                            ☠
+                          </span>
+                        )}
+                      </span>
                       <div>
                         <strong>
                           {row.eliminated ? 'OUT' : `#${i + 1}`} {nationDef(row.nationId).name}
