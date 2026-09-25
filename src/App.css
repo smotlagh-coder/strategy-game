@@ -448,14 +448,19 @@ img { max-width: 100%; display: block; }
   flex: 1;
   min-height: 0;
   min-width: 0;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  /* Keep the last city's name above the clip edge */
+  padding-bottom: 0.55rem;
 }
 
 .board-right__nations .nation-card {
   flex: 1 1 0;
-  min-height: 0;
+  min-height: 5.5rem;
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .board-left__controls {
@@ -536,7 +541,7 @@ img { max-width: 100%; display: block; }
   max-width: 100%;
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
   container-type: size;
 }
 
@@ -561,35 +566,37 @@ img { max-width: 100%; display: block; }
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 0.2rem;
   width: min(88px, 28cqi, 22vh);
   max-height: 100%;
   min-width: 0;
-  overflow: hidden;
+  overflow: visible;
+  flex-shrink: 0;
 }
 
 .nation-card--ally .nation-card__portrait {
   width: min(96px, 30cqi, 24vh);
 }
 
+/* Keep a true square — cover + a shorter max-height was cropping crowns/hoods */
 .nation-card__portrait img {
   width: min(100%, 14vh);
   max-width: 100%;
   aspect-ratio: 1;
   height: auto;
-  max-height: min(14vh, 70%);
-  object-fit: cover;
-  object-position: top center;
+  max-height: min(14vh, 100%);
+  object-fit: contain;
+  object-position: center center;
   border-radius: 10px;
   border: 2px solid rgba(255, 255, 255, 0.35);
   box-shadow: 0 6px 14px rgba(0, 0, 0, 0.4);
-  flex-shrink: 1;
+  flex-shrink: 0;
 }
 
 .nation-card--ally .nation-card__portrait img {
   width: min(100%, 15vh);
-  max-height: min(15vh, 72%);
+  max-height: min(15vh, 100%);
 }
 
 .nation-card__meta {
@@ -618,6 +625,10 @@ img { max-width: 100%; display: block; }
   margin: 0.04rem 0;
 }
 
+.screen--board.is-striking .nation-card__score {
+  font-size: clamp(0.62rem, 1.7vh, 0.78rem);
+}
+
 .nation-card__meta span {
   display: block;
   color: #d5e4f8;
@@ -639,7 +650,7 @@ img { max-width: 100%; display: block; }
   max-height: 100%;
   align-items: center;
   justify-items: center;
-  overflow: hidden;
+  overflow: visible;
   container-type: size;
 }
 
@@ -2124,7 +2135,7 @@ img { max-width: 100%; display: block; }
   .round-brief__section--scores { order: 5; }
 
   .round-brief__city img {
-    max-height: min(70px, 9vh);
+    max-height: min(88px, 11vh);
   }
 
   .round-brief__row > img,
@@ -2235,13 +2246,13 @@ img { max-width: 100%; display: block; }
   overflow: hidden;
 }
 
-/* The skyline gives way first on a short screen — the labels under it are the
-   part that has to stay readable */
+/* City art is square; contain so crowns, flags and skylines are not cropped */
 .round-brief__city img {
   width: 100%;
-  aspect-ratio: 16 / 10;
-  max-height: min(84px, 10vh);
-  object-fit: cover;
+  aspect-ratio: 1;
+  max-height: min(110px, 13vh);
+  object-fit: contain;
+  object-position: center;
   border-radius: 8px;
 }
 
@@ -3521,10 +3532,11 @@ img { max-width: 100%; display: block; }
 
 .round-report__world-list .nation-card,
 .screen--round-report .your-cities .nation-card {
-  /* Explicit height so city tiles (cqh-based) don't collapse */
-  height: 6.25rem;
+  /* Room for landmark + city name; no max-height so names are not clipped */
   min-height: 6.25rem;
-  max-height: 6.25rem;
+  height: auto;
+  max-height: none;
+  overflow: visible;
 }
 
 .round-report__panel-title {
@@ -3649,23 +3661,28 @@ img { max-width: 100%; display: block; }
   -webkit-overflow-scrolling: touch;
 }
 
-/* Desktop / iPad landscape: world list must scroll — overflow:hidden clipped to ~2 rows */
+/* Desktop / iPad landscape: share height so all ranked nations stay on-screen */
 .screen--round-report .round-report__world-desktop {
   min-height: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .screen--round-report .round-report__world-desktop .board-right__nations {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
+  padding-bottom: 0.75rem;
+  gap: 0.25rem;
 }
 
 .screen--round-report .round-report__world-desktop .board-right__nations .nation-card {
-  flex: 0 0 auto;
-  height: 5.75rem;
-  min-height: 5.75rem;
-  max-height: 5.75rem;
+  flex: 1 1 0;
+  min-height: 5.25rem;
+  height: auto;
+  max-height: none;
+  overflow: visible;
 }
 
 .round-report__world-mobile {
@@ -3684,16 +3701,29 @@ img { max-width: 100%; display: block; }
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
+  margin: 0;
+  padding: 0 0 0.5rem;
 }
 
 .round-report__world-list .nation-card {
   flex: 0 0 auto;
   min-height: 5.75rem;
   height: auto;
+  overflow: visible;
+}
+
+.screen--round-report .round-report__world-desktop .board-section-title {
+  flex: 0 0 auto;
 }
 
 .screen--round-report .your-cities .nation-card__portrait {
   width: min(72px, 24cqi, 16vh);
+}
+
+.nation-card .city-tile__name {
+  /* Keep labels inside the card, not clipped by the row below */
+  bottom: 0.05rem;
+  font-size: clamp(0.55rem, 1.35vh, 0.7rem);
 }
 
 .city-tile--static {
@@ -3718,13 +3748,41 @@ img { max-width: 100%; display: block; }
   animation: riseIn 0.4s ease both;
 }
 
-/* Final page: leader + score on top, all three cities in one row under */
+/* Final page: one compact row on desktop — leader, stats, 3 cities, score */
 .score-card--final {
-  display: flex;
-  flex-direction: column;
-  gap: 0.28rem;
-  align-items: stretch;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1.15fr) minmax(0, 1.35fr) auto;
+  grid-template-areas: 'img meta cities score';
+  gap: 0.35rem 0.45rem;
+  align-items: center;
   padding: 0.32rem 0.45rem 0.35rem;
+}
+
+.score-card--final .score-card__head {
+  display: contents;
+}
+
+.score-card--final .score-card__head > img {
+  grid-area: img;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  object-fit: contain;
+  object-position: center center;
+}
+
+.score-card--final .score-card__head > div {
+  grid-area: meta;
+  min-width: 0;
+}
+
+.score-card--final .score-card__head > em {
+  grid-area: score;
+  font-size: 1.15rem;
+}
+
+.score-card--final .score-card__cities {
+  grid-area: cities;
 }
 
 .score-card__head {
@@ -3732,14 +3790,6 @@ img { max-width: 100%; display: block; }
   grid-template-columns: 34px 1fr auto;
   gap: 0.4rem;
   align-items: center;
-}
-
-.score-card--final .score-card__head > img {
-  width: 34px;
-  height: 34px;
-  border-radius: 8px;
-  object-fit: cover;
-  object-position: top center;
 }
 
 .score-card__meta {
@@ -3766,10 +3816,6 @@ img { max-width: 100%; display: block; }
   border-radius: 0;
 }
 
-.score-card--final em {
-  font-size: 1.15rem;
-}
-
 .score-card__cities {
   list-style: none;
   margin: 0;
@@ -3777,18 +3823,19 @@ img { max-width: 100%; display: block; }
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.25rem;
+  min-width: 0;
 }
 
 .score-city {
   position: relative;
   min-width: 0;
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr);
+  grid-template-columns: 28px minmax(0, 1fr);
   grid-template-rows: auto auto;
-  column-gap: 0.3rem;
-  row-gap: 0.05rem;
+  column-gap: 0.25rem;
+  row-gap: 0;
   align-items: center;
-  padding: 0.18rem 0.25rem;
+  padding: 0.12rem 0.2rem;
   border-radius: 8px;
   border: 1px solid rgba(140, 190, 255, 0.2);
   background: rgba(8, 18, 36, 0.55);
@@ -3798,7 +3845,7 @@ img { max-width: 100%; display: block; }
 .score-city__frame {
   position: relative;
   grid-row: 1 / span 2;
-  width: 40px;
+  width: 28px;
   height: 28px;
   border-radius: 5px;
   overflow: hidden;
@@ -3809,7 +3856,8 @@ img { max-width: 100%; display: block; }
   height: 100%;
   max-height: none;
   aspect-ratio: auto;
-  object-fit: cover;
+  object-fit: contain;
+  object-position: center;
   border-radius: 0;
   display: block;
 }
@@ -3993,8 +4041,8 @@ img { max-width: 100%; display: block; }
 /* Final scores: keep every nation reachable on iPad / short viewports */
 @media (max-height: 1024px) {
   .score-card--final {
-    padding: 0.22rem 0.4rem 0.24rem;
-    gap: 0.18rem;
+    padding: 0.22rem 0.35rem;
+    gap: 0.25rem 0.35rem;
   }
 
   .score-card--final .score-card__head > img {
@@ -4002,7 +4050,7 @@ img { max-width: 100%; display: block; }
     height: 28px;
   }
 
-  .score-card--final em {
+  .score-card--final .score-card__head > em {
     font-size: 1rem;
   }
 
@@ -4011,13 +4059,13 @@ img { max-width: 100%; display: block; }
   }
 
   .score-city {
-    padding: 0.1rem 0.18rem;
-    grid-template-columns: 30px minmax(0, 1fr);
+    padding: 0.08rem 0.15rem;
+    grid-template-columns: 24px minmax(0, 1fr);
   }
 
   .score-city__frame {
-    width: 30px;
-    height: 22px;
+    width: 24px;
+    height: 24px;
   }
 
   .score-cards--final {
@@ -4042,14 +4090,33 @@ img { max-width: 100%; display: block; }
   display: none;
 }
 
-@media (max-width: 420px) {
+/* Narrow screens: cities drop under the score line (still 3 across) */
+@media (max-width: 720px) {
+  .score-card--final {
+    grid-template-columns: 34px minmax(0, 1fr) auto;
+    grid-template-areas:
+      'img meta score'
+      'cities cities cities';
+  }
+
   .score-city {
-    grid-template-columns: 34px minmax(0, 1fr);
+    grid-template-columns: 30px minmax(0, 1fr);
   }
 
   .score-city__frame {
-    width: 34px;
-    height: 24px;
+    width: 30px;
+    height: 30px;
+  }
+}
+
+@media (max-width: 420px) {
+  .score-city {
+    grid-template-columns: 28px minmax(0, 1fr);
+  }
+
+  .score-city__frame {
+    width: 28px;
+    height: 28px;
   }
 
   .score-city strong {
@@ -4139,13 +4206,60 @@ img { max-width: 100%; display: block; }
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
-  width: min(640px, 100%);
+  width: min(820px, 100%);
   margin: 0 auto;
   padding: 0.55rem 0.65rem 0;
   flex: 1 1 auto;
   min-height: 0;
   height: 100%;
   max-height: 100%;
+}
+
+/* Same nation-pod table as aftermath "World — standing", ranked */
+.game-over-layout--pods {
+  width: min(920px, 100%);
+}
+
+.game-over-ranking-panel {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  overflow: hidden;
+}
+
+.game-over-ranking-panel .board-section-title {
+  flex: 0 0 auto;
+  margin: 0;
+  color: #ffd59a;
+}
+
+.game-over-ranking {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  gap: 0.35rem;
+}
+
+.game-over-ranking .nation-card {
+  flex: 0 0 auto;
+  min-height: 5.75rem;
+  height: 5.75rem;
+  max-height: 5.75rem;
+  overflow: visible;
+  padding: 0.2rem 0.35rem;
+  border-radius: 12px;
+  background: rgba(3, 10, 24, 0.55);
+  border: 1px solid rgba(140, 190, 255, 0.16);
+}
+
+.game-over-ranking .nation-card.is-turn {
+  border-color: rgba(245, 197, 66, 0.55);
+  background: rgba(245, 197, 66, 0.1);
+  box-shadow: 0 0 18px rgba(245, 197, 66, 0.18);
 }
 
 .game-over-hero {
@@ -4200,6 +4314,27 @@ img { max-width: 100%; display: block; }
 
 .game-over-actions .btn {
   min-width: min(220px, 100%);
+}
+
+@media (max-height: 1024px) {
+  .game-over-ranking .nation-card {
+    min-height: 5.1rem;
+    height: 5.1rem;
+    max-height: 5.1rem;
+  }
+
+  .game-over-hero .winner-art {
+    width: min(56px, 14vw);
+  }
+
+  .game-over-hero .stencil-title {
+    font-size: clamp(1rem, 3.6vw, 1.4rem);
+  }
+
+  .game-over-actions {
+    padding-top: 0.35rem;
+    padding-bottom: calc(0.45rem + env(safe-area-inset-bottom, 0px));
+  }
 }
 
 @media (max-width: 900px) {
@@ -4413,8 +4548,8 @@ img { max-width: 100%; display: block; }
     max-width: 52px;
     max-height: 52px;
     flex-shrink: 0;
-    object-fit: cover;
-    object-position: top center;
+    object-fit: contain;
+    object-position: center center;
   }
 
   .nation-card--ally .nation-card__portrait img {
@@ -4491,9 +4626,10 @@ img { max-width: 100%; display: block; }
 
   .screen--round-report .your-cities .nation-card {
     flex: 0 0 auto;
-    height: 6.25rem;
     min-height: 6.25rem;
-    max-height: 6.25rem;
+    height: auto;
+    max-height: none;
+    overflow: visible;
   }
 
   .screen--round-report .round-report__actions {
@@ -4568,9 +4704,10 @@ img { max-width: 100%; display: block; }
   .screen--round-report .round-report__world-list .nation-card,
   .screen--round-report .your-cities .nation-card {
     flex: 0 0 auto;
-    height: 5.5rem;
     min-height: 5.5rem;
-    max-height: 5.5rem;
+    height: auto;
+    max-height: none;
+    overflow: visible;
   }
 
   .screen--round-report .round-report__actions {

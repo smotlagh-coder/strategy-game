@@ -41,6 +41,7 @@ const CITY_ART = {
 
 export const ART = {
   map: '/art/map-bg.webp',
+  splash: '/art/splash-hero.webp',
   missile: '/art/missile.webp',
   missileHydrogen: '/art/missile-hydrogen.webp',
   missileMagnetic: '/art/missile-magnetic.webp',

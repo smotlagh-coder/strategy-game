@@ -1411,9 +1411,9 @@ function StrikeTheater({
   );
 }
 
-function MapBackdrop() {
+function MapBackdrop({ src = ART.map }: { src?: string } = {}) {
   return (
-    <div className="map-backdrop" style={{ backgroundImage: `url(${ART.map})` }} aria-hidden />
+    <div className="map-backdrop" style={{ backgroundImage: `url(${src})` }} aria-hidden />
   );
 }
 
@@ -1589,6 +1589,8 @@ function NationPod({
   highlight,
   revealed = false,
   viewerId = null,
+  /** Final-score table: show place instead of the usual player label alone */
+  rank,
   onSelectCity,
 }: {
   id: NationId;
@@ -1611,6 +1613,7 @@ function NationPod({
   revealed?: boolean;
   /** Who is looking, for per-city intel: a spy service, or a swarm that got through */
   viewerId?: NationId | null;
+  rank?: number;
   onSelectCity?: (nationId: NationId, cityId: string) => void;
 }) {
   const n = state.nations[id];
@@ -1634,6 +1637,7 @@ function NationPod({
         />
         <div className="nation-card__meta">
           <strong>
+            {rank != null ? `#${rank} ` : ''}
             {playerDisplayName(state, id)}
             {n.eliminated ? ' — OUT' : ''}
           </strong>
@@ -1834,7 +1838,7 @@ function FxLayer({ events }: { events: FxEvent[] }) {
 function ModeSelect({ onSelect }: { onSelect: (m: GameMode) => void }) {
   return (
     <div className="screen screen--splash">
-      <MapBackdrop />
+      <MapBackdrop src={ART.splash} />
       <div className="splash-veil" />
       <div className="splash-content">
         <h1 className="stencil-title title-glow">NUCLEAR WAR</h1>
@@ -2720,7 +2724,15 @@ function GameBoard({
     : isHumanTurn
       ? [actorId]
       : state.turnOrder.filter((id) => state.nations[id].isHuman);
-  const enemyIds = state.turnOrder.filter((id) => !allyIds.includes(id));
+  const enemyIds = state.turnOrder
+    .filter((id) => !allyIds.includes(id))
+    .slice()
+    .sort((a, b) => {
+      const scoreDelta = computeScore(state, b).total - computeScore(state, a).total;
+      if (scoreDelta !== 0) return scoreDelta;
+      return state.turnOrder.indexOf(a) - state.turnOrder.indexOf(b);
+    });
+  const enemyRank = new Map(enemyIds.map((id, i) => [id, i + 1]));
   // The Enemies panel is read by whoever is at the screen, not by whoever is
   // taking their turn: while the AI moves, `actorId` is the AI, and reading the
   // board through its eyes would hide the defences the player paid to see.
@@ -3671,6 +3683,7 @@ function GameBoard({
                 selectionWeapon={droneSelectMode ? 'drone' : strikeWeapon}
                 cityWeapons={cityWeapons}
                 highlight={id === actorId}
+                rank={enemyRank.get(id)}
                 onSelectCity={strikeSelectMode ? onSelectCity : undefined}
               />
             ))}
@@ -3742,7 +3755,14 @@ function RoundSummary({
     (id) => Boolean(state.nations[id as NationId]?.isHuman),
     myNationId,
   ) as NationId[];
-  const worldIds = aftermathWorldIds(state.turnOrder, myCityIds) as NationId[];
+  const worldIds = (aftermathWorldIds(state.turnOrder, myCityIds) as NationId[])
+    .slice()
+    .sort((a, b) => {
+      const scoreDelta = computeScore(state, b).total - computeScore(state, a).total;
+      if (scoreDelta !== 0) return scoreDelta;
+      return state.turnOrder.indexOf(a) - state.turnOrder.indexOf(b);
+    });
+  const worldRank = new Map(worldIds.map((id, i) => [id, i + 1]));
   const isYouNation = (id: NationId) =>
     myNationId ? id === myNationId : Boolean(state.nations[id].isHuman);
   const worldRevealed = myCityIds.some((id) => state.nations[id].hasSpyNetwork);
@@ -3890,6 +3910,7 @@ function RoundSummary({
                       viewerId={myCityIds[0] ?? null}
                       highlightCityIds={destroyedCityIds}
                       highlight={state.nations[id].eliminated}
+                      rank={worldRank.get(id)}
                     />
                   ))}
                 </div>
@@ -3921,6 +3942,7 @@ function RoundSummary({
                 viewerId={myCityIds[0] ?? null}
                 highlightCityIds={destroyedCityIds}
                 highlight={state.nations[id].eliminated}
+                rank={worldRank.get(id)}
               />
             ))}
           </div>
@@ -3976,6 +3998,73 @@ function GameOver({
     void incrementSuperpowerWin(sessionUid, formatPlayerLabel(displayName, sessionUid));
   }, [state, sessionUid, displayName]);
 
+  const ranked =
+    state.roundScores.length > 0
+      ? state.roundScores
+      : state.turnOrder.map((id) => computeScore(state, id));
+  const myNationId =
+    sessionUid && state.uidToNation?.[sessionUid]
+      ? state.uidToNation[sessionUid]
+      : !isOnline
+        ? state.turnOrder.find(
+            (id) => state.nations[id].isHuman && state.nations[id].playerSlot === 1,
+          )
+        : null;
+
+  const ranking = (
+    <div className="board-right__nations game-over-ranking">
+      {ranked.map((row, i) => {
+        const isYou = row.nationId === myNationId;
+        return (
+          <NationPod
+            key={row.nationId}
+            id={row.nationId}
+            variant={isYou ? 'ally' : 'enemy'}
+            state={state}
+            revealed
+            rank={i + 1}
+            highlight={state.winner === row.nationId}
+          />
+        );
+      })}
+    </div>
+  );
+
+  const actions = (
+    <div className="mode-row game-over-actions">
+      {isOnline ? (
+        <>
+          {canStartRematch ? (
+            <button
+              className="btn btn--xl btn--primary"
+              type="button"
+              disabled={rematchBusy}
+              onClick={() => onRematch?.()}
+            >
+              {rematchBusy ? 'Starting…' : 'Play Again'}
+            </button>
+          ) : (
+            <p className="round-report__auto-hint">
+              Waiting for host to start Play Again…
+            </p>
+          )}
+          <button className="btn btn--xl" type="button" onClick={onRestart}>
+            Leave
+          </button>
+        </>
+      ) : (
+        <button className="btn btn--xl btn--primary" type="button" onClick={onRestart}>
+          Play Again
+        </button>
+      )}
+      {onLeaderboard && (
+        <button className="btn btn--xl" type="button" onClick={onLeaderboard}>
+          Leaderboard
+        </button>
+      )}
+    </div>
+  );
+
   return (
     <div className="screen screen--board screen--round-report screen--game-over">
       {state.winner ? (
@@ -3991,7 +4080,7 @@ function GameOver({
         <MapBackdrop />
       )}
       <div className="splash-veil splash-veil--flag" />
-      <div className="game-over-layout">
+      <div className="game-over-layout game-over-layout--pods">
         <header className="game-over-hero enter-pop">
           {state.winner && (
             <img className="winner-art" src={leaderArt(state, state.winner)} alt="" />
@@ -4006,134 +4095,12 @@ function GameOver({
           </div>
         </header>
 
-        <section className="panel panel--shop game-over-scores">
-          <h2 className="round-report__panel-title">Final scores</h2>
-          <div className="score-cards score-cards--compact score-cards--final">
-            {(state.roundScores.length > 0
-              ? state.roundScores
-              : state.turnOrder.map((id) => computeScore(state, id))
-            ).map((row, i) => {
-              const nation = state.nations[row.nationId];
-              const live = computeScore(state, row.nationId);
-              const isYou =
-                Boolean(sessionUid && nation.ownerUid === sessionUid) ||
-                (!isOnline && nation.isHuman && nation.playerSlot === 1);
-              const isWinner = state.winner === row.nationId;
-              return (
-                <div
-                  key={row.nationId}
-                  className={`score-card score-card--final ${row.eliminated ? 'is-out' : ''} ${isWinner ? 'is-lead' : ''} ${isYou ? 'is-you' : ''}`}
-                >
-                  <div className="score-card__head">
-                    <img src={leaderArt(state, row.nationId)} alt="" />
-                    <div>
-                      <strong>
-                        #{i + 1} {nationDef(row.nationId).name}
-                        {nation.isHuman ? ` (${playerDisplayName(state, row.nationId)})` : ''}
-                        {isWinner ? ' ★' : ''}
-                      </strong>
-                      <span className="score-card__meta">
-                        Survived {row.citySurvivalPoints}
-                        {(row.attackPoints ?? 0) > 0 && <> · Attack {row.attackPoints}</>}
-                        {(row.angelPoints ?? 0) > 0 && <> · Angel {row.angelPoints}</>}
-                        {(row.infamyPoints ?? 0) > 0 && <> · Infamy −{row.infamyPoints}</>}
-                        <span className="score-card__stat" title="Research centres">
-                          <img src={ART.researchIcon} alt="" draggable={false} />
-                          {live.researchCenters}
-                        </span>
-                        <span className="score-card__stat" title="Shields">
-                          <img src={ART.shield} alt="" draggable={false} />
-                          {live.shields}
-                        </span>
-                        {live.bunkers > 0 && (
-                          <span className="score-card__stat" title="Bunkers">
-                            🪨{live.bunkers}
-                          </span>
-                        )}
-                        {isYou ? ' · You' : nation.isHuman ? ' · Player' : ' · AI'}
-                      </span>
-                    </div>
-                    <em>{live.total}</em>
-                  </div>
-                  <ul
-                    className="score-card__cities"
-                    aria-label={`${nationDef(row.nationId).name} cities`}
-                  >
-                    {nation.cities.map((city) => (
-                      <li
-                        key={city.id}
-                        className={`score-city ${city.destroyed ? 'is-destroyed' : ''} ${
-                          city.isUnderground && !city.destroyed ? 'is-bunker' : ''
-                        } ${city.hasShield && !city.destroyed ? 'has-shield' : ''}`}
-                        title={`${city.name} — ${cityStatusLabel(city)}`}
-                      >
-                        <span className="score-city__frame">
-                          <img src={cityArt(city)} alt="" draggable={false} />
-                          {city.hasShield && !city.destroyed && (
-                            <span className="city-dome" aria-hidden />
-                          )}
-                          {city.destroyed && (
-                            <span className="city-smoke" aria-hidden>
-                              <i />
-                              <i />
-                              <i />
-                            </span>
-                          )}
-                        </span>
-                        <strong>{city.name}</strong>
-                        <div className="score-city__assets" aria-hidden>
-                          {city.hasResearch && !city.destroyed && (
-                            <img src={ART.researchIcon} alt="" draggable={false} />
-                          )}
-                          {city.hasLaser && !city.destroyed && (
-                            <img src={ART.laserIcon} alt="" draggable={false} />
-                          )}
-                          {city.isUnderground && !city.destroyed && (
-                            <span className="score-city__bunker">Bunker</span>
-                          )}
-                          {city.destroyed && <span className="score-city__ruin">Out</span>}
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              );
-            })}
-          </div>
+        <section className="game-over-ranking-panel" aria-label="Final ranking">
+          <h2 className="board-section-title">Final ranking</h2>
+          {ranking}
         </section>
 
-        <div className="mode-row game-over-actions">
-          {isOnline ? (
-            <>
-              {canStartRematch ? (
-                <button
-                  className="btn btn--xl btn--primary"
-                  type="button"
-                  disabled={rematchBusy}
-                  onClick={() => onRematch?.()}
-                >
-                  {rematchBusy ? 'Starting…' : 'Play Again'}
-                </button>
-              ) : (
-                <p className="round-report__auto-hint">
-                  Waiting for host to start Play Again…
-                </p>
-              )}
-              <button className="btn btn--xl" type="button" onClick={onRestart}>
-                Leave
-              </button>
-            </>
-          ) : (
-            <button className="btn btn--xl btn--primary" type="button" onClick={onRestart}>
-              Play Again
-            </button>
-          )}
-          {onLeaderboard && (
-            <button className="btn btn--xl" type="button" onClick={onLeaderboard}>
-              Leaderboard
-            </button>
-          )}
-        </div>
+        {actions}
         {rematchError && <p className="session-error">{rematchError}</p>}
       </div>
     </div>

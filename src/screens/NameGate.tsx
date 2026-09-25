@@ -22,7 +22,7 @@ export function NameGate({
     <div className="screen screen--splash">
       <div
         className="map-backdrop"
-        style={{ backgroundImage: `url(${ART.map})` }}
+        style={{ backgroundImage: `url(${ART.splash})` }}
         aria-hidden
       />
       <div className="splash-veil" />
