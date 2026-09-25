@@ -2636,6 +2636,17 @@ img { max-width: 100%; display: block; }
   gap: 0.85rem;
 }
 
+.strike-cinema__panel--hold {
+  width: min(360px, 88vw);
+  text-align: center;
+}
+
+.strike-cinema__hold-copy {
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
 .strike-recap__list {
   list-style: none;
   margin: 0;
@@ -3625,6 +3636,27 @@ img { max-width: 100%; display: block; }
   max-height: none;
   flex: 1 1 auto;
   min-height: 110px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Desktop / iPad landscape: world list must scroll — overflow:hidden clipped to ~2 rows */
+.screen--round-report .round-report__world-desktop {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.screen--round-report .round-report__world-desktop .board-right__nations {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.screen--round-report .round-report__world-desktop .board-right__nations .nation-card {
+  flex: 0 0 auto;
+  height: 5.75rem;
+  min-height: 5.75rem;
+  max-height: 5.75rem;
 }
 
 .round-report__world-mobile {
@@ -4474,6 +4506,71 @@ img { max-width: 100%; display: block; }
 
   .feature-card__costs {
     justify-content: flex-start;
+  }
+}
+
+/* iPad / short landscape: two-column aftermath still clips — use one scroll column */
+@media (max-height: 900px) and (min-width: 901px) and (orientation: landscape) {
+  .screen--round-report .board-split {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr;
+    overflow: hidden;
+  }
+
+  .screen--round-report .round-report__world-desktop {
+    display: none;
+  }
+
+  .screen--round-report .round-report__world-mobile {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    flex: 0 0 auto;
+  }
+
+  .screen--round-report .board-left {
+    border-right: none;
+    border-bottom: none;
+    overflow: hidden;
+  }
+
+  .screen--round-report .board-left__controls {
+    overflow: hidden;
+  }
+
+  .screen--round-report .round-report__panel {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  .screen--round-report .score-cards--compact {
+    max-height: none;
+    overflow: visible;
+    flex: 0 0 auto;
+  }
+
+  .screen--round-report .your-cities {
+    flex: 0 0 auto;
+    overflow: visible;
+    min-height: 0;
+  }
+
+  .screen--round-report .round-report__world-list .nation-card,
+  .screen--round-report .your-cities .nation-card {
+    flex: 0 0 auto;
+    height: 5.5rem;
+    min-height: 5.5rem;
+    max-height: 5.5rem;
+  }
+
+  .screen--round-report .round-report__actions {
+    position: sticky;
+    bottom: 0;
+    margin-top: 0.75rem;
+    padding-top: 0.5rem;
+    background: linear-gradient(180deg, transparent, rgba(8, 16, 28, 0.95) 28%);
+    z-index: 2;
   }
 }
 

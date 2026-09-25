@@ -1171,13 +1171,17 @@ function StrikeTheater({
   state,
   setState,
   cinemaHoldRef,
+  onBusyChange,
 }: {
   state: GameState;
   setState: React.Dispatch<React.SetStateAction<GameState>>;
   cinemaHoldRef: React.MutableRefObject<{ round: number; until: number } | null>;
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const [cinema, setCinema] = useState<StrikeShow | null>(null);
   const [recap, setRecap] = useState<RoundWorldEvent[] | null>(null);
+  /** Veil while waiting for the report / between volleys so RoundSummary cannot flash. */
+  const [holding, setHolding] = useState(false);
   const cinemaResolveRef = useRef<(() => void) | null>(null);
   const recapResolveRef = useRef<(() => void) | null>(null);
   /** Round whose cinema finished successfully — remounts may retry until then. */
@@ -1185,6 +1189,8 @@ function StrikeTheater({
   const sessionRef = useRef(0);
   const stateRef = useRef(state);
   stateRef.current = state;
+  const onBusyChangeRef = useRef(onBusyChange);
+  onBusyChangeRef.current = onBusyChange;
 
   const onCinemaComplete = useCallback(() => {
     setCinema(null);
@@ -1208,15 +1214,27 @@ function StrikeTheater({
   // the payload arrives so a timed-out empty wait can start the cinema.
   const reportKey = `${(state.resolvedStrikes ?? []).length}:${(state.previousRoundEvents ?? []).length}`;
 
+  const theaterBusy = holding || Boolean(cinema) || Boolean(recap);
   useEffect(() => {
-    if (!showing) return;
+    onBusyChangeRef.current?.(theaterBusy);
+  }, [theaterBusy]);
+
+  useEffect(() => {
+    if (!showing) {
+      setHolding(false);
+      return;
+    }
     if (summaryRound !== round) return;
-    if (finishedRoundRef.current === round) return;
+    if (finishedRoundRef.current === round) {
+      setHolding(false);
+      return;
+    }
 
     const session = ++sessionRef.current;
     let cancelled = false;
     let reportTimer = 0;
     const alive = () => !cancelled && sessionRef.current === session;
+    setHolding(true);
 
     const armClock = () =>
       setState((cur) => {
@@ -1323,6 +1341,7 @@ function StrikeTheater({
         if (alive()) {
           finishedRoundRef.current = round;
           armClock();
+          setHolding(false);
         }
       } finally {
         if (sessionRef.current === session) cinemaHoldRef.current = null;
@@ -1341,6 +1360,7 @@ function StrikeTheater({
         if (waitedMs >= REPORT_WAIT_MS) {
           // Peaceful round (or report never came) — don't block forever
           finishedRoundRef.current = round;
+          setHolding(false);
           return;
         }
         reportTimer = window.setTimeout(
@@ -1360,12 +1380,23 @@ function StrikeTheater({
       if (sessionRef.current === session) {
         cinemaHoldRef.current = null;
         clearTheater();
+        // Leave holding true across Strict Mode remounts so RoundSummary
+        // cannot flash between cleanup and the next play() arm.
       }
     };
   }, [showing, round, summaryRound, reportKey, setState, cinemaHoldRef]);
 
   return (
     <>
+      {holding && !cinema && !recap && (
+        <div className="strike-cinema strike-cinema--hold" role="status" aria-live="polite">
+          <div className="strike-cinema__veil" />
+          <div className="strike-cinema__panel strike-cinema__panel--hold enter-pop">
+            <header className="strike-cinema__title">INCOMING</header>
+            <p className="strike-cinema__hold-copy">Tracking launches…</p>
+          </div>
+        </div>
+      )}
       {cinema && <StrikeCinema state={state} strike={cinema} onComplete={onCinemaComplete} />}
       {recap && <StrikeRecap events={recap} onContinue={onRecapContinue} />}
     </>
@@ -4112,6 +4143,8 @@ export default function App() {
   const lastDropoutSeqRef = useRef(0);
   const [rematchBusy, setRematchBusy] = useState(false);
   const [rematchError, setRematchError] = useState<string | null>(null);
+  /** Hide RoundSummary while strike cinema / hold veil is up (stops mobile flash). */
+  const [strikeTheaterBusy, setStrikeTheaterBusy] = useState(false);
 
   const advanceFromRoundSummary = useCallback(() => {
     const current = appStateRef.current;
@@ -4538,8 +4571,13 @@ export default function App() {
           }}
         />
       )}
-      <StrikeTheater state={state} setState={setState} cinemaHoldRef={cinemaHoldRef} />
-      {state.phase === 'roundSummary' && (
+      <StrikeTheater
+        state={state}
+        setState={setState}
+        cinemaHoldRef={cinemaHoldRef}
+        onBusyChange={setStrikeTheaterBusy}
+      />
+      {state.phase === 'roundSummary' && !strikeTheaterBusy && (
         <RoundSummary
           state={state}
           sessionUid={sessionUid}

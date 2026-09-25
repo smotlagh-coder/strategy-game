@@ -9,6 +9,7 @@ import {
   isPlayerOnline,
   joinLobby,
   leaveLobby,
+  listenGame,
   listenInvitesFor,
   listenLobby,
   listenMyActiveGames,
@@ -44,26 +45,40 @@ export function LobbyScreen({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const joinedGameRef = useRef<string | null>(null);
+  const joiningGameRef = useRef<string | null>(null);
   const onGameReadyRef = useRef(onGameReady);
   onGameReadyRef.current = onGameReady;
 
   const enterGame = useCallback(
     async (gameId: string, prefetched?: GameState) => {
       if (joinedGameRef.current === gameId) return;
-      joinedGameRef.current = gameId;
+      // A bare fetch already in flight — let a prefetched snapshot cut the line
+      if (joiningGameRef.current === gameId && !prefetched) return;
+      joiningGameRef.current = gameId;
       try {
         await setPlayerStatus(uid, 'in_game', gameId);
-        const state =
-          prefetched ??
-          (await fetchGame(gameId).then((g) => g?.state ?? null));
+        let state = prefetched ?? null;
+        // Host writes the game doc then the lobby pointer; a guest can see the
+        // lobby update a beat before the game is readable — retry briefly.
         if (!state) {
-          joinedGameRef.current = null;
-          setError('Game not found');
+          for (let attempt = 0; attempt < 8; attempt += 1) {
+            if (joinedGameRef.current === gameId) return;
+            state = (await fetchGame(gameId))?.state ?? null;
+            if (state) break;
+            await new Promise((r) => window.setTimeout(r, 400 + attempt * 200));
+          }
+        }
+        if (!state) {
+          if (joiningGameRef.current === gameId) joiningGameRef.current = null;
+          setError('Game not found — waiting for host…');
           return;
         }
+        if (joinedGameRef.current === gameId) return;
+        joinedGameRef.current = gameId;
+        setError(null);
         onGameReadyRef.current(gameId, { ...state, onlineGameId: gameId });
       } catch (e) {
-        joinedGameRef.current = null;
+        if (joiningGameRef.current === gameId) joiningGameRef.current = null;
         setError(e instanceof Error ? e.message : 'Could not join game');
       }
     },
@@ -93,12 +108,36 @@ export function LobbyScreen({
     return listenLobby(lobbyId, setLobby);
   }, [lobbyId]);
 
-  // Guests enter only the match the host started for THIS lobby
+  // Guests enter the match as soon as the lobby points at a game. Keep retrying
+  // until join sticks — a one-shot effect used to leave peers on the lobby for
+  // a long time when the first fetch raced the host write.
   useEffect(() => {
     const gameId = lobby?.gameId;
     if (!gameId) return;
     if (lobby?.status !== 'starting' && lobby?.status !== 'closed') return;
-    void enterGame(gameId);
+
+    let cancelled = false;
+    const tryJoin = () => {
+      if (cancelled || joinedGameRef.current === gameId) return;
+      void enterGame(gameId);
+    };
+    tryJoin();
+    const poll = window.setInterval(tryJoin, 1_500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(poll);
+    };
+  }, [lobby?.gameId, lobby?.status, enterGame]);
+
+  // Live game doc — enters as soon as Firestore can read the match (beats getDoc races)
+  useEffect(() => {
+    const gameId = lobby?.gameId;
+    if (!gameId) return;
+    if (lobby?.status !== 'starting' && lobby?.status !== 'closed') return;
+    return listenGame(gameId, (game) => {
+      if (!game?.state) return;
+      void enterGame(gameId, game.state);
+    });
   }, [lobby?.gameId, lobby?.status, enterGame]);
 
   // Confirm the lobby game exists (covers a missed lobby snapshot)
@@ -111,6 +150,23 @@ export function LobbyScreen({
       void enterGame(pick.id, pick.data.state);
     });
   }, [uid, lobbyId, lobby?.gameId, enterGame]);
+
+  // While waiting for the host, also poll the lobby doc in case the snapshot stalls
+  useEffect(() => {
+    if (!lobbyId || lobby?.gameId || joinedGameRef.current) return;
+    let cancelled = false;
+    const pull = () => {
+      void fetchLobby(lobbyId).then((fresh) => {
+        if (cancelled || !fresh?.gameId) return;
+        setLobby(fresh);
+      });
+    };
+    const poll = window.setInterval(pull, 2_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(poll);
+    };
+  }, [lobbyId, lobby?.gameId]);
 
   useEffect(() => {
     // Don't clobber in_game while a match is starting / joining
@@ -216,6 +272,7 @@ export function LobbyScreen({
   const onLeave = async () => {
     if (lobbyId) await leaveLobby(lobbyId, uid);
     joinedGameRef.current = null;
+    joiningGameRef.current = null;
     setLobbyId(null);
   };
 
