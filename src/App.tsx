@@ -1642,12 +1642,14 @@ function NationPod({
             <span className="stance-badges">
               {isAngel && (
                 <span className="stance-mark stance-mark--peace" title="Most peaceful this round">
-                  ☮
+                  <span aria-hidden>☮</span>
+                  Peace
                 </span>
               )}
               {isEvil && (
                 <span className="stance-mark stance-mark--evil" title="Aggressor this round">
-                  ☠
+                  <span aria-hidden>☠</span>
+                  Evil
                 </span>
               )}
             </span>
@@ -3865,12 +3867,14 @@ function RoundSummary({
                         <img src={leaderArt(state, row.nationId)} alt="" />
                         {state.angelNationId === row.nationId && (
                           <span className="stance-mark stance-mark--peace" title="Most peaceful this round">
-                            ☮
+                            <span aria-hidden>☮</span>
+                            Peace
                           </span>
                         )}
                         {state.evilNationId === row.nationId && (
                           <span className="stance-mark stance-mark--evil" title="Aggressor this round">
-                            ☠
+                            <span aria-hidden>☠</span>
+                            Evil
                           </span>
                         )}
                       </span>
