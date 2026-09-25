@@ -1,7 +1,7 @@
 # Nuclear War
 
 > I dedicate this game to my son, **Kian**, whom I love more than anything in this world.
-> I made it for him, to learn about strategy and planning.
+> I built it so he would feel — not just hear — the lessons that matter: never trade the long game for a cheap win; success does not arrive by accident, only by strategy and plan; a life spent only defending is eventually overrun, and a bully earns a reputation that turns the world against him; keep offence and defence in balance; and invest with care, because what you put your weight behind is what pays you back.
 
 Turn-based nuclear strategy for **1–5 players**. Twelve countries — **US, UK, France, Russia, China, India, Pakistan, Iran, North Korea, Canada, Brazil, Australia** — five seated per match, with empty seats filled by AI.
 
