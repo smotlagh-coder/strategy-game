@@ -748,7 +748,7 @@ function StrikeCinema({
                 const to = nationDef(target.to);
                 const impact = booms[i];
                 const ballistic = Boolean(impact && isBallisticWeapon(impact.weapon));
-                const showBunker = Boolean(target.hadBunker && !(impact && target.leveled));
+                const showBunker = Boolean(target.hadBunker);
                 const shieldShattered = Boolean(
                   impact && target.hadShield && (impact.shieldBreak || impact.leveled),
                 );
@@ -786,6 +786,9 @@ function StrikeCinema({
                         }
                         alt=""
                       />
+                      {showBunker && (
+                        <span className="strike-cinema__bunker">Bunker</span>
+                      )}
                       {target.hadShield && (
                         <span
                           className={`strike-cinema__dome${shieldShattered ? ' is-shattered' : ''}`}

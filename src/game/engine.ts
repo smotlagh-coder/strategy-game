@@ -1772,6 +1772,7 @@ function applyDroneStrike(
         cityName: city.name,
         attackerId: strike.attackerId,
         amount: damage,
+        cover: city.isUnderground ? 'bunker' : city.hasShield ? 'shield' : undefined,
       }),
     ],
   };
