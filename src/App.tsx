@@ -334,7 +334,7 @@ function OutcomeTheme({ victory }: { victory: boolean }) {
       void audio.play().then(() => {
         stopTimer = window.setTimeout(() => {
           audio.pause();
-        }, 5000);
+        }, 10000);
       }).catch(() => {
         played = false;
       });
@@ -371,6 +371,14 @@ interface StrikeTarget {
   lasered?: boolean;
   /** The warhead broke against the bunker: the ground shakes, nothing burns */
   absorbed?: boolean;
+  /** A shield was up when this volley left the pad */
+  hadShield?: boolean;
+  /** The city was dug in when this volley left the pad */
+  hadBunker?: boolean;
+  /** This attacker's warhead leveled the city */
+  leveled?: boolean;
+  /** A magnetic bomb had darkened this nation's lasers before the hit */
+  laserDown?: boolean;
 }
 
 /** One attacker's whole volley — every missile flies in the same panel. */
@@ -399,6 +407,39 @@ function boomArt(weapon: StrikeWeapon): string {
   if (weapon === 'hydrogen') return ART.explosionHydrogen;
   if (weapon === 'magnetic') return ART.explosionMagnetic;
   return ART.explosion;
+}
+
+function cinemaCaption(target: StrikeTarget, impacted: boolean): string | null {
+  const warhead = target.weapons.some(isBallisticWeapon);
+  const swarm = target.weapons.includes('drone');
+  const escorted = swarm && warhead;
+  if (!impacted) {
+    if (target.hadBunker) return 'Underground bunker';
+    if (target.hadShield && escorted && target.laserDown) {
+      return 'Shield and laser — magnetic bomb inbound';
+    }
+    if (target.hadShield && escorted) return 'Shielded — swarm and warhead inbound';
+    if (target.hadShield) return 'City shield';
+    if (target.weapons.includes('hydrogen')) return 'Hydrogen warhead';
+    if (target.weapons.includes('magnetic')) return 'Magnetic EMP';
+    if (target.lasered) return 'Lasers tracking the swarm';
+    if (swarm) return 'Drone swarm';
+    return null;
+  }
+  if (target.absorbed) return 'Bunker held — no damage';
+  if (target.leveled && target.hadBunker) return 'Bunker cracked — city in rubble';
+  if (target.leveled && escorted && target.laserDown) {
+    return 'Laser down, swarm through — city in rubble';
+  }
+  if (target.leveled && escorted) return 'Swarm tied up the shield — city in rubble';
+  if (target.leveled && target.hadShield) return 'Shield failed — city in rubble';
+  if (target.hadShield && !target.leveled && warhead) return 'Shield shattered';
+  if (target.leveled) return 'City in rubble';
+  if (target.lasered) return 'Lasers shot the swarm down';
+  if (swarm) {
+    return warhead ? 'Shield swarmed' : `−$${target.droneBill ?? DRONE_DAMAGE}M damages`;
+  }
+  return null;
 }
 
 function strikeTitle(flightPlan: { weapon: StrikeWeapon }[], targetCount: number): string {
@@ -438,7 +479,14 @@ function StrikeCinema({
   const missileRefs = useRef<(HTMLDivElement | null)[]>([]);
   const pathRefs = useRef<(SVGPathElement | null)[]>([]);
   const [booms, setBooms] = useState<
-    ({ x: number; y: number; weapon: StrikeWeapon; absorbed?: boolean } | null)[]
+    ({
+      x: number;
+      y: number;
+      weapon: StrikeWeapon;
+      absorbed?: boolean;
+      shieldBreak?: boolean;
+      leveled?: boolean;
+    } | null)[]
   >([]);
   /** Where a laser caught a swarm, and the beam that did it */
   const [zaps, setZaps] = useState<
@@ -459,6 +507,12 @@ function StrikeCinema({
       weapon,
       intercepted: weapon === 'drone' && Boolean(target.lasered),
       absorbed: isBallisticWeapon(weapon) && Boolean(target.absorbed),
+      shieldBreak:
+        isBallisticWeapon(weapon) &&
+        Boolean(target.hadShield) &&
+        !target.leveled &&
+        !target.absorbed,
+      leveled: isBallisticWeapon(weapon) && Boolean(target.leveled),
     })),
   );
   const title = strikeTitle(flightPlan, count);
@@ -506,6 +560,8 @@ function StrikeCinema({
           weapon: leg.weapon,
           intercepted: leg.intercepted,
           absorbed: leg.absorbed,
+          shieldBreak: leg.shieldBreak,
+          leveled: leg.leveled,
         }))
         .filter((f) => f.missile && f.city);
       if (!layer || !launcher || flights.length === 0) {
@@ -594,6 +650,8 @@ function StrikeCinema({
             y: number;
             weapon: StrikeWeapon;
             absorbed?: boolean;
+            shieldBreak?: boolean;
+            leveled?: boolean;
           } | null)[] = strikeRef.current.targets.map(() => null);
           for (const arc of arcs) {
             // A swarm the lasers burnt never reaches the city, so nothing lands
@@ -601,17 +659,28 @@ function StrikeCinema({
             const landed = impacts[arc.targetIndex];
             // A warhead outshines any swarm sharing the same city
             if (landed && isBallisticWeapon(landed.weapon)) continue;
-            impacts[arc.targetIndex] = { ...arc.p2, weapon: arc.weapon, absorbed: arc.absorbed };
+            impacts[arc.targetIndex] = {
+              ...arc.p2,
+              weapon: arc.weapon,
+              absorbed: arc.absorbed,
+              shieldBreak: arc.shieldBreak,
+              leveled: arc.leveled,
+            };
           }
           // A warhead that broke on rock gets a low, smothered thud rather than
-          // the airburst — the blast went into the ground, not the skyline
-          const anyBlast = impacts.some((i) => i && isBallisticWeapon(i.weapon) && !i.absorbed);
+          // the airburst — the blast went into the ground, not the skyline.
+          // A shield that stops the shot cracks instead of burning the skyline.
+          const anyBlast = impacts.some(
+            (i) => i && isBallisticWeapon(i.weapon) && !i.absorbed && !i.shieldBreak,
+          );
+          const anyShield = impacts.some((i) => i?.shieldBreak);
           const anyRock = impacts.some((i) => i && isBallisticWeapon(i.weapon) && i.absorbed);
           const anyMagnetic = impacts.some((i) => i?.weapon === 'magnetic' && !i.absorbed);
           const anyHydrogen = impacts.some((i) => i?.weapon === 'hydrogen' && !i.absorbed);
           if (anyHydrogen) playSfx(SFX.explosion, 1, 0.78);
           else if (anyMagnetic) playSfx(SFX.explosion, 0.85, 1.55);
           else if (anyBlast) playSfx(SFX.explosion, 0.95);
+          else if (anyShield) playSfx(SFX.explosion, 0.65, 1.35);
           else if (anyRock) playSfx(SFX.explosion, 0.5, 0.6);
           else playSfx(SFX.explosion, 0.3, 2.1);
           setBooms(impacts);
@@ -677,69 +746,84 @@ function StrikeCinema({
             <div className="strike-cinema__targets">
               {strike.targets.map((target, i) => {
                 const to = nationDef(target.to);
+                const impact = booms[i];
+                const ballistic = Boolean(impact && isBallisticWeapon(impact.weapon));
+                const showBunker = Boolean(target.hadBunker && !(impact && target.leveled));
+                const shieldShattered = Boolean(
+                  impact && target.hadShield && (impact.shieldBreak || impact.leveled),
+                );
+                const artClass = [
+                  'strike-cinema__target-art',
+                  showBunker ? 'is-bunker' : '',
+                  ballistic && impact?.shieldBreak ? 'is-shield-break' : '',
+                  ballistic && impact?.absorbed ? 'is-absorbed' : '',
+                  ballistic && impact?.leveled ? 'is-rubble' : '',
+                  ballistic && impact?.leveled && impact.weapon === 'hydrogen' ? 'is-fusion' : '',
+                  ballistic && impact?.leveled && impact.weapon === 'magnetic' ? 'is-emp' : '',
+                  ballistic &&
+                  impact?.leveled &&
+                  impact.weapon !== 'hydrogen' &&
+                  impact.weapon !== 'magnetic'
+                    ? 'is-burning'
+                    : '',
+                  impact && !ballistic ? 'is-rattled' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ');
+                const caption = cinemaCaption(target, Boolean(impact));
                 return (
                   <div className="strike-cinema__target" key={`${target.to}-${target.cityId}`}>
-                    <div
-                      className={`strike-cinema__target-art ${
-                        booms[i] && isBallisticWeapon(booms[i]!.weapon)
-                          ? booms[i]?.absorbed
-                            ? 'is-absorbed'
-                            : booms[i]?.weapon === 'magnetic'
-                              ? 'is-emp'
-                              : booms[i]?.weapon === 'hydrogen'
-                                ? 'is-fusion'
-                                : 'is-burning'
-                          : booms[i]
-                            ? 'is-rattled'
-                            : ''
-                      }`}
-                    >
+                    <div className={artClass}>
                       <img
                         ref={(el) => {
                           cityRefs.current[i] = el;
                         }}
                         className="strike-cinema__city"
-                        src={ART.cities[target.cityId]}
+                        src={
+                          showBunker
+                            ? ART.citiesUnderground[target.cityId]
+                            : ART.cities[target.cityId]
+                        }
                         alt=""
                       />
+                      {target.hadShield && (
+                        <span
+                          className={`strike-cinema__dome${shieldShattered ? ' is-shattered' : ''}`}
+                          aria-hidden
+                        />
+                      )}
+                      {shieldShattered && (
+                        <span className="strike-cinema__shards" aria-hidden>
+                          {[0, 1, 2, 3, 4, 5].map((n) => (
+                            <i key={n} />
+                          ))}
+                        </span>
+                      )}
                       <img
                         className="strike-cinema__leader-sm"
                         src={leaderArt(state, target.to)}
                         alt=""
                       />
-                      {booms[i] &&
-                        isBallisticWeapon(booms[i]!.weapon) &&
-                        (booms[i]?.absorbed ? (
-                          <span className="strike-cinema__rubble" aria-hidden />
-                        ) : booms[i]?.weapon === 'magnetic' ? (
+                      {ballistic &&
+                        impact?.leveled &&
+                        (impact.weapon === 'magnetic' ? (
                           <span className="strike-cinema__emp" aria-hidden />
                         ) : (
                           <span className="strike-cinema__fire" aria-hidden />
                         ))}
-                      {booms[i]?.weapon === 'drone' && (
+                      {ballistic && impact?.leveled && (
+                        <span className="strike-cinema__ash" aria-hidden />
+                      )}
+                      {ballistic && impact?.absorbed && (
+                        <span className="strike-cinema__rubble" aria-hidden />
+                      )}
+                      {impact?.weapon === 'drone' && (
                         <span className="strike-cinema__dust" aria-hidden />
                       )}
                     </div>
                     <strong>{to.name}</strong>
                     <span>{target.cityName}</span>
-                    {(target.absorbed ||
-                      target.weapons.includes('drone') ||
-                      target.weapons.includes('hydrogen') ||
-                      target.weapons.includes('magnetic')) && (
-                      <span className="strike-cinema__tag">
-                        {target.absorbed
-                          ? 'Broke against the bunker'
-                          : target.weapons.includes('hydrogen')
-                            ? 'Hydrogen warhead'
-                            : target.weapons.includes('magnetic')
-                              ? 'Magnetic EMP'
-                              : target.droneBill === 0
-                                ? 'Lasers shot the swarm down'
-                                : target.weapons.some(isBallisticWeapon)
-                                  ? 'Shield swarmed'
-                                  : `−$${target.droneBill ?? DRONE_DAMAGE}M damages`}
-                      </span>
-                    )}
+                    {caption && <span className="strike-cinema__tag">{caption}</span>}
                   </div>
                 );
               })}
@@ -832,10 +916,14 @@ function StrikeCinema({
                     boom.weapon === 'drone' ? ' strike-cinema__boom--drone' : ''
                   }${boom.weapon === 'hydrogen' ? ' strike-cinema__boom--hydrogen' : ''}${
                     boom.weapon === 'magnetic' ? ' strike-cinema__boom--magnetic' : ''
-                  }${boom.absorbed ? ' strike-cinema__boom--rock' : ''}`}
+                  }${boom.absorbed ? ' strike-cinema__boom--rock' : ''}${
+                    boom.shieldBreak ? ' strike-cinema__boom--shield' : ''
+                  }`}
                   style={{ left: boom.x, top: boom.y }}
                 >
-                  {boom.weapon === 'drone' || boom.absorbed ? (
+                  {boom.shieldBreak ? (
+                    <span className="strike-cinema__pop" />
+                  ) : boom.weapon === 'drone' || boom.absorbed ? (
                     // No fireball on rock: a grey shock ring and flying debris
                     <>
                       <span className="strike-cinema__pop" />
@@ -1402,7 +1490,25 @@ function StrikeTheater({
       });
 
       try {
-        for (const volley of groupStrikesByAttacker(strikes)) {
+        const volleys = groupStrikesByAttacker(strikes).slice().sort((a, b) => {
+          const rank = (volley: { attackerId: NationId; strikes: PendingStrike[] }) => {
+            let score = 0;
+            for (const strike of volley.strikes) {
+              const mine = events.filter(
+                (e) => e.attackerId === volley.attackerId && e.cityId === strike.cityId,
+              );
+              if (mine.some((e) => e.kind === 'cityDestroyed')) score = Math.max(score, 2);
+              else if (
+                mine.some((e) => e.kind === 'shieldDestroyed' || e.kind === 'strikeAbsorbed')
+              ) {
+                score = Math.max(score, 1);
+              }
+            }
+            return score;
+          };
+          return rank(a) - rank(b);
+        });
+        for (const volley of volleys) {
           if (!alive()) break;
           const targets: StrikeTarget[] = [];
           for (const strike of volley.strikes) {
@@ -1431,13 +1537,22 @@ function StrikeTheater({
                 e.nationId === strike.targetNationId &&
                 e.attackerId === volley.attackerId,
             );
-            const absorbed = events.some(
+            const mine = events.filter(
               (e) =>
-                e.kind === 'strikeAbsorbed' &&
                 e.cityId === strike.cityId &&
                 e.nationId === strike.targetNationId &&
                 e.attackerId === volley.attackerId,
             );
+            const absorbed = mine.some((e) => e.kind === 'strikeAbsorbed');
+            const leveled = mine.some((e) => e.kind === 'cityDestroyed');
+            const cover = mine.find((e) => e.cover)?.cover;
+            const hadBunker =
+              absorbed || cover === 'bunker' || Boolean(city?.isUnderground && !leveled);
+            const hadShield =
+              mine.some((e) => e.kind === 'shieldDestroyed') ||
+              cover === 'shield' ||
+              Boolean(city?.hasShield && !leveled && !absorbed);
+            const laserDown = mine.some((e) => e.laserDown);
             targets.push({
               to: strike.targetNationId,
               cityId: strike.cityId,
@@ -1446,6 +1561,10 @@ function StrikeTheater({
               droneBill: lasered ? 0 : city ? droneDamageFor(city) : DRONE_DAMAGE,
               lasered,
               absorbed,
+              hadShield,
+              hadBunker,
+              leveled,
+              laserDown,
             });
           }
           await new Promise<void>((resolve) => {

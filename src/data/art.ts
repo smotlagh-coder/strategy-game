@@ -201,6 +201,6 @@ export const SFX = {
   launch: '/sounds/launch.wav',
   explosion: '/sounds/explosion.wav',
   theme: '/sounds/heroic-theme.m4a?v=2',
-  victory: '/sounds/victory.m4a?v=3',
-  defeat: '/sounds/defeat.m4a?v=3',
+  victory: '/sounds/victory.m4a?v=4',
+  defeat: '/sounds/defeat.m4a?v=4',
 } as const;

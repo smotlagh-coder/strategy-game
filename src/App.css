@@ -2989,12 +2989,110 @@ img { max-width: 100%; display: block; }
   position: absolute;
   right: -10px;
   bottom: -10px;
+  z-index: 5;
   width: 48px;
   height: 48px;
   object-fit: cover;
   border-radius: 12px;
   border: 2px solid rgba(255, 255, 255, 0.25);
   background: #0a1220;
+}
+
+.strike-cinema__target-art.is-bunker .strike-cinema__city {
+  filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.75))
+    drop-shadow(0 0 14px rgba(245, 197, 66, 0.75));
+}
+
+.strike-cinema__dome {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse 92% 88% at 50% 78%,
+    rgba(90, 185, 255, 0.28) 0%,
+    rgba(50, 140, 230, 0.16) 42%,
+    transparent 72%
+  );
+}
+
+.strike-cinema__dome::before {
+  content: '';
+  position: absolute;
+  left: 6%;
+  right: 6%;
+  top: 4%;
+  bottom: 16%;
+  border-radius: 50% 50% 42% 42% / 78% 78% 28% 28%;
+  border: 2px solid rgba(170, 230, 255, 0.9);
+  border-bottom-color: rgba(120, 200, 255, 0.4);
+  box-shadow:
+    0 0 16px rgba(80, 180, 255, 0.7),
+    inset 0 0 18px rgba(120, 200, 255, 0.35);
+  background: linear-gradient(
+    180deg,
+    rgba(190, 240, 255, 0.22) 0%,
+    rgba(80, 170, 255, 0.08) 48%,
+    transparent 72%
+  );
+}
+
+.strike-cinema__dome.is-shattered {
+  animation: shieldBurst 0.75s ease-out forwards;
+}
+
+@keyframes shieldBurst {
+  0% { opacity: 1; transform: scale(1); filter: brightness(1); }
+  22% { opacity: 1; transform: scale(1.08); filter: brightness(2.6); }
+  100% { opacity: 0; transform: scale(1.4); filter: brightness(1.2); }
+}
+
+.strike-cinema__shards {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+
+.strike-cinema__shards i {
+  position: absolute;
+  left: 50%;
+  top: 40%;
+  width: 16px;
+  height: 7px;
+  margin-left: -8px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, rgba(220, 248, 255, 0.98), rgba(70, 160, 230, 0.15));
+  box-shadow: 0 0 8px rgba(130, 215, 255, 0.9);
+  animation: shieldShard 0.7s ease-out forwards;
+}
+
+.strike-cinema__shards i:nth-child(1) { --dx: -52px; --dy: -18px; --rot: -48deg; }
+.strike-cinema__shards i:nth-child(2) { --dx: -28px; --dy: -46px; --rot: -12deg; animation-delay: 0.02s; }
+.strike-cinema__shards i:nth-child(3) { --dx: 8px; --dy: -50px; --rot: 18deg; }
+.strike-cinema__shards i:nth-child(4) { --dx: 46px; --dy: -22px; --rot: 42deg; animation-delay: 0.03s; }
+.strike-cinema__shards i:nth-child(5) { --dx: 34px; --dy: 8px; --rot: 70deg; animation-delay: 0.04s; }
+.strike-cinema__shards i:nth-child(6) { --dx: -40px; --dy: 6px; --rot: -72deg; }
+
+@keyframes shieldShard {
+  0% { transform: translate(0, 0) rotate(0deg) scale(1); opacity: 1; }
+  100% { transform: translate(var(--dx), var(--dy)) rotate(var(--rot)) scale(0.55); opacity: 0; }
+}
+
+.strike-cinema__ash {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 50% 100%, rgba(36, 32, 28, 0.62), transparent 58%),
+    radial-gradient(ellipse at 28% 92%, rgba(90, 78, 66, 0.4), transparent 52%);
+  animation: ashSettle 0.85s ease-out forwards;
+}
+
+@keyframes ashSettle {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
 }
 
 .strike-cinema__arc {
@@ -3214,6 +3312,22 @@ img { max-width: 100%; display: block; }
 .strike-cinema__boom--rock {
   width: 140px;
   height: 140px;
+}
+
+.strike-cinema__boom--shield {
+  width: 150px;
+  height: 150px;
+}
+
+.strike-cinema__boom--shield .strike-cinema__pop {
+  border-color: rgba(190, 235, 255, 0.95);
+  background: radial-gradient(
+    circle,
+    rgba(210, 245, 255, 0.55),
+    rgba(80, 170, 255, 0.15) 55%,
+    transparent 72%
+  );
+  box-shadow: 0 0 28px rgba(120, 210, 255, 0.85);
 }
 
 /* A dust shockwave rolling out of the ground, not a burst of energy */
@@ -3486,6 +3600,41 @@ img { max-width: 100%; display: block; }
   0% { filter: brightness(2.4) saturate(0.4) drop-shadow(0 0 24px rgba(255, 150, 40, 0.95)); }
   35% { filter: brightness(0.85) saturate(0.6) sepia(0.2) drop-shadow(0 0 20px rgba(255, 90, 20, 0.85)); }
   100% { filter: brightness(0.5) saturate(0.45) sepia(0.45) contrast(1.15) drop-shadow(0 0 16px rgba(255, 80, 20, 0.7)); }
+}
+
+.strike-cinema__target-art.is-shield-break {
+  animation: cityShake 0.45s ease-out 1;
+}
+
+.strike-cinema__target-art.is-rubble .strike-cinema__city {
+  animation: cityToRubble 0.95s ease-out forwards;
+}
+
+.strike-cinema__target-art.is-rubble.is-fusion .strike-cinema__city {
+  animation-name: cityFusionToRubble;
+}
+
+.strike-cinema__target-art.is-rubble .strike-cinema__fire,
+.strike-cinema__target-art.is-rubble .strike-cinema__emp {
+  animation: rubbleFlash 1.05s ease-out forwards;
+}
+
+@keyframes cityToRubble {
+  0% { filter: brightness(2.5) saturate(0.35) drop-shadow(0 0 24px rgba(255, 140, 40, 0.95)); }
+  35% { filter: brightness(0.9) saturate(0.45) grayscale(0.35) sepia(0.25); }
+  100% { filter: grayscale(0.95) brightness(0.4) contrast(1.15) drop-shadow(0 6px 12px rgba(0, 0, 0, 0.85)); }
+}
+
+@keyframes cityFusionToRubble {
+  0% { filter: brightness(2.8) saturate(0.25) drop-shadow(0 0 28px rgba(190, 235, 255, 1)); }
+  35% { filter: brightness(1) saturate(0.4) grayscale(0.4); }
+  100% { filter: grayscale(0.95) brightness(0.38) contrast(1.2) drop-shadow(0 6px 12px rgba(0, 0, 0, 0.85)); }
+}
+
+@keyframes rubbleFlash {
+  0% { opacity: 0.2; }
+  25% { opacity: 1; }
+  100% { opacity: 0; }
 }
 
 @keyframes cityBurn {

@@ -1824,6 +1824,7 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
           cityId: city.id,
           cityName: city.name,
           attackerId: strike.attackerId,
+          cover: 'bunker',
         }),
       ],
     };
@@ -1862,6 +1863,7 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
       cityName: city.name,
       attackerId: strike.attackerId,
       amount: COSTS.shield,
+      cover: 'shield',
     });
   } else {
     cities = cities.map((c) =>
@@ -1891,6 +1893,9 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
       cityName: city.name,
       attackerId: strike.attackerId,
       amount: cityAssetValue(city),
+      cover: city.isUnderground ? 'bunker' : city.hasShield ? 'shield' : undefined,
+      laserDown:
+        magnetic && laserNetwork(state, strike.targetNationId) ? true : undefined,
     });
   }
 

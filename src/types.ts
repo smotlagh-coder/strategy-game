@@ -186,6 +186,10 @@ export interface RoundWorldEvent {
   amount?: number;
   /** Rebuild the treasury paid for on its own to keep a wiped-out nation alive */
   automatic?: boolean;
+  /** What was covering the city when this strike landed */
+  cover?: 'shield' | 'bunker';
+  /** A magnetic bomb had already darkened a laser network for this hit */
+  laserDown?: boolean;
 }
 
 /** Income applied at round start (shown on aftermath) */

@@ -232,6 +232,45 @@ describe('warhead arsenal', () => {
     expect(s.nations.uk.cities.find((c) => c.id === target.id)?.destroyed).toBe(true);
   });
 
+  it('destroys a shielded, lasered city when a magnetic bomb escorts a swarm', () => {
+    let s = table({
+      us: {
+        magneticBombs: 1,
+        bombs: 0,
+        drones: 1,
+        hasAerospaceTech: true,
+        aerospaceTechUnlockedRound: 0,
+        hasSpyNetwork: true,
+      },
+    });
+    const target = s.nations.uk.cities[0];
+    s = {
+      ...s,
+      nations: {
+        ...s.nations,
+        uk: {
+          ...s.nations.uk,
+          cities: s.nations.uk.cities.map((c) =>
+            c.id === target.id ? { ...c, hasShield: true, hasLaser: true } : c,
+          ),
+        },
+      },
+    };
+    s = queueStrike(s, 'uk', target.id, 'us', 'drone');
+    s = queueStrike(s, 'uk', target.id, 'us', 'magnetic');
+    for (const strike of orderStrikesForResolution(s.pendingStrikes)) {
+      s = applyQueuedStrike(s, strike);
+    }
+    const hit = s.nations.uk.cities.find((c) => c.id === target.id)!;
+    expect(hit.destroyed).toBe(true);
+    expect(hit.hasShield).toBe(false);
+    expect(hit.hasLaser).toBe(false);
+    expect(s.roundEvents.some((e) => e.kind === 'cityDestroyed' && e.cover === 'shield' && e.laserDown)).toBe(
+      true,
+    );
+    expect(s.roundEvents.some((e) => e.kind === 'dronesIntercepted')).toBe(false);
+  });
+
   it('still stocks nuclear bombs under the round cap after specialty buys', () => {
     let s = table();
     s = buyBombs(s, 3, 'us');
