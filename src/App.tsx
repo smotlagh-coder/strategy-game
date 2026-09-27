@@ -1639,35 +1639,37 @@ function NationPod({
             title={n.hasSpyNetwork ? "Spy service — reads every nation's city defences" : undefined}
           />
         </span>
-        {(isAngel || isEvil) && (
-          <span className="stance-badges">
-            {isAngel && (
-              <span className="stance-mark stance-mark--peace" title="Most peaceful this round">
-                <span aria-hidden>☮</span>
-                Peace
-              </span>
-            )}
-            {isEvil && (
-              <span className="stance-mark stance-mark--evil" title="Aggressor this round">
-                <span aria-hidden>☠</span>
-                Evil
-              </span>
-            )}
-          </span>
-        )}
-        <div className="nation-card__meta">
-          <strong>
-            {rank != null ? `#${rank} ` : ''}
-            {playerDisplayName(state, id)}
-            {n.eliminated ? ' — OUT' : ''}
-          </strong>
-          <span className="nation-card__score">{score} pts</span>
-          <span>
-            {def.name} · ${formatMoney(n.money)}
-            {n.hasNuclearTech ? ' · ☢' : ''}
-            {n.bombs > 0 ? ` · 💣${n.bombs}` : ''}
-            {n.drones > 0 ? ` · 🛸${n.drones}` : ''}
-          </span>
+        <div className="nation-card__aside">
+          {(isAngel || isEvil) && (
+            <span className="stance-badges">
+              {isAngel && (
+                <span className="stance-mark stance-mark--peace" title="Most peaceful this round">
+                  <span aria-hidden>☮</span>
+                  Peace
+                </span>
+              )}
+              {isEvil && (
+                <span className="stance-mark stance-mark--evil" title="Aggressor this round">
+                  <span aria-hidden>☠</span>
+                  Evil
+                </span>
+              )}
+            </span>
+          )}
+          <div className="nation-card__meta">
+            <strong>
+              {rank != null ? `#${rank} ` : ''}
+              {playerDisplayName(state, id)}
+              {n.eliminated ? ' — OUT' : ''}
+            </strong>
+            <span className="nation-card__score">{score} pts</span>
+            <span>
+              {def.name} · ${formatMoney(n.money)}
+              {n.hasNuclearTech ? ' · ☢' : ''}
+              {n.bombs > 0 ? ` · 💣${n.bombs}` : ''}
+              {n.drones > 0 ? ` · 🛸${n.drones}` : ''}
+            </span>
+          </div>
         </div>
       </div>
       <div className="nation-card__cities">
