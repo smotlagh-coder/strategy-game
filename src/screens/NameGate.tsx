@@ -19,7 +19,7 @@ export function NameGate({
   const [name, setName] = useState(initialName);
 
   return (
-    <div className="screen screen--splash">
+    <div className="screen screen--splash screen--hero">
       <div
         className="map-backdrop"
         style={{ backgroundImage: `url(${ART.splash})` }}

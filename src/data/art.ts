@@ -42,6 +42,9 @@ const CITY_ART = {
 export const ART = {
   map: '/art/map-bg.webp',
   splash: '/art/splash-hero.webp',
+  modeSingle: '/art/mode-single.webp',
+  modeTwo: '/art/mode-two.webp',
+  modeOnline: '/art/mode-online.webp',
   missile: '/art/missile.webp',
   missileHydrogen: '/art/missile-hydrogen.webp',
   missileMagnetic: '/art/missile-magnetic.webp',
@@ -154,6 +157,21 @@ export const ART = {
     brazil: '/art/leader-brazil.webp',
     australia: '/art/leader-australia.webp',
   } as Record<NationId, string>,
+  /** Standing power pose, both hands on the table — summary screen only */
+  leadersSuper: {
+    russia: '/art/leader-russia-super.webp',
+    france: '/art/leader-france-super.webp',
+    china: '/art/leader-china-super.webp',
+    us: '/art/leader-usa-super.webp',
+    uk: '/art/leader-uk-super.webp',
+    india: '/art/leader-india-super.webp',
+    pakistan: '/art/leader-pakistan-super.webp',
+    iran: '/art/leader-iran-super.webp',
+    northkorea: '/art/leader-northkorea-super.webp',
+    canada: '/art/leader-canada-super.webp',
+    brazil: '/art/leader-brazil-super.webp',
+    australia: '/art/leader-australia-super.webp',
+  } as Record<NationId, string>,
   /** Full-bleed national flags for the superpower end screen */
   flags: {
     russia: '/art/flag-russia.webp',
@@ -182,4 +200,7 @@ export const ART = {
 export const SFX = {
   launch: '/sounds/launch.wav',
   explosion: '/sounds/explosion.wav',
+  theme: '/sounds/heroic-theme.m4a?v=2',
+  victory: '/sounds/victory.m4a?v=3',
+  defeat: '/sounds/defeat.m4a?v=3',
 } as const;

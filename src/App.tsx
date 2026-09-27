@@ -238,6 +238,127 @@ function playSfx(src: string, volume = 0.85, rate = 1) {
   }
 }
 
+const MUSIC_PREF = 'nw-music';
+
+function musicIsOn() {
+  try {
+    return localStorage.getItem(MUSIC_PREF) !== 'off';
+  } catch {
+    return true;
+  }
+}
+
+function rememberMusic(on: boolean) {
+  try {
+    localStorage.setItem(MUSIC_PREF, on ? 'on' : 'off');
+  } catch {
+    /* private browsing */
+  }
+}
+
+function useMusicToggle() {
+  const [on, setOn] = useState(musicIsOn);
+  useEffect(() => {
+    const sync = () => setOn(musicIsOn());
+    window.addEventListener('nw-music', sync);
+    return () => window.removeEventListener('nw-music', sync);
+  }, []);
+  const toggle = () => {
+    const next = !musicIsOn();
+    rememberMusic(next);
+    setOn(next);
+    window.dispatchEvent(new Event('nw-music'));
+  };
+  return [on, toggle] as const;
+}
+
+/** Original heroic title cue. Plays on the opening screens until the match begins. */
+function TitleTheme({ active }: { active: boolean }) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [on, toggle] = useMusicToggle();
+
+  useEffect(() => {
+    const audio = audioRef.current ?? new Audio(SFX.theme);
+    audio.loop = true;
+    audio.volume = 0.78;
+    audioRef.current = audio;
+    if (!active || !on) {
+      audio.pause();
+      return;
+    }
+    const start = () => {
+      void audio.play().catch(() => {
+        /* browsers block sound until the first tap */
+      });
+    };
+    start();
+    window.addEventListener('pointerdown', start);
+    return () => window.removeEventListener('pointerdown', start);
+  }, [active, on]);
+
+  if (!active) return null;
+  return (
+    <button
+      type="button"
+      className={`theme-toggle ${on ? 'is-on' : ''}`}
+      onClick={toggle}
+    >
+      {on ? 'Music on' : 'Music off'}
+    </button>
+  );
+}
+
+/** Victory when this table's player is the superpower, defeat otherwise. */
+function localPlayerIsSuperpower(state: GameState, sessionUid?: string | null) {
+  if (!state.winner) return false;
+  const winner = state.nations[state.winner];
+  if (!winner?.isHuman) return false;
+  if (state.mode !== 'online') return true;
+  if (sessionUid && winner.ownerUid) return winner.ownerUid === sessionUid;
+  return Boolean(sessionUid && state.uidToNation?.[sessionUid] === state.winner);
+}
+
+function OutcomeTheme({ victory }: { victory: boolean }) {
+  const [on, toggle] = useMusicToggle();
+
+  useEffect(() => {
+    const audio = new Audio(victory ? SFX.victory : SFX.defeat);
+    audio.loop = false;
+    audio.volume = victory ? 0.8 : 0.7;
+    if (!on) return;
+    let played = false;
+    let stopTimer = 0;
+    const start = () => {
+      if (played) return;
+      played = true;
+      void audio.play().then(() => {
+        stopTimer = window.setTimeout(() => {
+          audio.pause();
+        }, 5000);
+      }).catch(() => {
+        played = false;
+      });
+    };
+    start();
+    window.addEventListener('pointerdown', start);
+    return () => {
+      window.clearTimeout(stopTimer);
+      window.removeEventListener('pointerdown', start);
+      audio.pause();
+    };
+  }, [on, victory]);
+
+  return (
+    <button
+      type="button"
+      className={`theme-toggle ${on ? 'is-on' : ''}`}
+      onClick={toggle}
+    >
+      {on ? 'Music on' : 'Music off'}
+    </button>
+  );
+}
+
 interface StrikeTarget {
   to: NationId;
   cityId: string;
@@ -1859,7 +1980,7 @@ function FxLayer({ events }: { events: FxEvent[] }) {
 
 function ModeSelect({ onSelect }: { onSelect: (m: GameMode) => void }) {
   return (
-    <div className="screen screen--splash">
+    <div className="screen screen--splash screen--hero">
       <MapBackdrop src={ART.splash} />
       <div className="splash-veil" />
       <div className="splash-content">
@@ -1867,24 +1988,33 @@ function ModeSelect({ onSelect }: { onSelect: (m: GameMode) => void }) {
         <p className="tagline">5 rounds · 12 countries · one superpower</p>
         <div className="mode-row">
           <button className="btn btn--xl btn--primary" onClick={() => onSelect('single')}>
-            Single Player
-            <small>Pick your country · you vs 4 AI nations</small>
+            <img className="mode-row__icon" src={ART.modeSingle} alt="" />
+            <span className="mode-row__copy">
+              <span className="mode-row__title">Single Player</span>
+              <small>Pick your country · you vs 4 AI nations</small>
+            </span>
           </button>
           <button className="btn btn--xl btn--primary" onClick={() => onSelect('two')}>
-            Two Players
-            <small>Hot-seat · same device</small>
+            <img className="mode-row__icon" src={ART.modeTwo} alt="" />
+            <span className="mode-row__copy">
+              <span className="mode-row__title">Two Players</span>
+              <small>Hot-seat · same device</small>
+            </span>
           </button>
           <button
             className="btn btn--xl btn--primary"
             onClick={() => onSelect('online')}
             disabled={!isFirebaseConfigured()}
           >
-            Online Multiplayer
-            <small>
-              {isFirebaseConfigured()
-                ? '2–5 humans · AI fills the rest'
-                : 'Set VITE_FIREBASE_* to enable'}
-            </small>
+            <img className="mode-row__icon" src={ART.modeOnline} alt="" />
+            <span className="mode-row__copy">
+              <span className="mode-row__title">Online Multiplayer</span>
+              <small>
+                {isFirebaseConfigured()
+                  ? '2–5 humans · AI fills the rest'
+                  : 'Set VITE_FIREBASE_* to enable'}
+              </small>
+            </span>
           </button>
         </div>
       </div>
@@ -4013,12 +4143,17 @@ function GameOver({
   const winnerName = state.winner ? nationDef(state.winner).name : 'No one';
   const creditedRef = useRef(false);
   const isOnline = state.mode === 'online';
+  const commanderName = formatPlayerLabel(displayName ?? '');
+  const summaryState =
+    state.mode === 'single' && !state.playerNames[1]
+      ? { ...state, playerNames: { ...state.playerNames, 1: commanderName } }
+      : state;
   const isHost = Boolean(sessionUid && state.onlineHostUid === sessionUid);
   /** Older matches may lack onlineHostUid — allow attempt; server enforces host. */
   const canStartRematch = isOnline && Boolean(sessionUid) && (isHost || !state.onlineHostUid);
   const winnerPlayer =
-    state.winner && state.nations[state.winner]?.isHuman
-      ? playerDisplayName(state, state.winner)
+    summaryState.winner && summaryState.nations[summaryState.winner]?.isHuman
+      ? playerDisplayName(summaryState, summaryState.winner)
       : null;
 
   useEffect(() => {
@@ -4059,10 +4194,10 @@ function GameOver({
             key={row.nationId}
             id={row.nationId}
             variant={isYou ? 'ally' : 'enemy'}
-            state={state}
+            state={summaryState}
             revealed
             rank={i + 1}
-            highlight={state.winner === row.nationId}
+            highlight={summaryState.winner === row.nationId}
           />
         );
       })}
@@ -4070,16 +4205,11 @@ function GameOver({
   );
 
   const actions = (
-    <div className="mode-row game-over-actions">
+    <div className="game-over-actions">
       {isOnline ? (
         <>
           {canStartRematch ? (
-            <button
-              className="btn btn--xl btn--primary"
-              type="button"
-              disabled={rematchBusy}
-              onClick={() => onRematch?.()}
-            >
+            <button className="btn btn--primary" type="button" disabled={rematchBusy} onClick={() => onRematch?.()}>
               {rematchBusy ? 'Starting…' : 'Play Again'}
             </button>
           ) : (
@@ -4087,17 +4217,17 @@ function GameOver({
               Waiting for host to start Play Again…
             </p>
           )}
-          <button className="btn btn--xl" type="button" onClick={onRestart}>
+          <button className="btn" type="button" onClick={onRestart}>
             Leave
           </button>
         </>
       ) : (
-        <button className="btn btn--xl btn--primary" type="button" onClick={onRestart}>
+        <button className="btn btn--primary" type="button" onClick={onRestart}>
           Play Again
         </button>
       )}
       {onLeaderboard && (
-        <button className="btn btn--xl" type="button" onClick={onLeaderboard}>
+        <button className="btn" type="button" onClick={onLeaderboard}>
           Leaderboard
         </button>
       )}
@@ -4106,6 +4236,7 @@ function GameOver({
 
   return (
     <div className="screen screen--board screen--round-report screen--game-over">
+      <OutcomeTheme victory={localPlayerIsSuperpower(state, sessionUid)} />
       {state.winner ? (
         <div
           className="flag-backdrop"
@@ -4122,7 +4253,7 @@ function GameOver({
       <div className="game-over-layout game-over-layout--pods">
         <header className="game-over-hero enter-pop">
           {state.winner && (
-            <img className="winner-art" src={leaderArt(state, state.winner)} alt="" />
+            <img className="winner-art" src={ART.leadersSuper[state.winner]} alt="" />
           )}
           <div>
             <h1 className="stencil-title">SUPERPOWER</h1>
@@ -4499,6 +4630,11 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      <TitleTheme
+        active={
+          state.phase === 'session' || state.phase === 'mode' || state.phase === 'names'
+        }
+      />
       {roundIntro &&
         (roundIntro.briefing ? (
           <RoundBriefingOverlay
@@ -4541,7 +4677,11 @@ export default function App() {
               if (m === 'online' && sessionUid) {
                 void setPlayerStatus(sessionUid, 'available', null);
               }
-              setState((s) => setMode(s, m));
+              setState((s) => {
+                const next = setMode(s, m);
+                if (m !== 'single') return next;
+                return { ...next, playerNames: { 1: formatPlayerLabel(displayName) } };
+              });
             }}
           />
         </>
