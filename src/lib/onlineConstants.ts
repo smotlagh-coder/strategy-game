@@ -29,6 +29,12 @@ export const ROUND_BANNER_MS = 3_000;
  */
 export const ROUND_BRIEFING_MS = 15_000;
 
+/**
+ * After every warhead or drone pack has a city, hold this long on Lock Targets /
+ * Send Drones so the player can retarget. A new city tap restarts the clock.
+ */
+export const TARGET_CONFIRM_MS = 10_000;
+
 export function selectionIdleSeconds(): number {
   return Math.ceil(SELECTION_IDLE_MS / 1000);
 }

@@ -124,6 +124,7 @@ import {
   ROUND_BRIEFING_MS,
   SELECTION_IDLE_MS,
   STRIKE_CINEMA_MS,
+  TARGET_CONFIRM_MS,
 } from './lib/onlineConstants';
 import { aftermathMyCityIds, aftermathWorldIds } from './lib/lobbyInvite';
 import { NameGate } from './screens/NameGate';
@@ -732,8 +733,6 @@ function StrikeCinema({
             <strong>{from.name}</strong>
             <span>{from.leader}</span>
           </div>
-
-          <div className="strike-cinema__arc" aria-hidden />
 
           <div
             className={`strike-cinema__side strike-cinema__side--to${
@@ -2393,6 +2392,8 @@ function GameBoard({
   const [fx, setFx] = useState<FxEvent[]>([]);
   const [busy, setBusy] = useState(false);
   const [idleSecondsLeft, setIdleSecondsLeft] = useState<number | null>(null);
+  /** Seconds left once every warhead/drone has a city; null when not confirming. */
+  const [targetConfirmLeft, setTargetConfirmLeft] = useState<number | null>(null);
   const fxId = useRef(0);
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -2498,6 +2499,7 @@ function GameBoard({
       setWizardStep(null);
       setTargets([]);
       setDroneTargets([]);
+      setTargetConfirmLeft(null);
       setState((s) => {
         const actor =
           s.mode === 'online' && sessionUid && s.uidToNation?.[sessionUid]
@@ -2951,10 +2953,6 @@ function GameBoard({
           ? [...droneTargets.slice(1), { nationId, cityId }]
           : [...droneTargets, { nationId, cityId }];
       setDroneTargets(next);
-      // Every swarm has a city — don't wait on Send Drones.
-      if (droneTargets.length < limit && next.length === limit) {
-        closeHumanTurn(targets, next);
-      }
       return;
     }
 
@@ -2979,8 +2977,6 @@ function GameBoard({
         ? [...targets.slice(1), { nationId, cityId, weapon: strikeWeapon }]
         : [...targets, { nationId, cityId, weapon: strikeWeapon }];
     setTargets(next);
-    // Every warhead has a city — don't wait on Lock Targets.
-    if (targets.length < cap && next.length === cap) finishStrikeStep(next);
   };
 
   /** Targeting runs bombs first, then drones, so the last step locks the turn in. */
@@ -2988,6 +2984,7 @@ function GameBoard({
     picked: { nationId: NationId; cityId: string; weapon: WarheadKind }[],
   ) => {
     bumpSelectionActivity();
+    setTargetConfirmLeft(null);
     setTargets(picked);
     if (canOfferDroneStrike(stateRef.current, actorId)) {
       setWizardStep('droneStrike');
@@ -3000,6 +2997,55 @@ function GameBoard({
   const hydrogenMax = maxHydrogenPurchasable(state, actorId);
   const magneticMax = maxMagneticPurchasable(state, actorId);
   const warheadCap = totalWarheads(turn);
+  const warheadsConfirming = wizardStep === 'strike' && warheadCap > 0 && targets.length >= warheadCap;
+  const dronesConfirming =
+    droneSelectMode && turn.drones > 0 && droneTargets.length >= turn.drones;
+  const targetConfirmKey = dronesConfirming
+    ? `drone:${droneTargets.map((t) => t.cityId).join('|')}`
+    : warheadsConfirming
+      ? `strike:${targets.map((t) => `${t.cityId}:${t.weapon}`).join('|')}`
+      : null;
+
+  // Full loadout: 10s to retarget or tap Lock / Send; a new city resets the clock.
+  useEffect(() => {
+    if (targetConfirmKey == null) {
+      setTargetConfirmLeft(null);
+      return;
+    }
+    const strikePick = targets;
+    const dronePick = droneTargets;
+    const isDrone = targetConfirmKey.startsWith('drone:');
+    const started = Date.now();
+    let finished = false;
+    setTargetConfirmLeft(Math.ceil(TARGET_CONFIRM_MS / 1000));
+    const tick = window.setInterval(() => {
+      const left = Math.ceil((TARGET_CONFIRM_MS - (Date.now() - started)) / 1000);
+      if (left > 0) {
+        setTargetConfirmLeft(left);
+        return;
+      }
+      window.clearInterval(tick);
+      if (finished) return;
+      finished = true;
+      setTargetConfirmLeft(null);
+      if (isDrone) {
+        closeHumanTurn(strikePick, dronePick);
+        return;
+      }
+      bumpSelectionActivity();
+      setTargets(strikePick);
+      if (canOfferDroneStrike(stateRef.current, actorId)) {
+        setWizardStep('droneStrike');
+        return;
+      }
+      closeHumanTurn(strikePick);
+    }, 200);
+    return () => {
+      finished = true;
+      window.clearInterval(tick);
+    };
+  }, [targetConfirmKey, closeHumanTurn, actorId, bumpSelectionActivity]);
+
   const droneMax = maxDronesPurchasable(state, actorId);
   const selectedCityIds = droneSelectMode
     ? droneTargets.map((t) => t.cityId)
@@ -3044,7 +3090,11 @@ function GameBoard({
 
   return (
     <div className={`screen screen--board${strikeSelectMode ? ' is-striking' : ''}`}>
-      <MapBackdrop />
+      <MapBackdrop
+        src={
+          droneSelectMode ? ART.mapDrones : wizardStep === 'strike' ? ART.mapMissiles : ART.map
+        }
+      />
       <FxLayer events={fx} />
 
       {isMyHumanTurn && wizardStep && !strikeSelectMode && (
@@ -3757,18 +3807,22 @@ function GameBoard({
                   .join(' · ')}
               </p>
             )}
-            {targets.length < warheadCap && (
+            {(targets.length < warheadCap || warheadsConfirming) && (
               <div className="turn-wizard__actions">
                 <button
                   className="btn btn--xl btn--danger"
                   disabled={targets.length < 1}
                   onClick={() => finishStrikeStep(targets)}
                 >
-                  Lock Targets ({targets.length})
+                  {warheadsConfirming && targetConfirmLeft != null
+                    ? `Lock Targets (${targetConfirmLeft}s)`
+                    : `Lock Targets (${targets.length})`}
                 </button>
-                <button className="btn btn--xl" onClick={() => finishStrikeStep([])}>
-                  Skip / No Strike
-                </button>
+                {!warheadsConfirming && (
+                  <button className="btn btn--xl" onClick={() => finishStrikeStep([])}>
+                    Skip / No Strike
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -3818,18 +3872,22 @@ function GameBoard({
                   .join(' · ')}
               </p>
             )}
-            {droneTargets.length < turn.drones && (
+            {(droneTargets.length < turn.drones || dronesConfirming) && (
               <div className="turn-wizard__actions">
                 <button
                   className="btn btn--xl btn--danger"
                   disabled={droneTargets.length < 1}
                   onClick={() => closeHumanTurn(targets, droneTargets)}
                 >
-                  Send Drones ({droneTargets.length})
+                  {dronesConfirming && targetConfirmLeft != null
+                    ? `Send Drones (${targetConfirmLeft}s)`
+                    : `Send Drones (${droneTargets.length})`}
                 </button>
-                <button className="btn btn--xl" onClick={() => closeHumanTurn(targets, [])}>
-                  Skip / Hold Drones
-                </button>
+                {!dronesConfirming && (
+                  <button className="btn btn--xl" onClick={() => closeHumanTurn(targets, [])}>
+                    Skip / Hold Drones
+                  </button>
+                )}
               </div>
             )}
           </div>

@@ -41,6 +41,10 @@ const CITY_ART = {
 
 export const ART = {
   map: '/art/map-bg.webp',
+  /** Targeting board: sparse launch sky (not the plain command map). */
+  mapMissiles: '/art/map-missiles.webp',
+  /** Same cinematic swarm hero as the drone buy step. */
+  mapDrones: '/art/drone-swarm.webp',
   splash: '/art/splash-hero.webp',
   modeSingle: '/art/mode-single.webp',
   modeTwo: '/art/mode-two.webp',
