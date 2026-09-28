@@ -514,6 +514,38 @@ describe('round briefing', () => {
     expect(brief.damageReceived).toBe(0);
   });
 
+  it('points defence at an open prize city and offence at a rival city', () => {
+    let s = settle(table());
+    s = setUs(s, {
+      money: 20,
+      bombs: 2,
+      hasNuclearTech: true,
+      nuclearTechUnlockedRound: 1,
+      cities: s.nations.us.cities.map((c) => ({ ...c, hasShield: false, isUnderground: false })),
+    });
+    // Make the UK the clear score leader so offence prefers them
+    s = {
+      ...s,
+      nations: {
+        ...s.nations,
+        uk: {
+          ...s.nations.uk,
+          attackPoints: 80,
+          cities: s.nations.uk.cities.map((c, i) =>
+            i === 0 ? { ...c, hasShield: false, hasResearch: true } : c,
+          ),
+        },
+      },
+      scoresByRound: {},
+    };
+    const brief = buildRoundBriefing(s, 'us')!;
+    expect(brief.defence.action).toBe('Bunker');
+    expect(brief.defence.nationId).toBe('us');
+    expect(brief.offence).not.toBeNull();
+    expect(brief.offence!.nationId).toBe('uk');
+    expect(['Hit', 'Swarm', 'Hydrogen', 'Magnetic']).toContain(brief.offence!.action);
+  });
+
   it('leaves the exchange at zero when nobody fired', () => {
     const brief = buildRoundBriefing(settle(table()), 'us')!;
     expect(brief.damageReceived).toBe(0);

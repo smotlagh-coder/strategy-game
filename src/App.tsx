@@ -75,7 +75,7 @@ import {
 } from './game/engine';
 import { runAllAiUntilHumanOrSummary, runAiTurn, runOnlineAiPlanning } from './game/ai';
 import { buildRoundBriefing, combatLedger } from './game/briefing';
-import type { BriefingCityStatus, RoundBriefing } from './game/briefing';
+import type { BriefingCityStatus, BriefingOrder, BriefingOrderIcon, RoundBriefing } from './game/briefing';
 import type {
   City,
   GameMode,
@@ -1065,6 +1065,46 @@ function cityStatusMark(status: BriefingCityStatus): { src: string; label: strin
   return null;
 }
 
+function orderIcon(icon: BriefingOrderIcon): string {
+  if (icon === 'shield' || icon === 'hold') return ART.shield;
+  if (icon === 'bunker') return ART.undergroundCity;
+  if (icon === 'rebuild') return ART.rebuildCity;
+  if (icon === 'drone') return ART.drone;
+  if (icon === 'hydrogen') return ART.missileHydrogen;
+  if (icon === 'magnetic') return ART.missileMagnetic;
+  return ART.missile;
+}
+
+function DashOrderCard({
+  kind,
+  order,
+  state,
+}: {
+  kind: 'defence' | 'offence';
+  order: BriefingOrder;
+  state: GameState;
+}) {
+  const city = state.nations[order.nationId]?.cities.find((c) => c.id === order.cityId);
+  const citySrc =
+    city && city.isUnderground && !city.destroyed
+      ? ART.citiesUnderground[city.id]
+      : ART.cities[order.cityId];
+  return (
+    <div className={`dash__order is-${kind}`} title={`${order.action} ${order.cityName}`}>
+      <span className="dash__order-tag">{kind === 'defence' ? 'DEF' : 'ATK'}</span>
+      <div className="dash__order-art">
+        <img className="dash__order-city" src={citySrc} alt="" draggable={false} />
+        <img className="dash__order-tool" src={orderIcon(order.icon)} alt="" draggable={false} />
+      </div>
+      <div className="dash__order-copy">
+        <b>{order.action}</b>
+        <span>{order.cityName}</span>
+        {kind === 'offence' && <em>{nationDef(order.nationId).shortName}</em>}
+      </div>
+    </div>
+  );
+}
+
 function RoundBriefingOverlay({
   state,
   briefing,
@@ -1296,12 +1336,12 @@ function RoundBriefingOverlay({
                 )}
               </ul>
             )}
-            <p
-              className={`dash__focus is-${briefing.weakness.severity}`}
-              title={briefing.weakness.advice}
-            >
-              {briefing.weakness.title}
-            </p>
+            <div className="dash__orders" aria-label="Recommended orders">
+              <DashOrderCard kind="defence" order={briefing.defence} state={state} />
+              {briefing.offence && (
+                <DashOrderCard kind="offence" order={briefing.offence} state={state} />
+              )}
+            </div>
           </div>
         </div>
       </div>

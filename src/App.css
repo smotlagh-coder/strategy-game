@@ -2544,28 +2544,107 @@ img { max-width: 100%; display: block; }
   font-size: 0.85rem;
 }
 
-.dash__focus {
-  margin: 0;
-  padding: 0.45rem 0.6rem;
+.dash__orders {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.35rem;
+  margin-top: auto;
+}
+
+.dash__order {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 0.4rem;
+  row-gap: 0.15rem;
+  align-items: center;
+  min-width: 0;
+  padding: 0.35rem 0.4rem 0.4rem;
   border-radius: 12px;
-  border: 1px solid rgba(245, 197, 66, 0.45);
-  background: rgba(38, 28, 6, 0.55);
+  border: 1px solid rgba(140, 190, 255, 0.28);
+  background: rgba(6, 14, 28, 0.62);
+}
+
+.dash__order.is-defence {
+  border-color: rgba(96, 214, 255, 0.45);
+  background: rgba(8, 28, 44, 0.65);
+}
+
+.dash__order.is-offence {
+  border-color: rgba(255, 120, 90, 0.5);
+  background: rgba(42, 14, 12, 0.62);
+}
+
+.dash__order-tag {
+  grid-column: 1 / -1;
+  font-size: 0.58rem;
+  letter-spacing: 0.16em;
+  font-weight: 800;
+  color: var(--muted);
+}
+
+.dash__order.is-defence .dash__order-tag { color: #8fd0ff; }
+.dash__order.is-offence .dash__order-tag { color: #ffb09a; }
+
+.dash__order-art {
+  position: relative;
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+}
+
+.dash__order-city {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.dash__order-tool {
+  position: absolute;
+  right: -6px;
+  bottom: -5px;
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  padding: 2px;
+  border-radius: 7px;
+  background: rgba(6, 12, 22, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+}
+
+.dash__order-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+  text-align: left;
+}
+
+.dash__order-copy b {
   font-family: var(--stencil);
-  font-size: 0.92rem;
-  line-height: 1.25;
+  font-size: 0.88rem;
+  line-height: 1.1;
   letter-spacing: 0.02em;
 }
 
-.dash__focus.is-critical {
-  border-color: rgba(255, 90, 80, 0.6);
-  background: rgba(48, 12, 10, 0.55);
-  color: #ffd0c8;
+.dash__order-copy span {
+  font-size: 0.72rem;
+  line-height: 1.15;
+  color: #e8eef8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.dash__focus.is-none {
-  border-color: rgba(61, 214, 140, 0.45);
-  background: rgba(8, 34, 22, 0.5);
-  color: #d8ffe8;
+.dash__order-copy em {
+  font-style: normal;
+  font-size: 0.58rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 @media (max-width: 640px) {
