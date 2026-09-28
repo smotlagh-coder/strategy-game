@@ -1336,11 +1336,20 @@ function RoundBriefingOverlay({
                 )}
               </ul>
             )}
-            <div className="dash__orders" aria-label="Recommended orders">
-              <DashOrderCard kind="defence" order={briefing.defence} state={state} />
-              {briefing.offence && (
-                <DashOrderCard kind="offence" order={briefing.offence} state={state} />
-              )}
+            <div className="dash__orders-row">
+              <img
+                className="dash__advisor"
+                src={ART.advisors[briefing.nationId]}
+                alt=""
+                title="Military advisor"
+                draggable={false}
+              />
+              <div className="dash__orders" aria-label="Recommended orders">
+                <DashOrderCard kind="defence" order={briefing.defence} state={state} />
+                {briefing.offence && (
+                  <DashOrderCard kind="offence" order={briefing.offence} state={state} />
+                )}
+              </div>
             </div>
           </div>
         </div>

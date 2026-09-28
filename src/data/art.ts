@@ -176,6 +176,21 @@ export const ART = {
     brazil: '/art/leader-brazil-super.webp',
     australia: '/art/leader-australia-super.webp',
   } as Record<NationId, string>,
+  /** Military advisor — briefing DEF/ATK rail; also stands behind the leader on victory */
+  advisors: {
+    russia: '/art/advisor-russia.webp',
+    france: '/art/advisor-france.webp',
+    china: '/art/advisor-china.webp',
+    us: '/art/advisor-usa.webp',
+    uk: '/art/advisor-uk.webp',
+    india: '/art/advisor-india.webp',
+    pakistan: '/art/advisor-pakistan.webp',
+    iran: '/art/advisor-iran.webp',
+    northkorea: '/art/advisor-northkorea.webp',
+    canada: '/art/advisor-canada.webp',
+    brazil: '/art/advisor-brazil.webp',
+    australia: '/art/advisor-australia.webp',
+  } as Record<NationId, string>,
   /** Full-bleed national flags for the superpower end screen */
   flags: {
     russia: '/art/flag-russia.webp',
