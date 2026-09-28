@@ -536,7 +536,6 @@ describe('round briefing', () => {
           ),
         },
       },
-      scoresByRound: {},
     };
     const brief = buildRoundBriefing(s, 'us')!;
     expect(brief.defence.action).toBe('Bunker');
