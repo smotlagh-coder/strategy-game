@@ -24,7 +24,7 @@ import {
   buyAerospaceTech,
   buyBombs,
   buyHydrogenBomb,
-  buyMagneticBomb,
+  buyMagneticBombs,
   buyLaser,
   buySpyNetwork,
   buyRebuild,
@@ -50,7 +50,6 @@ import {
   finishStrikeResolution,
   groupStrikesByAttacker,
   formatMoney,
-  assetLossFor,
   markHumanReady,
   markPromptDone,
   maxBombsPurchasable,
@@ -75,7 +74,7 @@ import {
   whoIsSanctioning,
 } from './game/engine';
 import { runAllAiUntilHumanOrSummary, runAiTurn, runOnlineAiPlanning } from './game/ai';
-import { buildRoundBriefing } from './game/briefing';
+import { buildRoundBriefing, combatLedger } from './game/briefing';
 import type { BriefingCityStatus, RoundBriefing } from './game/briefing';
 import type {
   City,
@@ -388,7 +387,7 @@ interface StrikeShow {
 }
 
 const STRIKE_FLIGHT_MS = 1750;
-const STRIKE_IMPACT_MS = 1300;
+const STRIKE_IMPACT_MS = 1600;
 /** How far along its run a swarm gets before the lasers catch it */
 const LASER_INTERCEPT_AT = 0.6;
 
@@ -659,12 +658,13 @@ function StrikeCinema({
             const landed = impacts[arc.targetIndex];
             // A warhead outshines any swarm sharing the same city
             if (landed && isBallisticWeapon(landed.weapon)) continue;
+            const doomed = Boolean(strikeRef.current.targets[arc.targetIndex]?.leveled);
             impacts[arc.targetIndex] = {
               ...arc.p2,
               weapon: arc.weapon,
-              absorbed: arc.absorbed,
-              shieldBreak: arc.shieldBreak,
-              leveled: arc.leveled,
+              absorbed: arc.absorbed && !doomed,
+              shieldBreak: arc.shieldBreak && !doomed,
+              leveled: arc.leveled || doomed,
             };
           }
           // A warhead that broke on rock gets a low, smothered thud rather than
@@ -749,24 +749,28 @@ function StrikeCinema({
                 const impact = booms[i];
                 const ballistic = Boolean(impact && isBallisticWeapon(impact.weapon));
                 const showBunker = Boolean(target.hadBunker);
-                const shieldShattered = Boolean(
-                  impact && target.hadShield && (impact.shieldBreak || impact.leveled),
-                );
+                const ruined = Boolean(impact && target.leveled);
+                const shieldOnly = Boolean(impact && target.hadShield && impact.shieldBreak && !ruined);
+                const shieldShattered = Boolean(impact && target.hadShield && (shieldOnly || ruined));
                 const artClass = [
                   'strike-cinema__target-art',
                   showBunker ? 'is-bunker' : '',
-                  ballistic && impact?.shieldBreak ? 'is-shield-break' : '',
-                  ballistic && impact?.absorbed ? 'is-absorbed' : '',
-                  ballistic && impact?.leveled ? 'is-rubble' : '',
-                  ballistic && impact?.leveled && impact.weapon === 'hydrogen' ? 'is-fusion' : '',
-                  ballistic && impact?.leveled && impact.weapon === 'magnetic' ? 'is-emp' : '',
-                  ballistic &&
-                  impact?.leveled &&
-                  impact.weapon !== 'hydrogen' &&
-                  impact.weapon !== 'magnetic'
+                  shieldOnly ? 'is-shield-break' : '',
+                  impact?.absorbed && !ruined ? 'is-absorbed' : '',
+                  ruined ? 'is-rubble' : '',
+                  ruined && (impact?.weapon === 'hydrogen' || target.weapons.includes('hydrogen'))
+                    ? 'is-fusion'
+                    : '',
+                  ruined && impact?.weapon === 'magnetic' && !target.weapons.includes('hydrogen')
+                    ? 'is-emp'
+                    : '',
+                  ruined &&
+                  impact?.weapon !== 'hydrogen' &&
+                  impact?.weapon !== 'magnetic' &&
+                  !target.weapons.includes('hydrogen')
                     ? 'is-burning'
                     : '',
-                  impact && !ballistic ? 'is-rattled' : '',
+                  impact && !ballistic && !ruined ? 'is-rattled' : '',
                 ]
                   .filter(Boolean)
                   .join(' ');
@@ -807,16 +811,14 @@ function StrikeCinema({
                         src={leaderArt(state, target.to)}
                         alt=""
                       />
-                      {ballistic &&
-                        impact?.leveled &&
-                        (impact.weapon === 'magnetic' ? (
+                      {ruined &&
+                        (impact?.weapon === 'magnetic' && !target.weapons.includes('hydrogen') ? (
                           <span className="strike-cinema__emp" aria-hidden />
                         ) : (
                           <span className="strike-cinema__fire" aria-hidden />
                         ))}
-                      {ballistic && impact?.leveled && (
-                        <span className="strike-cinema__ash" aria-hidden />
-                      )}
+                      {ruined && <span className="strike-cinema__ash" aria-hidden />}
+                      {ruined && <span className="strike-cinema__ruin" aria-hidden />}
                       {ballistic && impact?.absorbed && (
                         <span className="strike-cinema__rubble" aria-hidden />
                       )}
@@ -924,7 +926,7 @@ function StrikeCinema({
                   }`}
                   style={{ left: boom.x, top: boom.y }}
                 >
-                  {boom.shieldBreak ? (
+                  {boom.shieldBreak && !strike.targets[i]?.leveled ? (
                     <span className="strike-cinema__pop" />
                   ) : boom.weapon === 'drone' || boom.absorbed ? (
                     // No fireball on rock: a grey shock ring and flying debris
@@ -1017,6 +1019,53 @@ const CITY_STATUS_LABEL: Record<BriefingCityStatus, string> = {
  * raiders, sanctions, treasury and the table — instead of a queue of banners
  * they have to sit through. It clears itself so an online table keeps moving.
  */
+/** Damage taken, what our shots cost, and the loss those shots dealt. */
+function CombatExchange({
+  received,
+  spent,
+  caused,
+}: {
+  received: number;
+  spent: number;
+  caused: number;
+}) {
+  if (received <= 0 && spent <= 0 && caused <= 0) return null;
+  const money = (n: number) => `$${formatMoney(n)}`;
+  return (
+    <div
+      className="combat-exchange"
+      role="status"
+      aria-label={`Damages ${money(received)}. Spent ${money(spent)} on warfare, causing ${money(caused)} in enemy losses.`}
+    >
+      <div className={`combat-exchange__cell is-taken${received > 0 ? ' is-hot' : ''}`}>
+        <em>{money(received)}</em>
+        <span>Damages</span>
+      </div>
+      <div className="combat-exchange__strike">
+        <div className="combat-exchange__cell is-spent">
+          <em>{money(spent)}</em>
+          <span>Spent</span>
+        </div>
+        <span className="combat-exchange__arrow" aria-hidden>
+          →
+        </span>
+        <div className={`combat-exchange__cell is-caused${caused > 0 ? ' is-hot' : ''}`}>
+          <em>{money(caused)}</em>
+          <span>Enemy loss</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function cityStatusMark(status: BriefingCityStatus): { src: string; label: string } | null {
+  if (status === 'shieldLost') return { src: ART.shield, label: CITY_STATUS_LABEL.shieldLost };
+  if (status === 'swarmed') return { src: ART.drone, label: CITY_STATUS_LABEL.swarmed };
+  if (status === 'intercepted') return { src: ART.laserIcon, label: CITY_STATUS_LABEL.intercepted };
+  if (status === 'rebuilt') return { src: ART.rebuildCity, label: CITY_STATUS_LABEL.rebuilt };
+  return null;
+}
+
 function RoundBriefingOverlay({
   state,
   briefing,
@@ -1039,7 +1088,10 @@ function RoundBriefingOverlay({
 
   const me = nationDef(briefing.nationId);
   const leadIndex = briefing.scores.findIndex((s) => !s.eliminated);
-  const netIncome = +(briefing.income - briefing.droneRepairs).toFixed(2);
+  const maxScore = Math.max(
+    1,
+    ...briefing.scores.map((row) => (row.eliminated ? 0 : row.total)),
+  );
 
   return (
     <div
@@ -1050,126 +1102,120 @@ function RoundBriefingOverlay({
     >
       <div className="round-banner__veil" />
       <div className="round-banner__panel round-brief__panel enter-pop">
-        <header className="round-brief__head">
-          <div>
+        <header className="dash__head">
+          <div
+            className="dash__commander"
+            style={{ backgroundImage: `url(${ART.flags[briefing.nationId]})` }}
+          >
+            <img src={leaderArt(state, briefing.nationId)} alt="" draggable={false} />
+          </div>
+          <div className="dash__id">
             <p className="round-start__eyebrow">{me.name}</p>
             <h2 className="round-start__title">Round {briefing.round}</h2>
           </div>
-          <button type="button" className="btn round-brief__skip" onClick={onDone}>
-            Continue{secondsLeft > 0 ? ` (${secondsLeft})` : ''}
+          <button type="button" className="dash__skip" onClick={onDone}>
+            <svg className="dash__ring" viewBox="0 0 36 36" aria-hidden>
+              <circle className="dash__ring-track" cx="18" cy="18" r="15" />
+              <circle
+                className="dash__ring-value"
+                cx="18"
+                cy="18"
+                r="15"
+                style={{ animationDuration: `${ROUND_BRIEFING_MS}ms` }}
+              />
+            </svg>
+            <span className="dash__skip-count">{secondsLeft}</span>
+            <span className="dash__skip-label">Skip</span>
           </button>
         </header>
-        <div
-          className="round-brief__timer"
-          style={{ animationDuration: `${ROUND_BRIEFING_MS}ms` }}
-          aria-hidden
-        />
 
-        {(briefing.assetLoss > 0 || briefing.droneRepairs > 0) && (
-          <p
-            className={`round-brief__toll ${briefing.assetLoss > 0 ? 'is-hit' : ''}`}
-            role="status"
-          >
-            {briefing.assetLoss > 0 ? (
-              <>
-                Last round cost you <strong>${formatMoney(briefing.assetLoss)}M</strong> in
-                assets
-                {briefing.droneRepairs > 0
-                  ? ` · $${formatMoney(briefing.droneRepairs)}M repairs`
-                  : ''}
-              </>
-            ) : (
-              <>
-                Last round: <strong>${formatMoney(briefing.droneRepairs)}M</strong> in drone
-                repairs
-              </>
+        <div className="dash__metrics">
+          <CombatExchange
+            received={briefing.damageReceived}
+            spent={briefing.warfareSpent}
+            caused={briefing.enemyLoss}
+          />
+          <div className="dash__cash">
+            <em>${formatMoney(briefing.money)}</em>
+            <span className="is-up">+{formatMoney(briefing.income)}</span>
+            {briefing.droneRepairs > 0 && (
+              <span className="is-down">−{formatMoney(briefing.droneRepairs)}</span>
             )}
-          </p>
-        )}
+          </div>
+        </div>
 
-        <div className="round-brief__grid">
-          <section className="round-brief__section round-brief__section--cities">
-            <div className="round-brief__cities-head">
-              <h3 className="round-brief__label">
-                Cities
-                {briefing.untouched ? ' · untouched' : ''}
-              </h3>
-              <ul className="round-brief__arsenal">
-                <li title="Warheads">
-                  <img src={ART.missile} alt="" draggable={false} />
-                  {briefing.assets.bombs}
-                </li>
-                <li title="Drones">
-                  <img src={ART.drone} alt="" draggable={false} />
-                  {briefing.assets.drones}
-                </li>
-                {briefing.assets.spyNetwork && (
-                  <li className="is-flag" title="Spy service">
-                    Spy
-                  </li>
-                )}
-                {!briefing.assets.canArmNukes && (
-                  <li className="is-missing" title="No Ballistic Missile Tech">
-                    No tech
-                  </li>
-                )}
-              </ul>
-            </div>
-            <ul className="round-brief__cities">
-              {briefing.cities.map((city) => (
+        <section className="dash__cities" aria-label="Cities">
+          <ul className="round-brief__arsenal">
+            <li title="Warheads">
+              <img src={ART.missile} alt="" draggable={false} />
+              {briefing.assets.bombs}
+            </li>
+            <li title="Drones">
+              <img src={ART.drone} alt="" draggable={false} />
+              {briefing.assets.drones}
+            </li>
+            {briefing.assets.spyNetwork && (
+              <li className="is-flag" title="Spy service">
+                <img src={ART.spyServices} alt="" draggable={false} />
+              </li>
+            )}
+            {briefing.assets.lasers > 0 && (
+              <li title="Lasers">
+                <img src={ART.laserIcon} alt="" draggable={false} />
+                {briefing.assets.lasers}
+              </li>
+            )}
+          </ul>
+          <ul className="round-brief__cities">
+            {briefing.cities.map((city) => {
+              const mark = cityStatusMark(city.status);
+              return (
                 <li
                   key={city.id}
                   className={`round-brief__city is-${city.status} ${city.destroyed ? 'is-rubble' : ''}`}
+                  title={CITY_STATUS_LABEL[city.status]}
                 >
-                  <img
-                    src={
-                      city.isUnderground && !city.destroyed
-                        ? ART.citiesUnderground[city.id]
-                        : ART.cities[city.id]
-                    }
-                    alt=""
-                    draggable={false}
-                  />
-                  {city.destroyed && (
-                    <span className="city-smoke" aria-hidden>
-                      <i />
-                      <i />
-                      <i />
-                    </span>
-                  )}
-                  <strong>{city.name}</strong>
-                  <span>{CITY_STATUS_LABEL[city.status]}</span>
-                  <div className="round-brief__city-assets">
-                    {city.hasShield && (
-                      <img src={ART.shield} alt="Shield" title="Shield" draggable={false} />
+                  <div className="dash__skyline">
+                    <img
+                      src={
+                        city.isUnderground && !city.destroyed
+                          ? ART.citiesUnderground[city.id]
+                          : ART.cities[city.id]
+                      }
+                      alt=""
+                      draggable={false}
+                    />
+                    {city.hasShield && !city.destroyed && (
+                      <span className="dash__dome" title="Shield" aria-hidden />
                     )}
-                    {city.hasResearch && (
-                      <img
-                        src={ART.researchIcon}
-                        alt="Research"
-                        title="Research"
-                        draggable={false}
-                      />
-                    )}
-                    {city.hasLaser && (
-                      <img
-                        src={ART.laserIcon}
-                        alt="Laser"
-                        title="Laser"
-                        draggable={false}
-                      />
-                    )}
-                    {city.isUnderground && !city.destroyed && (
-                      <span className="is-bunker" title="Bunker">
-                        Bunker
+                    {city.destroyed && (
+                      <span className="city-smoke" aria-hidden>
+                        <i />
+                        <i />
+                        <i />
                       </span>
                     )}
-                    {!city.destroyed &&
-                      !city.hasShield &&
-                      !city.isUnderground &&
-                      !city.hasResearch &&
-                      !city.hasLaser && <span className="is-bare">Bare</span>}
+                    {mark && (
+                      <img
+                        className="dash__mark"
+                        src={mark.src}
+                        alt=""
+                        title={mark.label}
+                        draggable={false}
+                      />
+                    )}
                   </div>
+                  <strong>{city.name}</strong>
+                  {(city.hasResearch || city.hasLaser) && (
+                    <div className="round-brief__city-assets">
+                      {city.hasResearch && (
+                        <img src={ART.researchIcon} alt="" title="Research" draggable={false} />
+                      )}
+                      {city.hasLaser && (
+                        <img src={ART.laserIcon} alt="" title="Laser" draggable={false} />
+                      )}
+                    </div>
+                  )}
                   {city.attackers.length > 0 && (
                     <div className="round-brief__city-raiders">
                       {city.attackers.map((id) => (
@@ -1184,119 +1230,79 @@ function RoundBriefingOverlay({
                     </div>
                   )}
                 </li>
-              ))}
-            </ul>
-          </section>
+              );
+            })}
+          </ul>
+        </section>
 
-          <div className="round-brief__col">
-            <section className="round-brief__section round-brief__section--pressure">
-              <h3 className="round-brief__label">Pressure</h3>
-              {briefing.raiders.length === 0 && briefing.sanctioners.length === 0 ? (
-                <p className="round-brief__none">Quiet board.</p>
-              ) : (
-                <ul className="round-brief__rows">
-                  {briefing.raiders.map((raider) => (
-                    <li key={`hit-${raider.id}`} className="round-brief__row round-brief__row--hit">
-                      <img src={leaderArt(state, raider.id)} alt="" draggable={false} />
-                      <p>
-                        <strong>{nationDef(raider.id).name}</strong>
-                        <span>
-                          {[
-                            raider.nukes > 0
-                              ? `${raider.nukes} warhead${raider.nukes === 1 ? '' : 's'}`
-                              : null,
-                            raider.swarms > 0
-                              ? `${raider.swarms} swarm${raider.swarms === 1 ? '' : 's'}`
-                              : null,
-                          ]
-                            .filter(Boolean)
-                            .join(' · ')}
-                          {raider.cities.length ? ` → ${raider.cities.join(', ')}` : ''}
-                        </span>
-                      </p>
-                    </li>
-                  ))}
-                  {briefing.sanctioners.length > 0 && (
-                    <li className="round-brief__row round-brief__row--sanction">
-                      <div className="round-brief__faces">
-                        {briefing.sanctioners.map((id) => (
-                          <img
-                            key={id}
-                            src={leaderArt(state, id)}
-                            alt={nationDef(id).name}
-                            title={nationDef(id).name}
-                            draggable={false}
-                          />
-                        ))}
-                      </div>
-                      <p>
-                        <strong>Sanctions ×{briefing.sanctioners.length}</strong>
-                        <span>−{Math.round(briefing.sanctionPenalty * 100)}% income</span>
-                      </p>
-                    </li>
-                  )}
-                </ul>
-              )}
-            </section>
+        <div className="dash__lower">
+          <ol className="dash__board" aria-label="Standings">
+            {briefing.scores.map((row, i) => {
+              const height = row.eliminated
+                ? 6
+                : Math.max(8, Math.round((row.total / maxScore) * 52));
+              return (
+                <li
+                  key={row.nationId}
+                  className={`dash__seat ${row.eliminated ? 'is-out' : ''} ${
+                    i === leadIndex && !row.eliminated ? 'is-lead' : ''
+                  } ${row.nationId === briefing.nationId ? 'is-you' : ''}`}
+                >
+                  <i style={{ height }} aria-hidden />
+                  <img src={leaderArt(state, row.nationId)} alt="" draggable={false} />
+                  <b>{row.eliminated ? 'OUT' : row.total}</b>
+                  <span>{nationDef(row.nationId).shortName}</span>
+                </li>
+              );
+            })}
+          </ol>
 
-            <section className="round-brief__section round-brief__section--scores">
-              <h3 className="round-brief__label">Standings</h3>
-              <ol className="round-brief__scores">
-                {briefing.scores.map((row, i) => (
-                  <li
-                    key={row.nationId}
-                    className={`round-brief__score ${row.eliminated ? 'is-out' : ''} ${
-                      i === leadIndex && !row.eliminated ? 'is-lead' : ''
-                    } ${row.nationId === briefing.nationId ? 'is-you' : ''}`}
-                  >
-                    <b>{row.eliminated ? 'OUT' : `#${i + 1}`}</b>
-                    <img src={leaderArt(state, row.nationId)} alt="" draggable={false} />
-                    <strong>{nationDef(row.nationId).name}</strong>
-                    <em>{row.total}</em>
+          <div className="dash__rail">
+            {(briefing.raiders.length > 0 || briefing.sanctioners.length > 0) && (
+              <ul className="dash__hits" aria-label="Incoming">
+                {briefing.raiders.map((raider) => (
+                  <li key={raider.id} className="dash__raider" title={nationDef(raider.id).name}>
+                    <img src={leaderArt(state, raider.id)} alt="" draggable={false} />
+                    <span>
+                      {raider.nukes > 0 && (
+                        <i>
+                          <img src={ART.missile} alt="" draggable={false} />
+                          {raider.nukes}
+                        </i>
+                      )}
+                      {raider.swarms > 0 && (
+                        <i>
+                          <img src={ART.drone} alt="" draggable={false} />
+                          {raider.swarms}
+                        </i>
+                      )}
+                    </span>
                   </li>
                 ))}
-              </ol>
-            </section>
-          </div>
-
-          <div className="round-brief__col">
-            <section className="round-brief__section round-brief__section--money">
-              <div className="round-brief__money-head">
-                <h3 className="round-brief__label">Treasury</h3>
-                <p className="round-brief__cash">${formatMoney(briefing.money)}M</p>
-              </div>
-              <ul className="round-brief__ledger">
-                <li>
-                  <span>Income</span>
-                  <em className="is-up">+${formatMoney(briefing.income)}M</em>
-                </li>
-                {briefing.droneRepairs > 0 && (
-                  <li>
-                    <span>Repairs</span>
-                    <em className="is-down">−${formatMoney(briefing.droneRepairs)}M</em>
+                {briefing.sanctioners.length > 0 && (
+                  <li className="dash__raider is-sanction" title="Sanctions">
+                    <span className="round-brief__faces">
+                      {briefing.sanctioners.map((id) => (
+                        <img
+                          key={id}
+                          src={leaderArt(state, id)}
+                          alt={nationDef(id).name}
+                          title={nationDef(id).name}
+                          draggable={false}
+                        />
+                      ))}
+                    </span>
+                    <b>−{Math.round(briefing.sanctionPenalty * 100)}%</b>
                   </li>
                 )}
-                <li className="round-brief__ledger-total">
-                  <span>Net</span>
-                  <em className={netIncome < 0 ? 'is-down' : 'is-up'}>
-                    {netIncome < 0 ? '−' : '+'}${formatMoney(Math.abs(netIncome))}M
-                  </em>
-                </li>
               </ul>
-            </section>
-
-            <section
-              className={`round-brief__section round-brief__section--risk is-${briefing.weakness.severity}`}
+            )}
+            <p
+              className={`dash__focus is-${briefing.weakness.severity}`}
+              title={briefing.weakness.advice}
             >
-              <h3 className="round-brief__label">
-                Focus
-                {briefing.weakness.severity !== 'none' && (
-                  <span className="round-brief__risk-flag">{briefing.weakness.severity}</span>
-                )}
-              </h3>
-              <strong className="round-brief__risk-title">{briefing.weakness.title}</strong>
-              <p className="round-brief__risk-advice">{briefing.weakness.advice}</p>
-            </section>
+              {briefing.weakness.title}
+            </p>
           </div>
         </div>
       </div>
@@ -1569,6 +1575,19 @@ function StrikeTheater({
               leveled,
               laserDown,
             });
+          }
+          for (const target of targets) {
+            const escort =
+              target.weapons.includes('drone') &&
+              target.weapons.some((w) => w === 'nuke' || w === 'magnetic' || w === 'hydrogen');
+            const hydrogen = target.weapons.includes('hydrogen');
+            // A shield only stops a lone warhead. Hydrogen ignores it, and a swarm
+            // that gets through (magnetic has already darkened a laser) lets the
+            // warhead level the city. The cinema must show rubble, not a bare shield pop.
+            if (target.absorbed || target.lasered) continue;
+            if (hydrogen || (escort && (target.hadShield || target.laserDown))) {
+              target.leveled = true;
+            }
           }
           await new Promise<void>((resolve) => {
             if (!alive()) {
@@ -2027,15 +2046,6 @@ function NationPod({
                   <img src={ART.drone} alt="" draggable={false} />
                 </span>
               )}
-              {unknown && (
-                <span
-                  className="city-tile__unknown"
-                  title="Defences unknown — buy a spy service to see them"
-                  aria-label="Defences unknown"
-                >
-                  ?
-                </span>
-              )}
               {c.destroyed && (
                 <span className="city-smoke" aria-hidden>
                   <i />
@@ -2106,8 +2116,8 @@ function ModeSelect({ onSelect }: { onSelect: (m: GameMode) => void }) {
       <MapBackdrop src={ART.splash} />
       <div className="splash-veil" />
       <div className="splash-content">
-        <h1 className="stencil-title title-glow">NUCLEAR WAR</h1>
-        <p className="tagline">5 rounds · 12 countries · one superpower</p>
+        <h1 className="stencil-title title-glow">WAR STRATEGY</h1>
+        <p className="tagline">6 rounds · 12 countries · one superpower</p>
         <div className="mode-row">
           <button className="btn btn--xl btn--primary" onClick={() => onSelect('single')}>
             <img className="mode-row__icon" src={ART.modeSingle} alt="" />
@@ -2594,6 +2604,13 @@ function GameBoard({
     setWizardStep(first);
   }, [isMyHumanTurn, actorId, state.round, closeHumanTurn, roundBriefingActive]);
 
+  // Nothing left in the arsenal — don't make them press Done.
+  useEffect(() => {
+    if (wizardStep !== 'bombs') return;
+    if (canBuyAnyWarhead(state, actorId)) return;
+    advanceAfter(state, 'bombs');
+  }, [wizardStep, state, actorId, advanceAfter]);
+
   // 60s idle kick — only while this client must make selections
   useEffect(() => {
     if (!isOnline || !isMyHumanTurn || !myNationId || !state.onlineGameId) {
@@ -2924,12 +2941,20 @@ function GameBoard({
       if (limit < 1) return;
       if (turn.citiesDronedThisRound.includes(cityId)) return;
       bumpSelectionActivity();
-      setDroneTargets((prev) => {
-        const exists = prev.find((t) => t.cityId === cityId);
-        if (exists) return prev.filter((t) => t.cityId !== cityId);
-        if (prev.length >= limit) return [...prev.slice(1), { nationId, cityId }];
-        return [...prev, { nationId, cityId }];
-      });
+      const exists = droneTargets.find((t) => t.cityId === cityId);
+      if (exists) {
+        setDroneTargets(droneTargets.filter((t) => t.cityId !== cityId));
+        return;
+      }
+      const next =
+        droneTargets.length >= limit
+          ? [...droneTargets.slice(1), { nationId, cityId }]
+          : [...droneTargets, { nationId, cityId }];
+      setDroneTargets(next);
+      // Every swarm has a city — don't wait on Send Drones.
+      if (droneTargets.length < limit && next.length === limit) {
+        closeHumanTurn(targets, next);
+      }
       return;
     }
 
@@ -2942,16 +2967,20 @@ function GameBoard({
     if (cap < 1) return;
     if (turn.citiesStruckThisRound.includes(cityId)) return;
     bumpSelectionActivity();
-    setTargets((prev) => {
-      const exists = prev.find((t) => t.cityId === cityId);
-      if (exists) return prev.filter((t) => t.cityId !== cityId);
-      const used = prev.filter((t) => t.weapon === strikeWeapon).length;
-      if (used >= stock[strikeWeapon]) return prev;
-      if (prev.length >= cap) {
-        return [...prev.slice(1), { nationId, cityId, weapon: strikeWeapon }];
-      }
-      return [...prev, { nationId, cityId, weapon: strikeWeapon }];
-    });
+    const exists = targets.find((t) => t.cityId === cityId);
+    if (exists) {
+      setTargets(targets.filter((t) => t.cityId !== cityId));
+      return;
+    }
+    const used = targets.filter((t) => t.weapon === strikeWeapon).length;
+    if (used >= stock[strikeWeapon]) return;
+    const next =
+      targets.length >= cap
+        ? [...targets.slice(1), { nationId, cityId, weapon: strikeWeapon }]
+        : [...targets, { nationId, cityId, weapon: strikeWeapon }];
+    setTargets(next);
+    // Every warhead has a city — don't wait on Lock Targets.
+    if (targets.length < cap && next.length === cap) finishStrikeStep(next);
   };
 
   /** Targeting runs bombs first, then drones, so the last step locks the turn in. */
@@ -3172,17 +3201,22 @@ function GameBoard({
                         </span>
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      className="btn btn--primary arsenal-buy__add"
-                      disabled={bombMax < 1}
-                      onClick={() => {
-                        pushFx({ kind: 'buy', label: '+1 Nuclear' }, 700);
-                        setState(buyBombs(stateRef.current, 1, actorId));
-                      }}
-                    >
-                      +1
-                    </button>
+                    <div className="arsenal-buy__picks">
+                      {([1, 2, 3] as const).map((n) => (
+                        <button
+                          key={n}
+                          type="button"
+                          className="btn btn--primary arsenal-buy__add"
+                          disabled={n > bombMax}
+                          onClick={() => {
+                            pushFx({ kind: 'buy', label: `+${n} Nuclear` }, 700);
+                            setState(buyBombs(stateRef.current, n, actorId));
+                          }}
+                        >
+                          {n}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                   <div className="arsenal-buy__row">
                     <div className="arsenal-buy__meta">
@@ -3196,17 +3230,19 @@ function GameBoard({
                         </span>
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      className="btn btn--primary arsenal-buy__add"
-                      disabled={hydrogenMax < 1}
-                      onClick={() => {
-                        pushFx({ kind: 'buy', label: '+1 Hydrogen' }, 700);
-                        setState(buyHydrogenBomb(stateRef.current, actorId));
-                      }}
-                    >
-                      Buy
-                    </button>
+                    <div className="arsenal-buy__picks">
+                      <button
+                        type="button"
+                        className="btn btn--primary arsenal-buy__add"
+                        disabled={hydrogenMax < 1}
+                        onClick={() => {
+                          pushFx({ kind: 'buy', label: '+1 Hydrogen' }, 700);
+                          setState(buyHydrogenBomb(stateRef.current, actorId));
+                        }}
+                      >
+                        1
+                      </button>
+                    </div>
                   </div>
                   <div className="arsenal-buy__row">
                     <div className="arsenal-buy__meta">
@@ -3220,27 +3256,34 @@ function GameBoard({
                         </span>
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      className="btn btn--primary arsenal-buy__add"
-                      disabled={magneticMax < 1}
-                      onClick={() => {
-                        pushFx({ kind: 'buy', label: '+1 Magnetic' }, 700);
-                        setState(buyMagneticBomb(stateRef.current, actorId));
-                      }}
-                    >
-                      Buy
-                    </button>
+                    <div className="arsenal-buy__picks">
+                      {([1, 2] as const).map((n) => (
+                        <button
+                          key={n}
+                          type="button"
+                          className="btn btn--primary arsenal-buy__add"
+                          disabled={n > magneticMax}
+                          onClick={() => {
+                            pushFx({ kind: 'buy', label: `+${n} Magnetic` }, 700);
+                            setState(buyMagneticBombs(stateRef.current, n, actorId));
+                          }}
+                        >
+                          {n}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
-                <div className="turn-wizard__actions">
-                  <button
-                    className="btn btn--xl btn--primary"
-                    onClick={() => advanceAfter(stateRef.current, 'bombs')}
-                  >
-                    Done
-                  </button>
-                </div>
+                {canBuyAnyWarhead(state, actorId) && (
+                  <div className="turn-wizard__actions">
+                    <button
+                      className="btn btn--xl btn--primary"
+                      onClick={() => advanceAfter(stateRef.current, 'bombs')}
+                    >
+                      Done
+                    </button>
+                  </div>
+                )}
               </>
             )}
 
@@ -3714,18 +3757,20 @@ function GameBoard({
                   .join(' · ')}
               </p>
             )}
-            <div className="turn-wizard__actions">
-              <button
-                className="btn btn--xl btn--danger"
-                disabled={targets.length < 1}
-                onClick={() => finishStrikeStep(targets)}
-              >
-                Lock Targets ({targets.length})
-              </button>
-              <button className="btn btn--xl" onClick={() => finishStrikeStep([])}>
-                Skip / No Strike
-              </button>
-            </div>
+            {targets.length < warheadCap && (
+              <div className="turn-wizard__actions">
+                <button
+                  className="btn btn--xl btn--danger"
+                  disabled={targets.length < 1}
+                  onClick={() => finishStrikeStep(targets)}
+                >
+                  Lock Targets ({targets.length})
+                </button>
+                <button className="btn btn--xl" onClick={() => finishStrikeStep([])}>
+                  Skip / No Strike
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -3773,18 +3818,20 @@ function GameBoard({
                   .join(' · ')}
               </p>
             )}
-            <div className="turn-wizard__actions">
-              <button
-                className="btn btn--xl btn--danger"
-                disabled={droneTargets.length < 1}
-                onClick={() => closeHumanTurn(targets, droneTargets)}
-              >
-                Send Drones ({droneTargets.length})
-              </button>
-              <button className="btn btn--xl" onClick={() => closeHumanTurn(targets, [])}>
-                Skip / Hold Drones
-              </button>
-            </div>
+            {droneTargets.length < turn.drones && (
+              <div className="turn-wizard__actions">
+                <button
+                  className="btn btn--xl btn--danger"
+                  disabled={droneTargets.length < 1}
+                  onClick={() => closeHumanTurn(targets, droneTargets)}
+                >
+                  Send Drones ({droneTargets.length})
+                </button>
+                <button className="btn btn--xl" onClick={() => closeHumanTurn(targets, [])}>
+                  Skip / Hold Drones
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -3983,8 +4030,20 @@ function RoundSummary({
   );
   const continueOnceRef = useRef(false);
 
+  const overtimeLeaders = state.round >= state.maxRounds ? tiedForTheLead(state) : [];
+  const goingToOvertime = needsOvertime(state) && overtimeLeaders.length > 1;
+  const isFinal = state.round >= state.maxRounds && !goingToOvertime;
+  // The commander dashboard is the round summary. This board only stays up
+  // for the last round, on the way to the final results.
+  const skipBoard = !isFinal && endsAt != null;
+
   useEffect(() => {
     continueOnceRef.current = false;
+    if (skipBoard) {
+      continueOnceRef.current = true;
+      onContinue();
+      return;
+    }
     if (endsAt == null) {
       setSecondsLeft(null);
       return;
@@ -3999,7 +4058,7 @@ function RoundSummary({
     tick();
     const id = window.setInterval(tick, 250);
     return () => window.clearInterval(id);
-  }, [state.round, endsAt, onContinue]);
+  }, [state.round, endsAt, onContinue, skipBoard]);
 
   // A city raised again in the same round is standing, so don't flag it as a ruin
   const rebuiltCityIds = new Set(
@@ -4015,11 +4074,6 @@ function RoundSummary({
     .map((e) => e.cityId)
     .filter((id): id is string => Boolean(id) && !rebuiltCityIds.has(id));
   const isOnline = state.mode === 'online';
-  // A level scoreboard buys another round, so the last scheduled round is only
-  // the last one if somebody is actually ahead
-  const overtimeLeaders = state.round >= state.maxRounds ? tiedForTheLead(state) : [];
-  const goingToOvertime = needsOvertime(state) && overtimeLeaders.length > 1;
-  const isFinal = state.round >= state.maxRounds && !goingToOvertime;
   const myNationId =
     isOnline && sessionUid && state.uidToNation?.[sessionUid]
       ? state.uidToNation[sessionUid]
@@ -4040,15 +4094,10 @@ function RoundSummary({
   const isYouNation = (id: NationId) =>
     myNationId ? id === myNationId : Boolean(state.nations[id].isHuman);
   const worldRevealed = myCityIds.some((id) => state.nations[id].hasSpyNetwork);
-  const tollEvents = state.previousRoundEvents ?? state.roundEvents;
-  const myAssetLoss = myCityIds.reduce(
-    (sum, id) => sum + assetLossFor(tollEvents, id),
-    0,
-  );
-  const myRepairs = state.lastIncomeLedger
-    .filter((e) => myCityIds.includes(e.nationId))
-    .reduce((sum, e) => sum + (e.droneDamage ?? 0), 0);
   const myLedger = state.lastIncomeLedger.filter((e) => myCityIds.includes(e.nationId));
+  const myCombat = combatLedger(state, myCityIds);
+
+  if (skipBoard) return null;
 
   return (
     <div className="screen screen--board screen--round-report">
@@ -4086,24 +4135,11 @@ function RoundSummary({
 
           <div className="board-left__controls">
             <div className="panel panel--shop round-report__panel">
-              {(myAssetLoss > 0 || myRepairs > 0) && (
-                <p
-                  className={`round-report__toll ${myAssetLoss > 0 ? 'is-hit' : ''}`}
-                  role="status"
-                >
-                  {myAssetLoss > 0 ? (
-                    <>
-                      Last round cost you <strong>${formatMoney(myAssetLoss)}M</strong> in
-                      assets
-                      {myRepairs > 0 ? ` · $${formatMoney(myRepairs)}M repairs` : ''}
-                    </>
-                  ) : (
-                    <>
-                      Last round: <strong>${formatMoney(myRepairs)}M</strong> in drone repairs
-                    </>
-                  )}
-                </p>
-              )}
+              <CombatExchange
+                received={myCombat.received}
+                spent={myCombat.spent}
+                caused={myCombat.caused}
+              />
 
               <h2 className="round-report__panel-title">Scores</h2>
               <div className="score-cards score-cards--compact">
@@ -4154,12 +4190,12 @@ function RoundSummary({
                     {myLedger.map((e) => (
                       <div key={e.nationId} className="income-ledger__row">
                         <strong>
-                          ${formatMoney(state.nations[e.nationId].money)}M
+                          ${formatMoney(state.nations[e.nationId].money)}
                         </strong>
                         <span>
-                          +${formatMoney(e.revenue)}M income
+                          +${formatMoney(e.revenue)} income
                           {(e.droneDamage ?? 0) > 0
-                            ? ` · −$${formatMoney(e.droneDamage ?? 0)}M repairs`
+                            ? ` · −$${formatMoney(e.droneDamage ?? 0)} repairs`
                             : ''}
                           {e.sanctioners.length > 0
                             ? ` · −${Math.round(e.sanctionPenalty * 100)}% sanctions`

@@ -27,7 +27,7 @@ export function NameGate({
       />
       <div className="splash-veil" />
       <div className="splash-content">
-        <h1 className="stencil-title title-glow">NUCLEAR WAR</h1>
+        <h1 className="stencil-title title-glow">WAR STRATEGY</h1>
         <p className="tagline">Enter your commander name to begin</p>
         <form
           className="session-form"

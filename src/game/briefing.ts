@@ -8,7 +8,7 @@ import {
   totalWarheads,
   whoIsSanctioning,
 } from './engine';
-import type { GameState, NationId, RoundScore, RoundWorldEvent } from '../types';
+import type { GameState, NationId, PendingStrike, RoundScore, RoundWorldEvent } from '../types';
 
 /** What one of your cities lived through in the round just played. */
 export type BriefingCityStatus =
@@ -114,6 +114,12 @@ export interface RoundBriefing {
   droneRepairs: number;
   /** Cities + shields wiped last round, at replacement cost */
   assetLoss: number;
+  /** Asset loss plus drone repair bills — what the round took from us */
+  damageReceived: number;
+  /** What our launched warheads and swarms cost to fire */
+  warfareSpent: number;
+  /** Replacement cost and repair bills our attacks put on other nations */
+  enemyLoss: number;
   scores: RoundScore[];
   assets: BriefingAssets;
   weakness: BriefingWeakness;
@@ -128,6 +134,68 @@ const NUKE_KINDS: RoundWorldEvent['kind'][] = [
 ];
 
 const cash = (amount: number) => `$${formatMoney(amount)}`;
+
+const LOSS_KINDS: RoundWorldEvent['kind'][] = [
+  'cityDestroyed',
+  'shieldDestroyed',
+  'droneDamage',
+];
+
+/** What one launched weapon cost the attacker. A missing kind is a nuclear warhead. */
+export function weaponSpend(weapon: PendingStrike['weapon']): number {
+  if (weapon === 'drone') return COSTS.drone;
+  if (weapon === 'hydrogen') return COSTS.bombHydrogen;
+  if (weapon === 'magnetic') return COSTS.bombMagnetic;
+  return COSTS.bomb;
+}
+
+function stampedLoss(event: RoundWorldEvent): number {
+  if (event.amount != null) return event.amount;
+  if (event.kind === 'shieldDestroyed') return COSTS.shield;
+  if (event.kind === 'droneDamage') return DRONE_DAMAGE;
+  if (event.kind === 'cityDestroyed') return COSTS.rebuild;
+  return 0;
+}
+
+export interface CombatLedger {
+  received: number;
+  spent: number;
+  caused: number;
+}
+
+/**
+ * Last round's exchange for these seats: damage taken, money spent firing,
+ * and the loss those shots put on everyone else.
+ */
+export function combatLedger(state: GameState, nationIds: NationId[]): CombatLedger {
+  const mine = new Set(nationIds);
+  const events = state.previousRoundEvents ?? [];
+  const received = +nationIds
+    .reduce((sum, id) => {
+      const ledger = state.lastIncomeLedger.find((e) => e.nationId === id);
+      const repairs =
+        ledger?.droneDamage ??
+        events
+          .filter((e) => e.nationId === id && e.kind === 'droneDamage')
+          .reduce((bill, e) => bill + stampedLoss(e), 0);
+      return sum + assetLossFor(events, id) + repairs;
+    }, 0)
+    .toFixed(2);
+  const spent = +(state.resolvedStrikes ?? [])
+    .filter((strike) => mine.has(strike.attackerId))
+    .reduce((sum, strike) => sum + weaponSpend(strike.weapon), 0)
+    .toFixed(2);
+  const caused = +events
+    .filter(
+      (event) =>
+        event.attackerId != null &&
+        mine.has(event.attackerId) &&
+        LOSS_KINDS.includes(event.kind),
+    )
+    .reduce((sum, event) => sum + stampedLoss(event), 0)
+    .toFixed(2);
+  return { received, spent, caused };
+}
 
 function plural(count: number, one: string, many = `${one}s`) {
   return `${count} ${count === 1 ? one : many}`;
@@ -420,6 +488,7 @@ export function buildRoundBriefing(
   const scores = allScores(state);
   const assets = readAssets(state, myId);
   const priorEvents = state.previousRoundEvents ?? [];
+  const combat = combatLedger(state, [myId]);
 
   return {
     round: state.round,
@@ -433,6 +502,9 @@ export function buildRoundBriefing(
     income,
     droneRepairs: +droneRepairs.toFixed(2),
     assetLoss: assetLossFor(priorEvents, myId),
+    damageReceived: combat.received,
+    warfareSpent: combat.spent,
+    enemyLoss: combat.caused,
     scores,
     assets,
     weakness: findWeakness(state, myId, assets, scores, sanctioners, income, sanctionPenalty),

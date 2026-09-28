@@ -5,6 +5,7 @@ import {
   createInitialState,
   finishStrikeResolution,
   nextRound,
+  orderStrikesForResolution,
   seatTable,
   startGame,
   toggleSanction,
@@ -38,6 +39,15 @@ function playRound(state: GameState): GameState {
     s = applyQueuedStrike({ ...s, pendingStrikes: s.pendingStrikes.slice(1) }, strike);
   }
   return nextRound(finishStrikeResolution(s));
+}
+
+/** Same resolution the table uses, so launched weapons stay on the report. */
+function settle(state: GameState): GameState {
+  const resolved = orderStrikesForResolution(state.pendingStrikes).reduce(
+    (s, strike) => applyQueuedStrike(s, strike),
+    state,
+  );
+  return nextRound(finishStrikeResolution(resolved));
 }
 
 function nuke(state: GameState, attacker: NationId, target: NationId, cityIndex: number) {
@@ -416,5 +426,98 @@ describe('round briefing', () => {
     expect(brief.scores[brief.scores.length - 1].nationId).toBe('russia');
     expect(brief.scores[brief.scores.length - 1].eliminated).toBe(true);
     expect(brief.scores[0].eliminated).toBe(false);
+  });
+
+  it('reports damage taken, what the shots cost, and the loss they dealt', () => {
+    let s = table();
+    s = nuke(s, 'uk', 'us', 0);
+    s = nuke(s, 'us', 'uk', 1);
+    s = settle(s);
+
+    const brief = buildRoundBriefing(s, 'us')!;
+    expect(brief.damageReceived).toBe(COSTS.rebuild);
+    expect(brief.warfareSpent).toBe(COSTS.bomb);
+    expect(brief.enemyLoss).toBe(COSTS.rebuild);
+  });
+
+  it('prices an escorted strike as the weapons spent and the whole city lost', () => {
+    let s = table();
+    const target = s.nations.uk.cities[1];
+    s = {
+      ...s,
+      nations: {
+        ...s.nations,
+        uk: {
+          ...s.nations.uk,
+          cities: s.nations.uk.cities.map((c) =>
+            c.id === target.id ? { ...c, hasShield: true, hasResearch: true } : c,
+          ),
+        },
+      },
+    };
+    s = {
+      ...s,
+      pendingStrikes: [
+        {
+          attackerId: 'us',
+          targetNationId: 'uk',
+          cityId: target.id,
+          weapon: 'drone',
+        },
+        {
+          attackerId: 'us',
+          targetNationId: 'uk',
+          cityId: target.id,
+          weapon: 'nuke',
+        },
+      ],
+    };
+    s = settle(s);
+
+    const brief = buildRoundBriefing(s, 'us')!;
+    expect(brief.damageReceived).toBe(0);
+    expect(brief.warfareSpent).toBe(COSTS.drone + COSTS.bomb);
+    expect(brief.enemyLoss).toBe(COSTS.rebuild + COSTS.shield + COSTS.research);
+  });
+
+  it('counts a hydrogen bomb at its price when it levels a shielded city', () => {
+    let s = table();
+    const target = s.nations.russia.cities[0];
+    s = {
+      ...s,
+      nations: {
+        ...s.nations,
+        russia: {
+          ...s.nations.russia,
+          cities: s.nations.russia.cities.map((c) =>
+            c.id === target.id ? { ...c, hasShield: true } : c,
+          ),
+        },
+      },
+    };
+    s = {
+      ...s,
+      pendingStrikes: [
+        {
+          attackerId: 'us',
+          targetNationId: 'russia',
+          cityId: target.id,
+          weapon: 'hydrogen',
+        },
+      ],
+    };
+    s = settle(s);
+
+    const brief = buildRoundBriefing(s, 'us')!;
+    expect(brief.warfareSpent).toBe(COSTS.bombHydrogen);
+    expect(brief.enemyLoss).toBe(COSTS.rebuild + COSTS.shield);
+    expect(brief.damageReceived).toBe(0);
+  });
+
+  it('leaves the exchange at zero when nobody fired', () => {
+    const brief = buildRoundBriefing(settle(table()), 'us')!;
+    expect(brief.damageReceived).toBe(0);
+    expect(brief.warfareSpent).toBe(0);
+    expect(brief.enemyLoss).toBe(0);
   });
 });

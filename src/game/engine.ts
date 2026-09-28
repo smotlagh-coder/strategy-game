@@ -1255,6 +1255,14 @@ export function buyHydrogenBomb(state: GameState, nationId?: NationId): GameStat
   };
 }
 
+export function buyMagneticBombs(state: GameState, count: number, nationId?: NationId): GameState {
+  let s = state;
+  const id = nationId ?? currentNationId(s);
+  const n = Math.max(0, Math.min(count, maxMagneticPurchasable(s, id)));
+  for (let i = 0; i < n; i += 1) s = buyMagneticBomb(s, id);
+  return s;
+}
+
 export function buyMagneticBomb(state: GameState, nationId?: NationId): GameState {
   const id = nationId ?? currentNationId(state);
   const n = state.nations[id];

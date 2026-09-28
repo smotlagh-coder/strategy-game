@@ -27,7 +27,7 @@ export const ROUND_BANNER_MS = 3_000;
  * The one-page round briefing (cities, sanctions, treasury, standings). It
  * dismisses itself so an online table is never held up by a player reading.
  */
-export const ROUND_BRIEFING_MS = 10_000;
+export const ROUND_BRIEFING_MS = 15_000;
 
 export function selectionIdleSeconds(): number {
   return Math.ceil(SELECTION_IDLE_MS / 1000);

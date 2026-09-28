@@ -214,7 +214,7 @@ export const MAX_RESEARCH_PER_ROUND = 1;
  * rival has to overwhelm.
  */
 export const LASER_INTERCEPTS_PER_ROUND = 2;
-export const MAX_ROUNDS = 5;
+export const MAX_ROUNDS = 6;
 /**
  * Extra rounds a deadlocked final round can buy. Two nations with untouchable
  * bunkers can stay level forever, so the overtime runs out and the tiebreakers
