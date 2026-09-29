@@ -6908,11 +6908,11 @@ img { max-width: 100%; display: block; }
 .brief__fit {
   position: absolute;
   z-index: 1;
-  left: 50%;
-  top: 50%;
+  left: 0;
+  top: 0;
   width: min(980px, 96vw);
-  transform: translate(-50%, -50%) scale(var(--fit, 1));
-  transform-origin: center;
+  transform: translate(var(--fit-x, 0px), var(--fit-y, 0px)) scale(var(--fit, 1));
+  transform-origin: 0 0;
 }
 
 .brief__fit .round-brief__panel {
@@ -6926,11 +6926,11 @@ img { max-width: 100%; display: block; }
 .cop__fit {
   position: absolute;
   z-index: 1;
-  left: 50%;
-  top: 50%;
+  left: 0;
+  top: 0;
   width: min(1120px, 98vw);
-  transform: translate(-50%, -50%) scale(var(--fit, 1));
-  transform-origin: center;
+  transform: translate(var(--fit-x, 0px), var(--fit-y, 0px)) scale(var(--fit, 1));
+  transform-origin: 0 0;
 }
 
 .cop__fit .cop__panel {
@@ -7876,7 +7876,7 @@ img { max-width: 100%; display: block; }
 .cop-pie__icon { width: 13%; }
 
 /* ---------- Briefing fills the window: spare height goes to the world table ---------- */
-.brief__fit { min-height: var(--fit-h, 0); display: flex; flex-direction: column; container: brief / inline-size; }
+.brief__fit { min-height: var(--fit-h, 0); display: flex; flex-direction: column; }
 .brief__fit .round-brief__panel { flex: 1 1 auto; }
 .brief__fit .brief__grid { flex: 1 1 auto; grid-template-rows: auto minmax(0, 1fr); }
 .brief__card--world { display: flex; flex-direction: column; }
@@ -7892,9 +7892,7 @@ img { max-width: 100%; display: block; }
   .brief__card--world .dash__world,
   .brief__card--world .dash__world.is-many { grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
 }
-@container brief (min-width: 600px) {
-  .brief__card--advisor .brief__orders { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
+.brief__fit[data-wide='1'] .brief__card--advisor .brief__orders { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .dash__city .dash__arrow { width: max-content; max-width: 100%; }
 
 /* Spare height is shared: the last-round strip and the advisor grow with the world table */
@@ -8053,3 +8051,6 @@ img { max-width: 100%; display: block; }
   border-color: rgba(127, 192, 255, 0.7);
   background: rgba(20, 52, 96, 0.55);
 }
+
+/* The fixed overlay never lets the wide, scaled page spill past the screen edge */
+.round-brief { overflow: hidden; }

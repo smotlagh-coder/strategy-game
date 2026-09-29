@@ -44,6 +44,18 @@ export function useFitToWindow<T extends HTMLElement>(
       // Whatever height is left over, in the page's own (unscaled) pixels, so
       // a page can stretch to fill the window instead of floating in it.
       el.style.setProperty('--fit-h', `${Math.floor(availH / scale)}px`);
+      // Centre with plain pixels rather than percentage translates, so the
+      // page sits in the middle of its container on every engine (Safari
+      // included) whatever its width or transform origin resolve to.
+      const parent = (el.offsetParent as HTMLElement | null) ?? document.documentElement;
+      const pw = parent.clientWidth || window.innerWidth;
+      const ph = parent.clientHeight || window.innerHeight;
+      const w = el.offsetWidth;
+      const h = el.offsetHeight;
+      el.style.setProperty('--fit-x', `${Math.round((pw - w * scale) / 2)}px`);
+      el.style.setProperty('--fit-y', `${Math.round((ph - h * scale) / 2)}px`);
+      // Phones lay the page out wide and shrink it; tell CSS how wide it is
+      el.dataset.wide = w >= 600 ? '1' : '0';
     };
     fit();
     const ro = new ResizeObserver(fit);
