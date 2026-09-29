@@ -7896,3 +7896,160 @@ img { max-width: 100%; display: block; }
   .brief__card--advisor .brief__orders { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 .dash__city .dash__arrow { width: max-content; max-width: 100%; }
+
+/* Spare height is shared: the last-round strip and the advisor grow with the world table */
+.brief__fit .brief__strip { flex: 1 1 auto; max-height: 7.5rem; }
+.brief__fit .brief__grid { flex: 4 1 auto; grid-template-rows: auto auto; align-content: stretch; }
+.brief__fit .brief__strip .combat-exchange { align-items: stretch; }
+.brief__fit .brief__strip .combat-exchange__cell em { font-size: clamp(1.25rem, 3.4vw, 1.6rem); }
+.brief__fit .brief__strip .combat-exchange__cell span { font-size: 0.74rem; margin-top: 0.2rem; }
+.brief__fit .brief__card--advisor .brief__advisor-row { align-items: stretch; }
+.brief__fit .brief__card--advisor .brief__orders { align-content: stretch; grid-auto-rows: minmax(min-content, 1fr); }
+.brief__fit .brief__card--advisor .brief__order { padding-block: 0.6rem; }
+.brief__fit .brief__card--advisor .brief__order-copy b { font-size: 1.12rem; }
+.brief__fit .brief__card--advisor .brief__order-copy span { font-size: 0.9rem; }
+.brief__fit .brief__card--advisor .brief__order-art { width: 60px; height: 60px; }
+.brief__fit .brief__card--advisor .brief__order { grid-template-columns: 60px minmax(0, 1fr); }
+
+/* Offence: four cards of one height, whatever their helper text */
+.cop__page--offence { display: grid; grid-template-columns: minmax(0, 1fr); grid-auto-rows: 1fr; gap: 0.45rem; align-items: stretch; }
+@media (min-width: 900px) {
+  .cop__page--offence { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* Defence and Finance: the cities strip keeps its own height, the cards below share one */
+.cop__page--defence { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; grid-auto-rows: 1fr; gap: 0.45rem; align-items: stretch; }
+.cop__page--finance { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr 1fr auto; gap: 0.45rem; align-items: stretch; }
+@media (min-width: 900px) {
+  .cop__page--defence { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cop__page--finance { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: auto 1fr auto; }
+}
+
+/* ---------- What happened: pictures first, one card per event ---------- */
+.strike-cinema__panel--recap { width: min(600px, 94vw); }
+.strike-recap__list { gap: 0.5rem; max-height: min(58vh, 460px); }
+.strike-recap__empty { display: flex; flex-direction: column; align-items: center; gap: 0.4rem; padding: 1rem 0; }
+.strike-recap__empty img { width: 84px; height: 84px; object-fit: contain; filter: drop-shadow(0 4px 12px rgba(96, 214, 255, 0.4)); }
+.strike-recap__empty b { font-family: var(--stencil); letter-spacing: 0.1em; text-transform: uppercase; color: #cfe6ff; }
+
+.recap-card {
+  --tone: 160, 200, 255;
+  position: relative;
+  list-style: none;
+  display: grid;
+  grid-template-columns: 52px 34px 88px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: 14px;
+  border: 1px solid rgba(var(--tone), 0.5);
+  background: linear-gradient(90deg, rgba(var(--tone), 0.16), rgba(8, 14, 26, 0.8) 60%);
+  background-size: cover;
+  background-position: center;
+  overflow: hidden;
+}
+.recap-card--bad { --tone: 255, 110, 70; }
+.recap-card--warn { --tone: 120, 180, 255; }
+.recap-card--gold { --tone: 245, 197, 66; }
+.recap-card--drone { --tone: 96, 214, 255; }
+.recap-card--good { --tone: 109, 255, 140; }
+.recap-card--out { --tone: 255, 70, 70; grid-template-columns: 64px minmax(0, 1fr); background-blend-mode: normal; }
+
+.recap-card__who {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  background-size: cover;
+  background-position: center;
+  overflow: visible;
+}
+.recap-card__who > img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; object-position: top center; }
+.recap-card__who--big { width: 60px; height: 60px; border-color: rgba(255, 90, 90, 0.9); filter: grayscale(0.7); }
+.recap-card__who--none { border: 0; }
+.recap-card__more { position: absolute; right: -6px; bottom: -4px; padding: 0 0.3rem; border-radius: 999px; font-style: normal; font-size: 0.7rem; font-weight: 800; color: #fff; background: rgba(6, 12, 22, 0.95); border: 1px solid rgba(255, 255, 255, 0.4); }
+
+.recap-card__weapon { display: flex; align-items: center; justify-content: center; gap: 0.1rem; }
+.recap-card__weapon img { width: 30px; height: 30px; object-fit: contain; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.7)); }
+.recap-card__weapon em { font-style: normal; font-weight: 900; color: rgba(var(--tone), 1); }
+.recap-card__weapon--none { visibility: hidden; }
+
+.recap-card__city { position: relative; width: 88px; aspect-ratio: 16 / 10; }
+.recap-card__city-art { display: block; width: 100%; height: 100%; border-radius: 9px; object-fit: cover; border: 1px solid rgba(var(--tone), 0.7); box-shadow: 0 0 12px rgba(var(--tone), 0.35); }
+.recap-card__city.is-ruined .recap-card__city-art { filter: grayscale(1) brightness(0.55); }
+.recap-card__badge { position: absolute; right: -8px; bottom: -8px; width: 34px; height: 34px; object-fit: contain; filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.8)); }
+.recap-card__city.is-ruined .recap-card__badge { inset: -8px auto auto 50%; right: auto; bottom: auto; width: 64px; height: 64px; transform: translateX(-50%); opacity: 0.9; }
+
+.recap-card__copy { display: flex; flex-direction: column; min-width: 0; gap: 0.1rem; }
+.recap-card__tag { font-family: var(--stencil); font-size: 1.05rem; letter-spacing: 0.04em; line-height: 1.1; color: #fff; }
+.recap-card__tag.is-bad { color: #ff9c8f; }
+.recap-card__tag.is-warn { color: #9fd0ff; }
+.recap-card__tag.is-gold { color: #f5c542; }
+.recap-card__tag.is-drone { color: #7fe0ff; }
+.recap-card__tag.is-good { color: #8dffa8; }
+.recap-card__place { display: flex; align-items: center; gap: 0.3rem; min-width: 0; font-size: 0.82rem; color: #c5d6ee; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recap-card__place i { flex: none; width: 18px; height: 12px; border-radius: 2px; background-size: cover; background-position: center; border: 1px solid rgba(255, 255, 255, 0.35); }
+
+.recap-card__amount { padding: 0.2rem 0.55rem; border-radius: 999px; font-family: var(--stencil); font-size: 0.95rem; color: #ffb09a; background: rgba(6, 12, 22, 0.85); border: 1px solid rgba(255, 140, 110, 0.5); font-variant-numeric: tabular-nums; }
+.recap-card__stamp { position: absolute; right: -6px; top: 50%; width: 80px; height: 80px; transform: translateY(-50%); object-fit: contain; opacity: 0.85; pointer-events: none; }
+
+@media (max-width: 480px) {
+  .recap-card { grid-template-columns: 40px 26px 70px minmax(0, 1fr) auto; gap: 0.35rem; padding: 0.4rem 0.45rem; }
+  .recap-card--out { grid-template-columns: 52px minmax(0, 1fr); }
+  .recap-card__who { width: 40px; height: 40px; }
+  .recap-card__who--big { width: 50px; height: 50px; }
+  .recap-card__weapon img { width: 24px; height: 24px; }
+  .recap-card__city { width: 70px; }
+  .recap-card__badge { width: 28px; height: 28px; }
+  .recap-card__tag { font-size: 0.92rem; }
+  .recap-card__place { font-size: 0.72rem; }
+}
+
+/* Targeting: the weapon picker is one row that always fits the panel */
+.turn-wizard__panel--strike { box-sizing: border-box; max-width: 100%; overflow-x: hidden; }
+.warhead-picker { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 0.35rem; }
+.warhead-picker .btn,
+.warhead-picker__btn { min-width: 0; }
+@media (max-width: 520px) {
+  .warhead-picker__btn { flex-direction: column; gap: 0.1rem; padding: 0.35rem 0.2rem; }
+  .warhead-picker__btn span { align-items: center; text-align: center; font-size: 0.72rem; }
+  .warhead-picker__btn img { width: 26px; height: 26px; }
+}
+@media (max-width: 900px) {
+  /* A plain 1fr track grows to its widest child; pin it to the panel instead */
+  .turn-wizard--dock .turn-wizard__panel--strike { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 900px) {
+  .turn-wizard--dock .turn-wizard__actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .turn-wizard--dock .turn-wizard__actions .btn--xl { min-width: 0; white-space: normal; line-height: 1.15; }
+}
+.turn-wizard--dock .turn-wizard__actions > .btn:only-child { grid-column: 1 / -1; }
+
+/* Briefing world table: your own nation and cities are impossible to miss */
+.brief__card--world .dash__nation.is-you {
+  border: 2px solid rgba(77, 163, 255, 0.95);
+  background: linear-gradient(180deg, rgba(40, 110, 200, 0.34), rgba(10, 26, 52, 0.7));
+  box-shadow: 0 0 0 1px rgba(77, 163, 255, 0.35), 0 0 22px rgba(77, 163, 255, 0.45);
+}
+.brief__card--world .dash__nation.is-you .dash__nation-face { border-color: #7fc0ff; box-shadow: 0 0 10px rgba(127, 192, 255, 0.7); }
+.brief__card--world .dash__nation.is-you .dash__nation-copy b { color: #fff; }
+.dash__you {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.5rem;
+  border-radius: 999px;
+  font-style: normal;
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  vertical-align: middle;
+  color: #06101e;
+  background: linear-gradient(180deg, #9fd2ff, #4da3ff);
+  box-shadow: 0 0 10px rgba(77, 163, 255, 0.6);
+}
+.brief__card--world .dash__nation.is-you .dash__city:not(.has-defence):not(.has-offence) {
+  border-color: rgba(127, 192, 255, 0.7);
+  background: rgba(20, 52, 96, 0.55);
+}

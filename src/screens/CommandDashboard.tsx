@@ -522,14 +522,6 @@ export function CommandDashboard({
   const ballisticExtra = ballisticBundleCost(state, actorId);
   const aerospaceExtra = aerospaceBundleCost(state, actorId);
   const ballisticNote = ballisticExtra > 0 ? ` · +${cash(ballisticExtra)} tech, once` : '';
-  const ballisticDetail =
-    ballisticExtra > 0
-      ? `First one also unlocks Ballistic Missile Tech (${cash(ballisticExtra)}, once). `
-      : '';
-  const aerospaceDetail =
-    aerospaceExtra > 0
-      ? `First one also unlocks Aerospace Tech (${cash(aerospaceExtra)}, once). `
-      : '';
   const rubble = me.cities.filter((c) => c.destroyed).length;
   const hasBunker = me.cities.some((c) => c.isUnderground && !c.destroyed);
   const hasLaserNet = me.cities.some((c) => c.hasLaser && !c.destroyed);
@@ -921,7 +913,7 @@ export function CommandDashboard({
                     priceNote={`each${ballisticNote}`}
                     status={bombMax > 0 ? 'ready' : 'poor'}
                     advised={advisedOffence.has('nuke')}
-                    detail={`${ballisticDetail}In stock ${me.bombs} · ${MAX_BOMBS_PER_ROUND - me.bombsBoughtThisRound} more this round. Stops at shields without a swarm; breaks on bunkers.`}
+                    detail={`Stock ${me.bombs} · ${MAX_BOMBS_PER_ROUND - me.bombsBoughtThisRound} more this round. Shields absorb it; bunkers break it.`}
                   >
                     {qtyButtons([1, 2, 3], bombMax, (n) =>
                       onOrder((s) => buyBombsBundled(s, n, actorId), `+${n} Nuclear`),
@@ -935,9 +927,9 @@ export function CommandDashboard({
                     priceNote={`each${ballisticNote}`}
                     status={magneticMax > 0 ? 'ready' : 'poor'}
                     advised={advisedOffence.has('magnetic')}
-                    detail={`${ballisticDetail}Kills laser networks so swarms get through · ${
+                    detail={`Stock ${me.magneticBombs ?? 0} · ${
                       MAX_MAGNETIC_PER_GAME - (me.magneticBought ?? 0)
-                    } left in the game · stock ${me.magneticBombs ?? 0}`}
+                    } left in the game. Disables laser networks.`}
                   >
                     {qtyButtons([1, 2], magneticMax, (n) =>
                       onOrder((s) => buyMagneticBundled(s, n, actorId), `+${n} Magnetic`),
@@ -951,9 +943,9 @@ export function CommandDashboard({
                     priceNote={ballisticExtra > 0 ? `${ballisticNote.slice(3)}` : undefined}
                     status={hydrogenMax > 0 ? 'ready' : 'poor'}
                     advised={advisedOffence.has('hydrogen')}
-                    detail={`${ballisticDetail}Cracks bunkers and ignores shields · ${
+                    detail={`Stock ${me.hydrogenBombs ?? 0} · ${
                       MAX_HYDROGEN_PER_GAME - (me.hydrogenBought ?? 0)
-                    } left in the game · stock ${me.hydrogenBombs ?? 0}`}
+                    } left in the game. Cracks bunkers, ignores shields.`}
                   >
                     {qtyButtons([1], hydrogenMax, () =>
                       onOrder((s) => buyHydrogenBundled(s, actorId), '+1 Hydrogen'),
@@ -967,7 +959,7 @@ export function CommandDashboard({
                     priceNote={`each${aerospaceExtra > 0 ? ` · +${cash(aerospaceExtra)} tech, once` : ''}`}
                     status={droneMax > 0 ? 'ready' : 'poor'}
                     advised={advisedOffence.has('drone')}
-                    detail={`${aerospaceDetail}In stock ${me.drones} · up to ${MAX_DRONES_PER_ROUND - me.dronesBoughtThisRound} more. Bills a city ${cash(DRONE_DAMAGE)} and keeps its shield busy.`}
+                    detail={`Stock ${me.drones} · ${MAX_DRONES_PER_ROUND - me.dronesBoughtThisRound} more this round. Each hit bills ${cash(DRONE_DAMAGE)}.`}
                   >
                     {qtyButtons([1, 2, 3], droneMax, (n) =>
                       onOrder(
@@ -992,8 +984,8 @@ export function CommandDashboard({
                     advised={advisedDefence.has('shield')}
                     detail={
                       me.shieldsBoughtThisRound >= MAX_SHIELDS_PER_ROUND
-                        ? 'Installed this round — one per round'
-                        : 'Absorbs one warhead, then it is spent. Not needed on a bunker.'
+                        ? 'Installed this round · one per round'
+                        : 'Absorbs one warhead, then it is spent.'
                     }
                   >
                   </CopCard>
@@ -1010,8 +1002,8 @@ export function CommandDashboard({
                     advised={advisedDefence.has('bunker')}
                     detail={
                       hasBunker
-                        ? 'Your bunker city is dug in — only a hydrogen bomb cracks it'
-                        : `One city, for the whole match: nukes cannot destroy it. Drones still cost it ${cash(DRONE_DAMAGE / 2)}.`
+                        ? 'Dug in — only a hydrogen bomb cracks it.'
+                        : `One city, all match. Nukes cannot destroy it; drones bill ${cash(DRONE_DAMAGE / 2)}.`
                     }
                   >
                   </CopCard>
@@ -1028,8 +1020,8 @@ export function CommandDashboard({
                     advised={advisedDefence.has('laser')}
                     detail={
                       hasLaserNet
-                        ? 'Covering every city — burns with its control site'
-                        : `${aerospaceDetail}Covers every city · shoots down ${LASER_INTERCEPTS_PER_ROUND} swarms a round. A magnetic bomb darkens it.`
+                        ? 'Covers every city · burns with its site.'
+                        : `Covers every city · stops ${LASER_INTERCEPTS_PER_ROUND} swarms a round.`
                     }
                   >
                   </CopCard>
@@ -1045,8 +1037,8 @@ export function CommandDashboard({
                     advised={advisedDefence.has('rebuild')}
                     detail={
                       rubble === 0
-                        ? 'No rubble — every city is standing'
-                        : `${rubble} ${rubble === 1 ? 'city' : 'cities'} in ruins. Stands again at half score, bare of upgrades.`
+                        ? 'Every city is standing.'
+                        : `${rubble} in ruins. Returns at half score, bare.`
                     }
                   >
                   </CopCard>
@@ -1066,7 +1058,7 @@ export function CommandDashboard({
                     price={cash(COSTS.research)}
                     {...cityTap('research', 'Tap to build')}
                     status={pickable.research ? 'ready' : canPay(COSTS.research) ? 'idle' : 'poor'}
-                    detail={`That city earns +${cash(RESEARCH_INCOME)} every round while it stands. Burns with the city.`}
+                    detail={`That city earns +${cash(RESEARCH_INCOME)} a round. Burns with it.`}
                   />
                   <CopCard
                     art={ART.cop.spy}
@@ -1086,8 +1078,8 @@ export function CommandDashboard({
                     status={me.hasSpyNetwork ? 'owned' : canPay(COSTS.spy) ? 'ready' : 'poor'}
                     detail={
                       me.hasSpyNetwork
-                        ? 'Active — every enemy defence is on your map'
-                        : 'Shields, bunkers, labs and lasers on every enemy city'
+                        ? 'Active · every enemy defence on your map.'
+                        : 'See every enemy shield, bunker, lab and laser.'
                     }
                   >
                   </CopCard>
@@ -1112,7 +1104,7 @@ export function CommandDashboard({
                       </h4>
                       <p>
                         −10% of their income each · up to {MAX_SANCTIONS} rivals · {slotsLeft} slot
-                        {slotsLeft === 1 ? '' : 's'} left. They will take it personally.
+                        {slotsLeft === 1 ? '' : 's'} left.
                       </p>
                       <div className="cop-sanctions">
                         {rivals.map((id) => {
