@@ -1022,8 +1022,6 @@ export function CommandDashboard({
               </span>
               <b>{city.name}</b>
               <span className="cx-city__tags">
-                {city.destroyed && <em className="is-bad">Rubble</em>}
-                {city.hasShield && !city.isUnderground && !city.destroyed && <em>Shield</em>}
                 {city.hasLaser && !city.destroyed && (
                   <img className="cx-city__icon" src={ART.cop.laser} alt="Laser network" title="Laser network" />
                 )}
@@ -1136,6 +1134,7 @@ export function CommandDashboard({
             className={`cop-target${hasStrike ? '' : ' is-lock'}`}
             onClick={proceed}
             aria-label={hasStrike ? 'Choose targets' : 'Lock orders'}
+            title={hasStrike ? 'Choose targets' : 'Lock orders'}
           >
             <span className="cop-target__disc">
               {hasStrike ? (
@@ -1151,7 +1150,6 @@ export function CommandDashboard({
                 </svg>
               )}
             </span>
-            <span className="cop-target__label">{hasStrike ? 'Choose targets' : 'Lock orders'}</span>
           </button>
         </footer>
       </div>

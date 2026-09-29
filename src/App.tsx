@@ -1131,7 +1131,6 @@ function DashWorld({
                   {arrow && (
                     <span className={`dash__arrow is-${arrow.kind}`} aria-label={arrow.order.action}>
                       <img src={orderIcon(arrow.order.icon)} alt="" draggable={false} />
-                      <em>{arrow.order.action}</em>
                     </span>
                   )}
                   <div className="dash__city-art">
@@ -1146,27 +1145,26 @@ function DashWorld({
                     )}
                   </div>
                   <b className="dash__city-name">{city.name}</b>
-                  {city.destroyed ? (
-                    <span className="dash__city-state is-bad">Rubble</span>
-                  ) : !seen ? (
-                    <span className="dash__city-state">Defences unseen</span>
-                  ) : assets.length === 0 ? (
-                    <span className="dash__city-state is-open">Open</span>
-                  ) : (
-                    <span className="dash__city-assets">
-                      {assets.map((a) => (
-                        <span key={a.key} className={`dash__asset is-${a.key}`}>
+                  {/* Pictures only: the cross on a ruined city and the icons below say it all */}
+                  <span className="dash__city-assets">
+                    {!city.destroyed && !seen && (
+                      <span className="dash__asset is-unseen" title="Defences unseen" aria-label="Defences unseen">
+                        ?
+                      </span>
+                    )}
+                    {!city.destroyed &&
+                      seen &&
+                      assets.map((a) => (
+                        <span
+                          key={a.key}
+                          className={`dash__asset is-${a.key}`}
+                          title={a.label}
+                          aria-label={a.label}
+                        >
                           <img src={a.icon} alt="" draggable={false} />
-                          {a.label}
                         </span>
                       ))}
-                    </span>
-                  )}
-                  {row.isYou && city.status && city.status !== 'quiet' && (
-                    <small className={`brief__city-status is-${city.status}`}>
-                      {CITY_STATUS_LABEL[city.status]}
-                    </small>
-                  )}
+                  </span>
                 </li>
               );
             })}
@@ -1341,13 +1339,15 @@ function RoundBriefingOverlay({
               </ul>
             </div>
             <div className="brief__advisor-row">
-              <img
-                className="dash__advisor"
-                src={ART.advisors[briefing.nationId]}
-                alt=""
-                title="Military advisor"
-                draggable={false}
-              />
+              <span className="dash__advisor-wrap">
+                <img
+                  className="dash__advisor"
+                  src={ART.advisors[briefing.nationId]}
+                  alt=""
+                  title="Military advisor"
+                  draggable={false}
+                />
+              </span>
               <ul className="brief__orders" aria-label="Recommended orders">
                 <DashOrderCard kind="defence" order={briefing.defence} state={state} />
                 {briefing.offence ? (
@@ -1460,16 +1460,21 @@ function RecapEvent({ e, state }: { e: RoundWorldEvent; state: GameState }) {
         : 0;
   const tag = e.kind === 'cityRebuilt' && e.automatic ? 'Saved by rebuild' : meta.tag;
   const shared = e.sharedWith?.length ?? 0;
+  // Attacks show the attacker; a rebuilt city shows the leader who paid to rebuild it
+  const whoId = e.attackerId ?? (e.kind === 'cityRebuilt' ? e.nationId : undefined);
 
   return (
-    <li className={`recap-card recap-card--${meta.tone}`} aria-label={formatRoundEvent(e)}>
-      {e.attackerId ? (
+    <li
+      className={`recap-card recap-card--${meta.tone}${e.kind === 'cityDestroyed' ? ' recap-card--ruin' : ''}`}
+      aria-label={formatRoundEvent(e)}
+    >
+      {whoId ? (
         <span
           className="recap-card__who"
-          style={{ backgroundImage: `url(${ART.flags[e.attackerId]})` }}
-          title={nationDef(e.attackerId).name}
+          style={{ backgroundImage: `url(${ART.flags[whoId]})` }}
+          title={nationDef(whoId).name}
         >
-          <img src={leaderArt(state, e.attackerId)} alt="" draggable={false} />
+          <img src={leaderArt(state, whoId)} alt="" draggable={false} />
           {shared > 0 && <i className="recap-card__more">+{shared}</i>}
         </span>
       ) : (
@@ -1483,10 +1488,22 @@ function RecapEvent({ e, state }: { e: RoundWorldEvent; state: GameState }) {
       ) : (
         <span className="recap-card__weapon recap-card__weapon--none" aria-hidden />
       )}
-      <span className={`recap-card__city${e.kind === 'cityDestroyed' ? ' is-ruined' : ''}`}>
-        {cityImg && <img className="recap-card__city-art" src={cityImg} alt="" draggable={false} />}
-        {meta.badge && <img className="recap-card__badge" src={meta.badge} alt="" draggable={false} />}
-      </span>
+      {e.kind === 'cityDestroyed' ? (
+        // The blast and, beside it, what is left: the city greyed out under a red cross
+        <span className="recap-card__city is-ruined">
+          {meta.badge && <img className="recap-card__blast" src={meta.badge} alt="" draggable={false} />}
+          {cityImg && (
+            <span className="recap-card__ruin">
+              <img className="recap-card__city-art" src={cityImg} alt="" draggable={false} />
+            </span>
+          )}
+        </span>
+      ) : (
+        <span className="recap-card__city">
+          {cityImg && <img className="recap-card__city-art" src={cityImg} alt="" draggable={false} />}
+          {meta.badge && <img className="recap-card__badge" src={meta.badge} alt="" draggable={false} />}
+        </span>
+      )}
       <span className="recap-card__copy">
         <b className={`recap-card__tag is-${meta.tone}`}>{tag}</b>
         <span className="recap-card__place">
@@ -1651,7 +1668,22 @@ function StrikeTheater({
   }, []);
 
   const round = job.jobRound;
-  const holding = job.pending;
+  // The "Incoming" card only covers a report that is still travelling between
+  // players. Offline the report is either already here or never coming, so a
+  // quiet round gets no card at all; online it waits a beat before appearing.
+  const waitingOnReport = job.pending && !cinema && !recap && state.mode === 'online';
+  const [waitedOnReport, setHolding] = useState(false);
+  // Launches on record: the cinema is about to start, so cover the summary right away
+  const launchesOnRecord = (state.resolvedStrikes ?? []).length > 0;
+  const holding = job.pending && !cinema && !recap && (launchesOnRecord || waitedOnReport);
+  useEffect(() => {
+    if (!waitingOnReport) {
+      setHolding(false);
+      return;
+    }
+    const t = window.setTimeout(() => setHolding(true), 1_200);
+    return () => window.clearTimeout(t);
+  }, [waitingOnReport]);
 
   // Keyed on the round alone: the cinema plays from its own snapshot of the
   // report and no later sync (next round, heartbeat, late report) may cut it off.

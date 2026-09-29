@@ -62,7 +62,8 @@ export const ART = {
     bunker: '/art/cop-bunker.webp',
     laser: '/art/cop-laser.webp',
     rebuild: '/art/cop-rebuild.webp',
-    research: '/art/cop-research.webp',
+    // One research icon everywhere: the one on the battlefield's city tiles
+    research: '/art/research-icon.webp',
   },
   missileMagnetic: '/art/missile-magnetic.webp',
   drone: '/art/drone.webp',
