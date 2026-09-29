@@ -15,14 +15,14 @@ import { isHumanDisconnected } from '../game/engine';
 import type { GameState, NationId } from '../types';
 
 describe('online idle timer', () => {
-  it('is 60 seconds', () => {
-    expect(SELECTION_IDLE_MS).toBe(60_000);
-    expect(selectionIdleSeconds()).toBe(60);
+  it('is 75 seconds, longer than the 60s purchasing window', () => {
+    expect(SELECTION_IDLE_MS).toBe(75_000);
+    expect(selectionIdleSeconds()).toBe(75);
   });
 });
 
 describe('isHumanDisconnected', () => {
-  it('only flags after the 60s selection window, not a missed heartbeat', () => {
+  it('only flags after the selection idle window, not a missed heartbeat', () => {
     const state = buildOnlineGameState(
       assignNations(['a', 'b']),
       { a: 'A', b: 'B' },

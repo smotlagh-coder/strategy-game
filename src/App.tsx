@@ -1004,14 +1004,14 @@ function DashOrderCard({
       : ART.cities[order.cityId];
   return (
     <li className={`brief__order is-${kind}`}>
-      <span className="brief__order-tag">{kind === 'defence' ? 'Defend' : 'Attack'}</span>
       <div className="brief__order-art">
         <img className="brief__order-city" src={citySrc} alt="" draggable={false} />
         <img className="brief__order-tool" src={orderIcon(order.icon)} alt="" draggable={false} />
       </div>
       <div className="brief__order-copy">
+        <span className="brief__order-tag">{kind === 'defence' ? 'Defend' : 'Attack'}</span>
         <b>{order.action}</b>
-        <span>
+        <span className="brief__order-where">
           {order.cityName}
           {kind === 'offence' && (
             <>
@@ -1156,7 +1156,7 @@ function RoundBriefingOverlay({
   }, []);
 
   // The briefing is one page: shrink it to the window instead of ever scrolling.
-  const fitRef = useFitToWindow<HTMLDivElement>(980);
+  const fitRef = useFitToWindow<HTMLDivElement>(980, 0.45, true, 1.5);
 
   const me = nationDef(briefing.nationId);
 
@@ -1368,7 +1368,11 @@ function RoundBriefingOverlay({
                 {briefing.offence ? (
                   <DashOrderCard kind="offence" order={briefing.offence} state={state} />
                 ) : (
-                  <li className="brief__order is-none">No target worth a warhead yet</li>
+                  <li className="brief__order is-none">
+                    <span className="brief__order-tag">Attack</span>
+                    <b>Hold your fire</b>
+                    <span className="brief__order-where">No target is worth a warhead yet</span>
+                  </li>
                 )}
               </ul>
             </div>
@@ -2634,7 +2638,7 @@ function GameBoard({
     setWizardStep('command');
   }, [isMyHumanTurn, actorId, state.round, roundBriefingActive]);
 
-  // 60s idle kick — only while this client must make selections
+  // Idle kick — only while this client must make selections
   useEffect(() => {
     if (!isOnline || !isMyHumanTurn || !myNationId || !state.onlineGameId) {
       setIdleSecondsLeft(null);
@@ -2665,7 +2669,7 @@ function GameBoard({
     return () => window.clearInterval(tick);
   }, [isOnline, isMyHumanTurn, myNationId, state.onlineGameId, setState]);
 
-  // Peers: forfeit only after the 60s selection window — never from lobby status / tab blur
+  // Peers: forfeit only after the selection idle window — never from lobby status / tab blur
   useEffect(() => {
     if (!isOnline || !humansPlanning || !state.onlineGameId || !sessionUid) return;
 

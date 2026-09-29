@@ -7572,3 +7572,77 @@ img { max-width: 100%; display: block; }
 /* The rotating dial at the edge keeps the green */
 .cop-pie__ticks { stroke: rgba(109, 255, 140, 0.7); }
 .cop-pie__halo { stroke: rgba(109, 255, 140, 0.5); }
+
+/* ---------- Round briefing, readability pass: bigger type, advisor as the hero ---------- */
+.brief__label { font-size: 0.86rem; color: #c5d6ee; letter-spacing: 0.16em; }
+.brief__legend { font-size: 0.78rem; color: #c5d6ee; }
+
+/* Cities: compact tiles so the page is short and the type can be large */
+.brief__grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 0.7rem; }
+.brief__card--cities .dash__skyline { width: min(100%, 84px); }
+.brief__card--cities .round-brief__city { padding: 0.45rem 0.3rem 0.55rem; }
+.round-brief__city strong { font-size: 0.98rem; }
+.brief__city-status { font-size: 0.8rem; }
+
+/* Advisor: portrait, then two clear orders */
+.brief__card--advisor { display: flex; flex-direction: column; }
+.brief__advisor-row { flex: 1; align-items: stretch; gap: 0.75rem; }
+.brief__advisor-row .dash__advisor {
+  width: clamp(84px, 11vw, 112px);
+  height: auto;
+  min-height: 100%;
+  aspect-ratio: 3 / 4;
+  align-self: stretch;
+}
+.brief__orders { gap: 0.5rem; justify-content: center; }
+
+.brief__order {
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 0.75rem;
+  padding: 0.5rem 0.7rem;
+  border-radius: 14px;
+}
+.brief__order-art { width: 56px; height: 56px; }
+.brief__order-tool { width: 28px; height: 28px; right: -7px; bottom: -7px; }
+
+.brief__order-copy { gap: 0.15rem; }
+.brief__order .brief__order-tag {
+  align-self: flex-start;
+  padding: 0.05rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  letter-spacing: 0.14em;
+  color: #06101e;
+}
+.brief__order.is-defence .brief__order-tag { background: #8fd0ff; color: #06101e; }
+.brief__order.is-offence .brief__order-tag { background: #ffb09a; color: #200a06; }
+.brief__order.is-none .brief__order-tag { background: rgba(255, 255, 255, 0.2); color: #e8eef8; }
+.brief__order-copy b { font-size: 1.22rem; line-height: 1.1; color: #fff; }
+.brief__order .brief__order-where { font-size: 0.98rem; line-height: 1.2; color: #e8eef8; }
+
+.brief__order.is-none {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  padding: 0.5rem 0.7rem;
+  font-size: inherit;
+  color: inherit;
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(10, 16, 28, 0.6);
+}
+.brief__order.is-none b { font-family: var(--stencil); font-size: 1.22rem; line-height: 1.1; color: #fff; }
+
+/* World standings: two columns at any nation count, readable rows */
+.brief__card--world .dash__world,
+.brief__card--world .dash__world.is-many { grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+.brief__card--world .dash__nation-copy b { font-size: 0.95rem; }
+.brief__card--world .dash__nation-copy em { font-size: 0.82rem; color: #c5d6ee; }
+.dash__rank { font-size: 0.85rem; }
+
+@media (max-width: 760px) {
+  .brief__grid { grid-template-columns: 1fr; }
+  .brief__order { grid-template-columns: 48px minmax(0, 1fr); }
+  .brief__order-art { width: 48px; height: 48px; }
+  .brief__advisor-row .dash__advisor { width: 88px; aspect-ratio: 3 / 4; }
+}

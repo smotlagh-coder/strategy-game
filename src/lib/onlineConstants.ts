@@ -1,5 +1,9 @@
-/** Online selection idle kick window (local timer + peer kick). */
-export const SELECTION_IDLE_MS = 60_000;
+/**
+ * Online selection idle kick window (local timer + peer kick). Kept longer than
+ * the 60s purchasing window so a player who does nothing is moved on by the
+ * purchase timer before the idle rule can forfeit them.
+ */
+export const SELECTION_IDLE_MS = 75_000;
 
 /** How often a connected client writes presence while in a match. */
 export const HEARTBEAT_MS = 5_000;
@@ -34,7 +38,7 @@ export const ROUND_BRIEFING_MS = 15_000;
  * moves on with what they bought; when every commander has locked in, play
  * continues at once.
  */
-export const PURCHASE_WINDOW_MS = 30_000;
+export const PURCHASE_WINDOW_MS = 60_000;
 
 /**
  * After every warhead or drone pack has a city, hold this long on Lock Targets /
