@@ -47,6 +47,7 @@ import {
 import { findDefenceOrders, findOffenceOrders } from '../game/briefing';
 import type { BriefingOrderIcon } from '../game/briefing';
 import { PURCHASE_WINDOW_MS } from '../lib/onlineConstants';
+import { useFitToWindow } from '../lib/useFitToWindow';
 import type { City, GameState, NationId } from '../types';
 
 type CityPick = 'research' | 'underground' | 'rebuild' | 'shield' | 'laser';
@@ -125,17 +126,41 @@ type PieSection = {
 };
 
 const WEDGE_SPAN = 120;
-const PIE_R = 48;
+/** Angular gap left between wedges so they read as separate glass plates. */
+const WEDGE_GAP = 3.2;
+const PIE_OUTER = 47.5;
+const PIE_INNER = 14.5;
+const SECTION_COLOR: Record<Section, string> = {
+  // Phosphor greens, told apart by shade
+  offence: '#5dff7a',
+  defence: '#2ee6a6',
+  finance: '#b8ff5c',
+};
 
 function polar(angleDeg: number, radius: number) {
   const a = (angleDeg * Math.PI) / 180;
   return { x: 50 + radius * Math.cos(a), y: 50 + radius * Math.sin(a) };
 }
 
-function wedgePath(center: number) {
-  const a = polar(center - WEDGE_SPAN / 2, PIE_R);
-  const b = polar(center + WEDGE_SPAN / 2, PIE_R);
-  return `M50 50 L${a.x.toFixed(3)} ${a.y.toFixed(3)} A${PIE_R} ${PIE_R} 0 0 1 ${b.x.toFixed(3)} ${b.y.toFixed(3)} Z`;
+const pt = (p: { x: number; y: number }) => `${p.x.toFixed(3)} ${p.y.toFixed(3)}`;
+
+/** A ring segment: outer arc, straight edge in, inner arc back. */
+function platePath(center: number) {
+  const half = WEDGE_SPAN / 2 - WEDGE_GAP / 2;
+  const o1 = polar(center - half, PIE_OUTER);
+  const o2 = polar(center + half, PIE_OUTER);
+  const i2 = polar(center + half, PIE_INNER);
+  const i1 = polar(center - half, PIE_INNER);
+  return `M${pt(o1)} A${PIE_OUTER} ${PIE_OUTER} 0 0 1 ${pt(o2)} L${pt(i2)} A${PIE_INNER} ${PIE_INNER} 0 0 0 ${pt(i1)} Z`;
+}
+
+/** A thin arc along a wedge at one radius, covering `fraction` of the span. */
+function arcPath(center: number, radius: number, fraction: number, span = 84) {
+  const start = center - span / 2;
+  const end = start + span * Math.max(0, Math.min(1, fraction));
+  const a = polar(start, radius);
+  const b = polar(end, radius);
+  return `M${pt(a)} A${radius} ${radius} 0 ${end - start > 180 ? 1 : 0} 1 ${pt(b)}`;
 }
 
 /** Spread n icons along one arc so every wedge reads as a tidy fan. */
@@ -145,74 +170,117 @@ function iconAngles(center: number, n: number) {
 }
 
 /**
- * The command map: one big circle in three wedges. Each wedge lists what lives
- * inside it, and icons you already own shine so a glance shows what is covered.
+ * The command map: three glass plates around a hub. Each plate lists what
+ * lives inside it and how much of it you already have; icons you own glow.
+ * The hub ring is the purchasing clock.
  */
 function CopPie({
   sections,
   leaderSrc,
+  progress,
+  urgent,
   onOpen,
 }: {
   sections: PieSection[];
   leaderSrc: string;
+  /** Purchasing time left, 1 → 0. */
+  progress: number;
+  urgent: boolean;
   onOpen: (section: Section) => void;
 }) {
+  const ringR = 10.6;
+  const ringLen = 2 * Math.PI * ringR;
   return (
     <div className="cop-pie" role="group" aria-label="Command map">
       <svg viewBox="0 0 100 100" className="cop-pie__svg">
         <defs>
-          <radialGradient id="cop-grad-offence" cx="50%" cy="50%" r="60%">
-            <stop offset="0%" stopColor="#3a1410" />
-            <stop offset="100%" stopColor="#8a2a1c" />
-          </radialGradient>
-          <radialGradient id="cop-grad-defence" cx="50%" cy="50%" r="60%">
-            <stop offset="0%" stopColor="#0c2a44" />
-            <stop offset="100%" stopColor="#1f6f9c" />
-          </radialGradient>
-          <radialGradient id="cop-grad-finance" cx="50%" cy="50%" r="60%">
-            <stop offset="0%" stopColor="#3a2c08" />
-            <stop offset="100%" stopColor="#a17a12" />
-          </radialGradient>
+          {sections.map((sec) => (
+            <radialGradient
+              key={sec.id}
+              id={`cop-grad-${sec.id}`}
+              gradientUnits="userSpaceOnUse"
+              cx="50"
+              cy="50"
+              r={PIE_OUTER}
+            >
+              <stop offset="0.25" stopColor={SECTION_COLOR[sec.id]} stopOpacity="0" />
+              <stop offset="0.7" stopColor={SECTION_COLOR[sec.id]} stopOpacity="0.02" />
+              <stop offset="1" stopColor={SECTION_COLOR[sec.id]} stopOpacity="0.09" />
+            </radialGradient>
+          ))}
         </defs>
-        {sections.map((sec) => (
-          <path
-            key={sec.id}
-            d={wedgePath(sec.center)}
-            className={`cop-pie__wedge cop-pie__wedge--${sec.id}`}
-            fill={`url(#cop-grad-${sec.id})`}
-            role="button"
-            tabIndex={0}
-            aria-label={`${PAGE_TITLE[sec.id]} — open`}
-            onClick={() => onOpen(sec.id)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                onOpen(sec.id);
-              }
-            }}
-          />
-        ))}
-        <circle cx="50" cy="50" r={PIE_R} className="cop-pie__rim" />
+
+        <circle cx="50" cy="50" r="49.2" className="cop-pie__ticks" />
+        <circle cx="50" cy="50" r="49.7" className="cop-pie__halo" />
+
+        {sections.map((sec) => {
+          const lit = sec.icons.filter((i) => i.lit).length;
+          return (
+            <g
+              key={sec.id}
+              className={`cop-pie__plate cop-pie__plate--${sec.id}`}
+              style={{ ['--tone' as string]: SECTION_COLOR[sec.id] }}
+            >
+              <path d={platePath(sec.center)} className="cop-pie__base" />
+              <path
+                d={platePath(sec.center)}
+                className="cop-pie__wedge"
+                fill={`url(#cop-grad-${sec.id})`}
+                role="button"
+                tabIndex={0}
+                aria-label={`${PAGE_TITLE[sec.id]} — open`}
+                onClick={() => onOpen(sec.id)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onOpen(sec.id);
+                  }
+                }}
+              />
+              <path d={arcPath(sec.center, PIE_INNER + 2.4, 1)} className="cop-pie__track" />
+              <path
+                d={arcPath(sec.center, PIE_INNER + 2.4, lit / sec.icons.length)}
+                className="cop-pie__meter"
+              />
+            </g>
+          );
+        })}
+
+        <circle cx="50" cy="50" r={PIE_INNER - 2.2} className="cop-pie__hubdisc" />
+        <circle cx="50" cy="50" r={ringR} className="cop-pie__ring-track" />
+        <circle
+          cx="50"
+          cy="50"
+          r={ringR}
+          className={`cop-pie__ring${urgent ? ' is-urgent' : ''}`}
+          strokeDasharray={ringLen}
+          strokeDashoffset={ringLen * (1 - Math.max(0, Math.min(1, progress)))}
+          transform="rotate(-90 50 50)"
+        />
       </svg>
 
       {sections.map((sec) => {
         const lit = sec.icons.filter((i) => i.lit).length;
-        const label = polar(sec.center, 20);
+        const label = polar(sec.center, 25);
         return (
-          <div key={sec.id} className="cop-pie__group">
+          <div
+            key={sec.id}
+            className="cop-pie__group"
+            style={{ ['--tone' as string]: SECTION_COLOR[sec.id] }}
+          >
             <div
               className={`cop-pie__label cop-pie__label--${sec.id}`}
               style={{ left: `${label.x}%`, top: `${label.y}%` }}
             >
               <b>{sec.title}</b>
-              <span>
-                {sec.advised ? '★ Advisor · ' : ''}
-                {lit}/{sec.icons.length} ready
+              <span className="cop-pie__count">
+                {lit}/{sec.icons.length}
               </span>
+              {sec.advised && <em className="cop-pie__star">★ Advisor</em>}
             </div>
             {iconAngles(sec.center, sec.icons.length).map((angle, i) => {
               const icon = sec.icons[i];
-              const at = polar(angle, 36.5);
+              const at = polar(angle, 39);
               return (
                 <span
                   key={icon.key}
@@ -290,7 +358,6 @@ export function CommandDashboard({
   state,
   actorId,
   leaderSrc,
-  playerName,
   deadline,
   othersPending,
   rivals,
@@ -301,7 +368,6 @@ export function CommandDashboard({
   state: GameState;
   actorId: NationId;
   leaderSrc: string;
-  playerName: string;
   /** Wall-clock time (ms) at which the purchasing window closes. */
   deadline: number;
   /** Online: other commanders still ordering; null offline. */
@@ -312,9 +378,10 @@ export function CommandDashboard({
   onOrder: (fn: (s: GameState) => GameState, label?: string) => void;
   onProceed: () => void;
 }) {
-  const me = state.nations[actorId];
   const [pick, setPick] = useState<CityPick | null>(null);
   const [view, setView] = useState<View>('hub');
+  const fitRef = useFitToWindow<HTMLDivElement>(1120, 0.45, view !== 'hub');
+  const me = state.nations[actorId];
   const openView = (next: View) => {
     setPick(null);
     setView(next);
@@ -419,7 +486,7 @@ export function CommandDashboard({
         disabled={!pickable[kind]}
         onClick={() => setPick(pick === kind ? null : kind)}
       >
-        {!affordable ? `Need ${cash(need(cost))}` : pick === kind ? 'Pick a city ↓' : label}
+        {!affordable ? `Need ${cash(need(cost))}` : pick === kind ? 'Pick a city ↑' : label}
       </button>
     );
   };
@@ -635,84 +702,101 @@ export function CommandDashboard({
     },
   ];
 
-  const stock = [
-    { key: 'warheads', src: ART.missile, value: warheads, label: 'Warheads' },
-    {
-      key: 'drones',
-      src: ART.cop.drone,
-      value: me.drones,
-      label: 'Drone packs',
-    },
-    {
-      key: 'shields',
-      src: ART.cop.shield,
-      value: me.cities.filter((c) => c.hasShield && !c.isUnderground && !c.destroyed).length,
-      label: 'Shields',
-    },
-  ];
+  const hasStrike = warheads > 0 || me.drones > 0;
+
+  const clock = (
+    <div
+      className={`cop__clock${secondsLeft <= 10 ? ' is-urgent' : ''}`}
+      role="timer"
+      aria-label="Purchasing time left"
+    >
+      <span className="cop__clock-label">
+        {secondsLeft > 0 ? 'Purchasing closes' : 'Time is up'}
+      </span>
+      <b>{secondsLeft}s</b>
+      <i aria-hidden>
+        <em style={{ width: `${Math.min(100, (msLeft / PURCHASE_WINDOW_MS) * 100)}%` }} />
+      </i>
+    </div>
+  );
+
+  const treasury = (
+    <div className="cop__treasury" aria-label="Treasury">
+      <span>TREASURY</span>
+      <b>{cash(money)}</b>
+    </div>
+  );
 
   return (
     <div className="cop" role="dialog" aria-modal="true" aria-label="Command dashboard">
-      <div className="cop__panel enter-pop">
-        <header className="cop__top">
-          <div className="cop__id">
-            <img src={leaderSrc} alt="" draggable={false} />
-            <div>
-              <p>{nationDef(actorId).name}</p>
-              <h2>{playerName}</h2>
-            </div>
-          </div>
+      <div
+        className="cop__flag"
+        style={{ backgroundImage: `url(${ART.flags[actorId]})` }}
+        aria-hidden
+      />
+      <div className="cop__veil" />
 
-          <div className="cop__treasury" aria-label="Treasury">
-            <span>TREASURY</span>
-            <b>{cash(money)}</b>
-          </div>
+      {view === 'hub' ? (
+        <div className="cop__hub cop__view cop__view--hub" key="hub">
+          <CopPie
+            sections={pieSections}
+            leaderSrc={leaderSrc}
+            progress={msLeft / PURCHASE_WINDOW_MS}
+            urgent={secondsLeft <= 10}
+            onOpen={openView}
+          />
 
-          <ul className="cop__stock" aria-label="Arsenal">
-            {stock.map((s) => (
-              <li key={s.key} title={s.label}>
-                <img src={s.src} alt="" draggable={false} />
-                {s.value}
-              </li>
-            ))}
-            {me.hasSpyNetwork && (
-              <li title="Spy service active" className="is-flag">
-                <img src={ART.cop.spy} alt="" draggable={false} />
-              </li>
-            )}
-          </ul>
-        </header>
+          <div className="cop__corner cop__corner--tl">{treasury}</div>
+          <div className="cop__corner cop__corner--tr">{clock}</div>
 
-        <div
-          className={`cop__clock${secondsLeft <= 10 ? ' is-urgent' : ''}`}
-          role="timer"
-          aria-label="Purchasing time left"
-        >
-          <span className="cop__clock-label">
-            {secondsLeft > 0 ? 'Purchasing closes in' : 'Time is up'}
-          </span>
-          <b>{secondsLeft}s</b>
-          <i aria-hidden>
-            <em
-              style={{
-                width: `${Math.min(100, (msLeft / PURCHASE_WINDOW_MS) * 100)}%`,
-              }}
-            />
-          </i>
-        </div>
-
-        <div className={`cop__view cop__view--${view}`} key={view}>
-          {view === 'hub' && (
-            <>
-              <CopPie sections={pieSections} leaderSrc={leaderSrc} onOpen={openView} />
-              <p className="cop-pie-hint">
-                Tap a section to open it · shining icons are already yours
+          <div className="cop__corner cop__corner--bl">
+            <p className="cop__status">
+              {hasStrike
+                ? `Ready to fire: ${warheads} warhead${warheads === 1 ? '' : 's'} · ${me.drones} drone pack${
+                    me.drones === 1 ? '' : 's'
+                  }`
+                : 'Nothing armed yet'}
+            </p>
+            {othersPending != null && othersPending > 0 && (
+              <p className="cop__status is-waiting">
+                {othersPending} other commander{othersPending === 1 ? ' is' : 's are'} still
+                ordering
               </p>
-            </>
-          )}
+            )}
+            <p className="cop__hint">Tap a wedge to open it · shining icons are yours</p>
+          </div>
 
-          {view !== 'hub' && (
-            <div className="cop__page-head">
+          <div className="cop__corner cop__corner--br">
+            <button
+              type="button"
+              className={`cop-target${hasStrike ? '' : ' is-lock'}`}
+              onClick={onProceed}
+              aria-label={hasStrike ? 'Choose targets' : 'Lock orders'}
+            >
+              <span className="cop-target__disc">
+                {hasStrike ? (
+                  <svg viewBox="0 0 48 48" aria-hidden>
+                    <circle cx="24" cy="24" r="15" />
+                    <circle cx="24" cy="24" r="7" />
+                    <circle cx="24" cy="24" r="1.8" className="dot" />
+                    <path d="M24 3v10M24 35v10M3 24h10M35 24h10" />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 48 48" aria-hidden>
+                    <path d="M12 25l8 8 16-18" className="tick" />
+                  </svg>
+                )}
+              </span>
+              <span className="cop-target__label">
+                {hasStrike ? 'Choose targets' : 'Lock orders'}
+              </span>
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="cop__fit" ref={fitRef} key="fit">
+          <div className="cop__panel enter-pop">
+            <header className="cop__bar">
               <button type="button" className="cop-back" onClick={() => openView('hub')}>
                 ← Command map
               </button>
@@ -720,331 +804,339 @@ export function CommandDashboard({
                 <span>{PAGE_TITLE[view]}</span>
                 <em>{PAGE_TAGLINE[view]}</em>
               </h3>
+              <div className="cop__bar-end">
+                {clock}
+                {treasury}
+              </div>
+            </header>
+
+            <div className={`cop__view cop__view--${view}`} key={view}>
+              {view === 'offence' && (
+                <section className="cop__page cop__page--offence" aria-label="Offence">
+                  <CopCard
+                    art={ART.cop.ballisticTech}
+                    name="Ballistic Missile Tech"
+                    price={cash(COSTS.ballisticMissileTech)}
+                    priceNote="once"
+                    status={techStatus(me.hasNuclearTech, COSTS.ballisticMissileTech)}
+                    detail={
+                      me.hasNuclearTech
+                        ? 'Unlocked — warheads are open'
+                        : 'Unlocks warheads right away'
+                    }
+                  >
+                    {me.hasNuclearTech ? (
+                      <span className="cop-owned">✓ Owned</span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="cop-btn"
+                        disabled={!canPay(COSTS.ballisticMissileTech)}
+                        onClick={() =>
+                          onOrder(
+                            (s) => buyNuclearTech(s, actorId),
+                            'Ballistic Missile Tech Unlocked!',
+                          )
+                        }
+                      >
+                        {canPay(COSTS.ballisticMissileTech)
+                          ? 'Buy'
+                          : `Need ${cash(need(COSTS.ballisticMissileTech))}`}
+                      </button>
+                    )}
+                  </CopCard>
+
+                  <CopCard
+                    art={ART.missile}
+                    name="Nuclear warheads"
+                    price={cash(COSTS.bomb)}
+                    priceNote="each"
+                    status={!armed ? 'locked' : bombMax > 0 ? 'ready' : 'poor'}
+                    advised={advisedOffence.has('nuke')}
+                    detail={
+                      armed
+                        ? `In stock ${me.bombs} · ${MAX_BOMBS_PER_ROUND - me.bombsBoughtThisRound} more this round. Stops at shields without a swarm; breaks on bunkers.`
+                        : 'Needs Ballistic Missile Tech'
+                    }
+                  >
+                    {armed &&
+                      qtyButtons([1, 2, 3], bombMax, (n) =>
+                        onOrder((s) => buyBombs(s, n, actorId), `+${n} Nuclear`),
+                      )}
+                  </CopCard>
+
+                  <CopCard
+                    art={ART.missileMagnetic}
+                    name="Magnetic bombs"
+                    price={cash(COSTS.bombMagnetic)}
+                    priceNote="each"
+                    status={!armed ? 'locked' : magneticMax > 0 ? 'ready' : 'poor'}
+                    advised={advisedOffence.has('magnetic')}
+                    detail={
+                      armed
+                        ? `Kills laser networks so swarms get through · ${
+                            MAX_MAGNETIC_PER_GAME - (me.magneticBought ?? 0)
+                          } left in the game · stock ${me.magneticBombs ?? 0}`
+                        : 'Needs Ballistic Missile Tech'
+                    }
+                  >
+                    {armed &&
+                      qtyButtons([1, 2], magneticMax, (n) =>
+                        onOrder((s) => buyMagneticBombs(s, n, actorId), `+${n} Magnetic`),
+                      )}
+                  </CopCard>
+
+                  <CopCard
+                    art={ART.missileHydrogen}
+                    name="Hydrogen bomb"
+                    price={cash(COSTS.bombHydrogen)}
+                    status={!armed ? 'locked' : hydrogenMax > 0 ? 'ready' : 'poor'}
+                    advised={advisedOffence.has('hydrogen')}
+                    detail={
+                      armed
+                        ? `Cracks bunkers and ignores shields · ${
+                            MAX_HYDROGEN_PER_GAME - (me.hydrogenBought ?? 0)
+                          } left in the game · stock ${me.hydrogenBombs ?? 0}`
+                        : 'Needs Ballistic Missile Tech'
+                    }
+                  >
+                    {armed &&
+                      qtyButtons([1], hydrogenMax, () =>
+                        onOrder((s) => buyHydrogenBomb(s, actorId), '+1 Hydrogen'),
+                      )}
+                  </CopCard>
+
+                  <CopCard
+                    art={ART.cop.aerospaceTech}
+                    name="Aerospace Tech"
+                    price={cash(COSTS.aerospaceTech)}
+                    priceNote="once"
+                    status={techStatus(me.hasAerospaceTech, COSTS.aerospaceTech)}
+                    detail={
+                      me.hasAerospaceTech
+                        ? 'Unlocked — drones and laser defences are open'
+                        : 'Unlocks drone packs and laser defences'
+                    }
+                  >
+                    {me.hasAerospaceTech ? (
+                      <span className="cop-owned">✓ Owned</span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="cop-btn"
+                        disabled={!canPay(COSTS.aerospaceTech)}
+                        onClick={() =>
+                          onOrder((s) => buyAerospaceTech(s, actorId), 'Aerospace Tech Unlocked!')
+                        }
+                      >
+                        {canPay(COSTS.aerospaceTech)
+                          ? 'Buy'
+                          : `Need ${cash(need(COSTS.aerospaceTech))}`}
+                      </button>
+                    )}
+                  </CopCard>
+
+                  <CopCard
+                    art={ART.cop.drone}
+                    name="Drone packs"
+                    price={cash(COSTS.drone)}
+                    priceNote="each"
+                    status={!droneReady ? 'locked' : droneMax > 0 ? 'ready' : 'poor'}
+                    advised={advisedOffence.has('drone')}
+                    detail={
+                      droneReady
+                        ? `In stock ${me.drones} · up to ${MAX_DRONES_PER_ROUND - me.dronesBoughtThisRound} more. Bills a city ${cash(DRONE_DAMAGE)} and keeps its shield busy.`
+                        : 'Needs Aerospace Tech'
+                    }
+                  >
+                    {droneReady &&
+                      qtyButtons([1, 2, 3], droneMax, (n) =>
+                        onOrder(
+                          (s) => buyDrones(s, n, actorId),
+                          `+${n} Drone Pack${n > 1 ? 's' : ''}`,
+                        ),
+                      )}
+                  </CopCard>
+                </section>
+              )}
+
+              {view === 'defence' && (
+                <section className="cop__page cop__page--defence" aria-label="Defence">
+                  {citiesStrip}
+                  <CopCard
+                    art={ART.cop.shield}
+                    name="Shield"
+                    price={cash(COSTS.shield)}
+                    priceNote={`${MAX_SHIELDS_PER_ROUND}/round`}
+                    status={pickable.shield ? 'ready' : canPay(COSTS.shield) ? 'idle' : 'poor'}
+                    advised={advisedDefence.has('shield')}
+                    detail={
+                      me.shieldsBoughtThisRound >= MAX_SHIELDS_PER_ROUND
+                        ? 'Installed this round — one per round'
+                        : 'Absorbs one warhead, then it is spent. Not needed on a bunker.'
+                    }
+                  >
+                    {cityButton('shield', 'Place')}
+                  </CopCard>
+
+                  <CopCard
+                    art={ART.cop.bunker}
+                    name="Bunker"
+                    price={cash(COSTS.underground)}
+                    priceNote="1/game"
+                    status={hasBunker ? 'owned' : pickable.underground ? 'ready' : 'poor'}
+                    advised={advisedDefence.has('bunker')}
+                    detail={
+                      hasBunker
+                        ? 'Your bunker city is dug in — only a hydrogen bomb cracks it'
+                        : `One city, for the whole match: nukes cannot destroy it. Drones still cost it ${cash(DRONE_DAMAGE / 2)}.`
+                    }
+                  >
+                    {hasBunker ? (
+                      <span className="cop-owned">✓ Dug in</span>
+                    ) : (
+                      cityButton('underground', 'Place')
+                    )}
+                  </CopCard>
+
+                  <CopCard
+                    art={ART.cop.laser}
+                    name="Laser network"
+                    price={cash(COSTS.laser)}
+                    priceNote="1/nation"
+                    status={
+                      !me.hasAerospaceTech
+                        ? 'locked'
+                        : hasLaserNet
+                          ? 'owned'
+                          : pickable.laser
+                            ? 'ready'
+                            : 'poor'
+                    }
+                    advised={advisedDefence.has('laser')}
+                    detail={
+                      !me.hasAerospaceTech
+                        ? 'Needs Aerospace Tech'
+                        : hasLaserNet
+                          ? 'Covering every city — burns with its control site'
+                          : `Covers every city · shoots down ${LASER_INTERCEPTS_PER_ROUND} swarms a round. A magnetic bomb darkens it.`
+                    }
+                  >
+                    {!me.hasAerospaceTech ? null : hasLaserNet ? (
+                      <span className="cop-owned">✓ Online</span>
+                    ) : (
+                      cityButton('laser', 'Place')
+                    )}
+                  </CopCard>
+
+                  <CopCard
+                    art={ART.cop.rebuild}
+                    name="Rebuild"
+                    price={cash(COSTS.rebuild)}
+                    status={rubble === 0 ? 'idle' : pickable.rebuild ? 'ready' : 'poor'}
+                    advised={advisedDefence.has('rebuild')}
+                    detail={
+                      rubble === 0
+                        ? 'No rubble — every city is standing'
+                        : `${rubble} ${rubble === 1 ? 'city' : 'cities'} in ruins. Stands again at half score, bare of upgrades.`
+                    }
+                  >
+                    {rubble === 0 ? (
+                      <span className="cop-owned">All standing</span>
+                    ) : (
+                      cityButton('rebuild', 'Rebuild')
+                    )}
+                  </CopCard>
+                </section>
+              )}
+
+              {view === 'finance' && (
+                <section
+                  className="cop__page cop__page--finance"
+                  aria-label="Finance and intelligence"
+                >
+                  {citiesStrip}
+                  <CopCard
+                    art={ART.cop.research}
+                    name="Research Center"
+                    price={cash(COSTS.research)}
+                    status={pickable.research ? 'ready' : canPay(COSTS.research) ? 'idle' : 'poor'}
+                    detail={`That city earns +${cash(RESEARCH_INCOME)} every round while it stands. Burns with the city.`}
+                  >
+                    {cityButton('research', 'Build')}
+                  </CopCard>
+                  <CopCard
+                    art={ART.cop.spy}
+                    name="Spy service"
+                    price={cash(COSTS.spy)}
+                    priceNote="once"
+                    status={me.hasSpyNetwork ? 'owned' : canPay(COSTS.spy) ? 'ready' : 'poor'}
+                    detail={
+                      me.hasSpyNetwork
+                        ? 'Active — every enemy defence is on your map'
+                        : 'Shields, bunkers, labs and lasers on every enemy city'
+                    }
+                  >
+                    {me.hasSpyNetwork ? (
+                      <span className="cop-owned">✓ Active</span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="cop-btn"
+                        disabled={!canBuySpyNetwork(state, actorId)}
+                        onClick={() =>
+                          onOrder((s) => buySpyNetwork(s, actorId), 'Spy service opened')
+                        }
+                      >
+                        {canPay(COSTS.spy) ? 'Buy' : `Need ${cash(need(COSTS.spy))}`}
+                      </button>
+                    )}
+                  </CopCard>
+
+                  <article className="cop-card is-ready cop-card--sanction">
+                    <img
+                      className="cop-card__art"
+                      src={ART.cop.sanction}
+                      alt=""
+                      draggable={false}
+                    />
+                    <div className="cop-card__body">
+                      <h4>Sanctions</h4>
+                      <p>
+                        −10% of their income each · up to {MAX_SANCTIONS} rivals · {slotsLeft} slot
+                        {slotsLeft === 1 ? '' : 's'} left. They will take it personally.
+                      </p>
+                      <div className="cop-sanctions">
+                        {rivals.map((id) => {
+                          const alive = !state.nations[id].eliminated;
+                          const on = me.sanctions.includes(id);
+                          const full = !on && slotsLeft < 1;
+                          return (
+                            <button
+                              key={id}
+                              type="button"
+                              className={`cop-sanction${on ? ' is-on' : ''}`}
+                              disabled={!alive || full}
+                              title={`${nationDef(id).name}${on ? ' — sanctioned' : ''}`}
+                              onClick={() => onOrder((s) => toggleSanction(s, id, actorId))}
+                            >
+                              <img src={rivalArt(id)} alt="" draggable={false} />
+                              <span>{nationDef(id).shortName}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <div className="cop-card__buy">
+                      <span className="cop-card__price">Free</span>
+                    </div>
+                  </article>
+                </section>
+              )}
             </div>
-          )}
-
-          {view === 'offence' && (
-            <section className="cop__page cop__page--offence" aria-label="Offence">
-              <CopCard
-                art={ART.cop.ballisticTech}
-                name="Ballistic Missile Tech"
-                price={cash(COSTS.ballisticMissileTech)}
-                priceNote="once"
-                status={techStatus(me.hasNuclearTech, COSTS.ballisticMissileTech)}
-                detail={
-                  me.hasNuclearTech ? 'Unlocked — warheads are open' : 'Unlocks warheads right away'
-                }
-              >
-                {me.hasNuclearTech ? (
-                  <span className="cop-owned">✓ Owned</span>
-                ) : (
-                  <button
-                    type="button"
-                    className="cop-btn"
-                    disabled={!canPay(COSTS.ballisticMissileTech)}
-                    onClick={() =>
-                      onOrder((s) => buyNuclearTech(s, actorId), 'Ballistic Missile Tech Unlocked!')
-                    }
-                  >
-                    {canPay(COSTS.ballisticMissileTech)
-                      ? 'Buy'
-                      : `Need ${cash(need(COSTS.ballisticMissileTech))}`}
-                  </button>
-                )}
-              </CopCard>
-
-              <CopCard
-                art={ART.missile}
-                name="Nuclear warheads"
-                price={cash(COSTS.bomb)}
-                priceNote="each"
-                status={!armed ? 'locked' : bombMax > 0 ? 'ready' : 'poor'}
-                advised={advisedOffence.has('nuke')}
-                detail={
-                  armed
-                    ? `In stock ${me.bombs} · ${MAX_BOMBS_PER_ROUND - me.bombsBoughtThisRound} more this round. Stops at shields without a swarm; breaks on bunkers.`
-                    : 'Needs Ballistic Missile Tech'
-                }
-              >
-                {armed &&
-                  qtyButtons([1, 2, 3], bombMax, (n) =>
-                    onOrder((s) => buyBombs(s, n, actorId), `+${n} Nuclear`),
-                  )}
-              </CopCard>
-
-              <CopCard
-                art={ART.missileMagnetic}
-                name="Magnetic bombs"
-                price={cash(COSTS.bombMagnetic)}
-                priceNote="each"
-                status={!armed ? 'locked' : magneticMax > 0 ? 'ready' : 'poor'}
-                advised={advisedOffence.has('magnetic')}
-                detail={
-                  armed
-                    ? `Kills laser networks so swarms get through · ${
-                        MAX_MAGNETIC_PER_GAME - (me.magneticBought ?? 0)
-                      } left in the game · stock ${me.magneticBombs ?? 0}`
-                    : 'Needs Ballistic Missile Tech'
-                }
-              >
-                {armed &&
-                  qtyButtons([1, 2], magneticMax, (n) =>
-                    onOrder((s) => buyMagneticBombs(s, n, actorId), `+${n} Magnetic`),
-                  )}
-              </CopCard>
-
-              <CopCard
-                art={ART.missileHydrogen}
-                name="Hydrogen bomb"
-                price={cash(COSTS.bombHydrogen)}
-                status={!armed ? 'locked' : hydrogenMax > 0 ? 'ready' : 'poor'}
-                advised={advisedOffence.has('hydrogen')}
-                detail={
-                  armed
-                    ? `Cracks bunkers and ignores shields · ${
-                        MAX_HYDROGEN_PER_GAME - (me.hydrogenBought ?? 0)
-                      } left in the game · stock ${me.hydrogenBombs ?? 0}`
-                    : 'Needs Ballistic Missile Tech'
-                }
-              >
-                {armed &&
-                  qtyButtons([1], hydrogenMax, () =>
-                    onOrder((s) => buyHydrogenBomb(s, actorId), '+1 Hydrogen'),
-                  )}
-              </CopCard>
-
-              <CopCard
-                art={ART.cop.aerospaceTech}
-                name="Aerospace Tech"
-                price={cash(COSTS.aerospaceTech)}
-                priceNote="once"
-                status={techStatus(me.hasAerospaceTech, COSTS.aerospaceTech)}
-                detail={
-                  me.hasAerospaceTech
-                    ? 'Unlocked — drones and laser defences are open'
-                    : 'Unlocks drone packs and laser defences'
-                }
-              >
-                {me.hasAerospaceTech ? (
-                  <span className="cop-owned">✓ Owned</span>
-                ) : (
-                  <button
-                    type="button"
-                    className="cop-btn"
-                    disabled={!canPay(COSTS.aerospaceTech)}
-                    onClick={() =>
-                      onOrder((s) => buyAerospaceTech(s, actorId), 'Aerospace Tech Unlocked!')
-                    }
-                  >
-                    {canPay(COSTS.aerospaceTech)
-                      ? 'Buy'
-                      : `Need ${cash(need(COSTS.aerospaceTech))}`}
-                  </button>
-                )}
-              </CopCard>
-
-              <CopCard
-                art={ART.cop.drone}
-                name="Drone packs"
-                price={cash(COSTS.drone)}
-                priceNote="each"
-                status={!droneReady ? 'locked' : droneMax > 0 ? 'ready' : 'poor'}
-                advised={advisedOffence.has('drone')}
-                detail={
-                  droneReady
-                    ? `In stock ${me.drones} · up to ${MAX_DRONES_PER_ROUND - me.dronesBoughtThisRound} more. Bills a city ${cash(DRONE_DAMAGE)} and keeps its shield busy.`
-                    : 'Needs Aerospace Tech'
-                }
-              >
-                {droneReady &&
-                  qtyButtons([1, 2, 3], droneMax, (n) =>
-                    onOrder((s) => buyDrones(s, n, actorId), `+${n} Drone Pack${n > 1 ? 's' : ''}`),
-                  )}
-              </CopCard>
-            </section>
-          )}
-
-          {view === 'defence' && (
-            <section className="cop__page cop__page--defence" aria-label="Defence">
-              {citiesStrip}
-              <CopCard
-                art={ART.cop.shield}
-                name="Shield"
-                price={cash(COSTS.shield)}
-                priceNote={`${MAX_SHIELDS_PER_ROUND}/round`}
-                status={pickable.shield ? 'ready' : canPay(COSTS.shield) ? 'idle' : 'poor'}
-                advised={advisedDefence.has('shield')}
-                detail={
-                  me.shieldsBoughtThisRound >= MAX_SHIELDS_PER_ROUND
-                    ? 'Installed this round — one per round'
-                    : 'Absorbs one warhead, then it is spent. Not needed on a bunker.'
-                }
-              >
-                {cityButton('shield', 'Place')}
-              </CopCard>
-
-              <CopCard
-                art={ART.cop.bunker}
-                name="Bunker"
-                price={cash(COSTS.underground)}
-                priceNote="1/game"
-                status={hasBunker ? 'owned' : pickable.underground ? 'ready' : 'poor'}
-                advised={advisedDefence.has('bunker')}
-                detail={
-                  hasBunker
-                    ? 'Your bunker city is dug in — only a hydrogen bomb cracks it'
-                    : `One city, for the whole match: nukes cannot destroy it. Drones still cost it ${cash(DRONE_DAMAGE / 2)}.`
-                }
-              >
-                {hasBunker ? (
-                  <span className="cop-owned">✓ Dug in</span>
-                ) : (
-                  cityButton('underground', 'Place')
-                )}
-              </CopCard>
-
-              <CopCard
-                art={ART.cop.laser}
-                name="Laser network"
-                price={cash(COSTS.laser)}
-                priceNote="1/nation"
-                status={
-                  !me.hasAerospaceTech
-                    ? 'locked'
-                    : hasLaserNet
-                      ? 'owned'
-                      : pickable.laser
-                        ? 'ready'
-                        : 'poor'
-                }
-                advised={advisedDefence.has('laser')}
-                detail={
-                  !me.hasAerospaceTech
-                    ? 'Needs Aerospace Tech'
-                    : hasLaserNet
-                      ? 'Covering every city — burns with its control site'
-                      : `Covers every city · shoots down ${LASER_INTERCEPTS_PER_ROUND} swarms a round. A magnetic bomb darkens it.`
-                }
-              >
-                {!me.hasAerospaceTech ? null : hasLaserNet ? (
-                  <span className="cop-owned">✓ Online</span>
-                ) : (
-                  cityButton('laser', 'Place')
-                )}
-              </CopCard>
-
-              <CopCard
-                art={ART.cop.rebuild}
-                name="Rebuild"
-                price={cash(COSTS.rebuild)}
-                status={rubble === 0 ? 'idle' : pickable.rebuild ? 'ready' : 'poor'}
-                advised={advisedDefence.has('rebuild')}
-                detail={
-                  rubble === 0
-                    ? 'No rubble — every city is standing'
-                    : `${rubble} ${rubble === 1 ? 'city' : 'cities'} in ruins. Stands again at half score, bare of upgrades.`
-                }
-              >
-                {rubble === 0 ? (
-                  <span className="cop-owned">All standing</span>
-                ) : (
-                  cityButton('rebuild', 'Rebuild')
-                )}
-              </CopCard>
-            </section>
-          )}
-
-          {view === 'finance' && (
-            <section className="cop__page cop__page--finance" aria-label="Finance and intelligence">
-              {citiesStrip}
-              <CopCard
-                art={ART.cop.research}
-                name="Research Center"
-                price={cash(COSTS.research)}
-                status={pickable.research ? 'ready' : canPay(COSTS.research) ? 'idle' : 'poor'}
-                detail={`That city earns +${cash(RESEARCH_INCOME)} every round while it stands. Burns with the city.`}
-              >
-                {cityButton('research', 'Build')}
-              </CopCard>
-              <CopCard
-                art={ART.cop.spy}
-                name="Spy service"
-                price={cash(COSTS.spy)}
-                priceNote="once"
-                status={me.hasSpyNetwork ? 'owned' : canPay(COSTS.spy) ? 'ready' : 'poor'}
-                detail={
-                  me.hasSpyNetwork
-                    ? 'Active — every enemy defence is on your map'
-                    : 'Shields, bunkers, labs and lasers on every enemy city'
-                }
-              >
-                {me.hasSpyNetwork ? (
-                  <span className="cop-owned">✓ Active</span>
-                ) : (
-                  <button
-                    type="button"
-                    className="cop-btn"
-                    disabled={!canBuySpyNetwork(state, actorId)}
-                    onClick={() => onOrder((s) => buySpyNetwork(s, actorId), 'Spy service opened')}
-                  >
-                    {canPay(COSTS.spy) ? 'Buy' : `Need ${cash(need(COSTS.spy))}`}
-                  </button>
-                )}
-              </CopCard>
-
-              <article className="cop-card is-ready cop-card--sanction">
-                <img className="cop-card__art" src={ART.cop.sanction} alt="" draggable={false} />
-                <div className="cop-card__body">
-                  <h4>Sanctions</h4>
-                  <p>
-                    −10% of their income each · up to {MAX_SANCTIONS} rivals · {slotsLeft} slot
-                    {slotsLeft === 1 ? '' : 's'} left. They will take it personally.
-                  </p>
-                  <div className="cop-sanctions">
-                    {rivals.map((id) => {
-                      const alive = !state.nations[id].eliminated;
-                      const on = me.sanctions.includes(id);
-                      const full = !on && slotsLeft < 1;
-                      return (
-                        <button
-                          key={id}
-                          type="button"
-                          className={`cop-sanction${on ? ' is-on' : ''}`}
-                          disabled={!alive || full}
-                          title={`${nationDef(id).name}${on ? ' — sanctioned' : ''}`}
-                          onClick={() => onOrder((s) => toggleSanction(s, id, actorId))}
-                        >
-                          <img src={rivalArt(id)} alt="" draggable={false} />
-                          <span>{nationDef(id).shortName}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-                <div className="cop-card__buy">
-                  <span className="cop-card__price">Free</span>
-                </div>
-              </article>
-            </section>
-          )}
+          </div>
         </div>
-
-        <footer className="cop__foot">
-          <p>
-            {othersPending != null && othersPending > 0
-              ? `${othersPending} other commander${othersPending === 1 ? ' is' : 's are'} still ordering · `
-              : ''}
-            {warheads > 0 || me.drones > 0
-              ? `Ready to fire: ${warheads} warhead${warheads === 1 ? '' : 's'} · ${me.drones} drone pack${
-                  me.drones === 1 ? '' : 's'
-                }`
-              : 'Nothing armed yet — buy weapons above, or lock in with no strike.'}
-          </p>
-          <button type="button" className="btn btn--xl btn--primary" onClick={onProceed}>
-            {warheads > 0 || me.drones > 0 ? 'Choose Targets →' : 'Lock Orders'}
-          </button>
-        </footer>
-      </div>
+      )}
     </div>
   );
 }

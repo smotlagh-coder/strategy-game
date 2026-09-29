@@ -98,6 +98,7 @@ import {
 import { aftermathMyCityIds, aftermathWorldIds } from './lib/lobbyInvite';
 import { NameGate } from './screens/NameGate';
 import { CommandDashboard } from './screens/CommandDashboard';
+import { useFitToWindow } from './lib/useFitToWindow';
 import { LobbyScreen } from './screens/Lobby';
 import { LeaderboardScreen } from './screens/Leaderboard';
 
@@ -1002,18 +1003,25 @@ function DashOrderCard({
       ? ART.citiesUnderground[city.id]
       : ART.cities[order.cityId];
   return (
-    <div className={`dash__order is-${kind}`} title={`${order.action} ${order.cityName}`}>
-      <span className="dash__order-tag">{kind === 'defence' ? 'DEF' : 'ATK'}</span>
-      <div className="dash__order-art">
-        <img className="dash__order-city" src={citySrc} alt="" draggable={false} />
-        <img className="dash__order-tool" src={orderIcon(order.icon)} alt="" draggable={false} />
+    <li className={`brief__order is-${kind}`}>
+      <span className="brief__order-tag">{kind === 'defence' ? 'Defend' : 'Attack'}</span>
+      <div className="brief__order-art">
+        <img className="brief__order-city" src={citySrc} alt="" draggable={false} />
+        <img className="brief__order-tool" src={orderIcon(order.icon)} alt="" draggable={false} />
       </div>
-      <div className="dash__order-copy">
+      <div className="brief__order-copy">
         <b>{order.action}</b>
-        <span>{order.cityName}</span>
-        {kind === 'offence' && <em>{nationDef(order.nationId).shortName}</em>}
+        <span>
+          {order.cityName}
+          {kind === 'offence' && (
+            <>
+              {' · '}
+              <em>{nationDef(order.nationId).shortName}</em>
+            </>
+          )}
+        </span>
       </div>
-    </div>
+    </li>
   );
 }
 
@@ -1039,7 +1047,10 @@ function DashWorld({
   });
 
   return (
-    <ol className="dash__world" aria-label="World standings and advisor orders">
+    <ol
+      className={`dash__world${briefing.world.length > 5 ? ' is-many' : ''}`}
+      aria-label="World standings and advisor orders"
+    >
       {briefing.world.map((row) => (
         <li
           key={row.nationId}
@@ -1144,6 +1155,9 @@ function RoundBriefingOverlay({
     };
   }, []);
 
+  // The briefing is one page: shrink it to the window instead of ever scrolling.
+  const fitRef = useFitToWindow<HTMLDivElement>(980);
+
   const me = nationDef(briefing.nationId);
 
   return (
@@ -1154,8 +1168,9 @@ function RoundBriefingOverlay({
       aria-label={`Round ${briefing.round} briefing`}
     >
       <div className="round-banner__veil" />
+      <div className="brief__fit" ref={fitRef}>
       <div className="round-banner__panel round-brief__panel enter-pop">
-        <header className="dash__head">
+        <header className="brief__top">
           <div
             className="dash__commander"
             style={{ backgroundImage: `url(${ART.flags[briefing.nationId]})` }}
@@ -1165,6 +1180,16 @@ function RoundBriefingOverlay({
           <div className="dash__id">
             <p className="round-start__eyebrow">{me.name}</p>
             <h2 className="round-start__title">Round {briefing.round}</h2>
+          </div>
+          <div className="brief__treasury" aria-label="Treasury">
+            <span>Treasury</span>
+            <em>${formatMoney(briefing.money)}</em>
+            <small>
+              <b className="is-up">+{formatMoney(briefing.income)} income</b>
+              {briefing.droneRepairs > 0 && (
+                <b className="is-down">−{formatMoney(briefing.droneRepairs)} repairs</b>
+              )}
+            </small>
           </div>
           <button type="button" className="dash__skip" onClick={onDone}>
             <svg className="dash__ring" viewBox="0 0 36 36" aria-hidden>
@@ -1182,156 +1207,155 @@ function RoundBriefingOverlay({
           </button>
         </header>
 
-        <div className="dash__metrics">
+        <div className="brief__strip">
           <CombatExchange
             received={briefing.damageReceived}
             spent={briefing.warfareSpent}
             caused={briefing.enemyLoss}
           />
-          <div className="dash__cash">
-            <em>${formatMoney(briefing.money)}</em>
-            <span className="is-up">+{formatMoney(briefing.income)}</span>
-            {briefing.droneRepairs > 0 && (
-              <span className="is-down">−{formatMoney(briefing.droneRepairs)}</span>
-            )}
-          </div>
-        </div>
-
-        <section className="dash__cities" aria-label="Cities">
-          <ul className="round-brief__arsenal">
-            <li title="Warheads">
-              <img src={ART.missile} alt="" draggable={false} />
-              {briefing.assets.bombs}
-            </li>
-            <li title="Drones">
-              <img src={ART.drone} alt="" draggable={false} />
-              {briefing.assets.drones}
-            </li>
-            {briefing.assets.spyNetwork && (
-              <li className="is-flag" title="Spy service">
-                <img src={ART.spyServices} alt="" draggable={false} />
-              </li>
-            )}
-            {briefing.assets.lasers > 0 && (
-              <li title="Lasers">
-                <img src={ART.laserIcon} alt="" draggable={false} />
-                {briefing.assets.lasers}
-              </li>
-            )}
-          </ul>
-          <ul className="round-brief__cities">
-            {briefing.cities.map((city) => {
-              const mark = cityStatusMark(city.status);
-              return (
-                <li
-                  key={city.id}
-                  className={`round-brief__city is-${city.status} ${city.destroyed ? 'is-rubble' : ''}`}
-                  title={CITY_STATUS_LABEL[city.status]}
-                >
-                  <div className="dash__skyline">
-                    <img
-                      src={
-                        city.isUnderground && !city.destroyed
-                          ? ART.citiesUnderground[city.id]
-                          : ART.cities[city.id]
-                      }
-                      alt=""
-                      draggable={false}
-                    />
-                    {city.hasShield && !city.isUnderground && !city.destroyed && (
-                      <span className="dash__dome" title="Shield" aria-hidden />
+          {(briefing.raiders.length > 0 || briefing.sanctioners.length > 0) && (
+            <ul className="dash__hits" aria-label="Incoming">
+              <li className="dash__hits-label">Hit you</li>
+              {briefing.raiders.map((raider) => (
+                <li key={raider.id} className="dash__raider" title={nationDef(raider.id).name}>
+                  <img src={leaderArt(state, raider.id)} alt="" draggable={false} />
+                  <span>
+                    {raider.nukes > 0 && (
+                      <i>
+                        <img src={ART.missile} alt="" draggable={false} />
+                        {raider.nukes}
+                      </i>
                     )}
-                    {city.destroyed && (
-                      <span className="city-smoke" aria-hidden>
-                        <i />
-                        <i />
-                        <i />
-                      </span>
+                    {raider.swarms > 0 && (
+                      <i>
+                        <img src={ART.drone} alt="" draggable={false} />
+                        {raider.swarms}
+                      </i>
                     )}
-                    {mark && (
+                  </span>
+                </li>
+              ))}
+              {briefing.sanctioners.length > 0 && (
+                <li className="dash__raider is-sanction" title="Sanctions">
+                  <span className="round-brief__faces">
+                    {briefing.sanctioners.map((id) => (
                       <img
-                        className="dash__mark"
-                        src={mark.src}
-                        alt=""
-                        title={mark.label}
+                        key={id}
+                        src={leaderArt(state, id)}
+                        alt={nationDef(id).name}
+                        title={nationDef(id).name}
                         draggable={false}
                       />
-                    )}
-                  </div>
-                  <strong>{city.name}</strong>
-                  {(city.hasResearch || city.hasLaser) && (
-                    <div className="round-brief__city-assets">
-                      {city.hasResearch && (
-                        <img src={ART.researchIcon} alt="" title="Research" draggable={false} />
-                      )}
-                      {city.hasLaser && (
-                        <img src={ART.laserIcon} alt="" title="Laser" draggable={false} />
-                      )}
-                    </div>
-                  )}
-                  {city.attackers.length > 0 && (
-                    <div className="round-brief__city-raiders">
-                      {city.attackers.map((id) => (
-                        <img
-                          key={id}
-                          src={leaderArt(state, id)}
-                          alt={nationDef(id).name}
-                          title={nationDef(id).name}
-                          draggable={false}
-                        />
-                      ))}
-                    </div>
-                  )}
+                    ))}
+                  </span>
+                  <b>−{Math.round(briefing.sanctionPenalty * 100)}%</b>
                 </li>
-              );
-            })}
-          </ul>
-        </section>
+              )}
+            </ul>
+          )}
+        </div>
 
-        <div className="dash__lower">
-          <DashWorld state={state} briefing={briefing} />
-
-          <div className="dash__rail">
-            {(briefing.raiders.length > 0 || briefing.sanctioners.length > 0) && (
-              <ul className="dash__hits" aria-label="Incoming">
-                {briefing.raiders.map((raider) => (
-                  <li key={raider.id} className="dash__raider" title={nationDef(raider.id).name}>
-                    <img src={leaderArt(state, raider.id)} alt="" draggable={false} />
-                    <span>
-                      {raider.nukes > 0 && (
-                        <i>
-                          <img src={ART.missile} alt="" draggable={false} />
-                          {raider.nukes}
-                        </i>
-                      )}
-                      {raider.swarms > 0 && (
-                        <i>
-                          <img src={ART.drone} alt="" draggable={false} />
-                          {raider.swarms}
-                        </i>
-                      )}
-                    </span>
+        <div className="brief__grid">
+          <section className="brief__card brief__card--cities" aria-label="Your cities">
+            <div className="brief__card-head">
+              <h3 className="brief__label">Your cities</h3>
+              <ul className="round-brief__arsenal" aria-label="Arsenal">
+                <li title="Warheads">
+                  <img src={ART.missile} alt="" draggable={false} />
+                  {briefing.assets.bombs}
+                </li>
+                <li title="Drones">
+                  <img src={ART.drone} alt="" draggable={false} />
+                  {briefing.assets.drones}
+                </li>
+                {briefing.assets.spyNetwork && (
+                  <li className="is-flag" title="Spy service">
+                    <img src={ART.spyServices} alt="" draggable={false} />
                   </li>
-                ))}
-                {briefing.sanctioners.length > 0 && (
-                  <li className="dash__raider is-sanction" title="Sanctions">
-                    <span className="round-brief__faces">
-                      {briefing.sanctioners.map((id) => (
-                        <img
-                          key={id}
-                          src={leaderArt(state, id)}
-                          alt={nationDef(id).name}
-                          title={nationDef(id).name}
-                          draggable={false}
-                        />
-                      ))}
-                    </span>
-                    <b>−{Math.round(briefing.sanctionPenalty * 100)}%</b>
+                )}
+                {briefing.assets.lasers > 0 && (
+                  <li title="Lasers">
+                    <img src={ART.laserIcon} alt="" draggable={false} />
+                    {briefing.assets.lasers}
                   </li>
                 )}
               </ul>
-            )}
-            <div className="dash__orders-row">
+            </div>
+            <ul className="round-brief__cities">
+              {briefing.cities.map((city) => {
+                const mark = cityStatusMark(city.status);
+                return (
+                  <li
+                    key={city.id}
+                    className={`round-brief__city is-${city.status} ${city.destroyed ? 'is-rubble' : ''}`}
+                    title={CITY_STATUS_LABEL[city.status]}
+                  >
+                    <div className="dash__skyline">
+                      <img
+                        src={
+                          city.isUnderground && !city.destroyed
+                            ? ART.citiesUnderground[city.id]
+                            : ART.cities[city.id]
+                        }
+                        alt=""
+                        draggable={false}
+                      />
+                      {city.hasShield && !city.isUnderground && !city.destroyed && (
+                        <span className="dash__dome" title="Shield" aria-hidden />
+                      )}
+                      {city.destroyed && (
+                        <span className="city-smoke" aria-hidden>
+                          <i />
+                          <i />
+                          <i />
+                        </span>
+                      )}
+                      {mark && (
+                        <img
+                          className="dash__mark"
+                          src={mark.src}
+                          alt=""
+                          title={mark.label}
+                          draggable={false}
+                        />
+                      )}
+                      {city.attackers.length > 0 && (
+                        <div className="round-brief__city-raiders">
+                          {city.attackers.map((id) => (
+                            <img
+                              key={id}
+                              src={leaderArt(state, id)}
+                              alt={nationDef(id).name}
+                              title={nationDef(id).name}
+                              draggable={false}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <strong>{city.name}</strong>
+                    <small className={`brief__city-status is-${city.status}`}>
+                      {CITY_STATUS_LABEL[city.status]}
+                    </small>
+                    {(city.hasResearch || city.hasLaser) && (
+                      <div className="round-brief__city-assets">
+                        {city.hasResearch && (
+                          <img src={ART.researchIcon} alt="" title="Research" draggable={false} />
+                        )}
+                        {city.hasLaser && (
+                          <img src={ART.laserIcon} alt="" title="Laser" draggable={false} />
+                        )}
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+
+          <section className="brief__card brief__card--advisor" aria-label="Advisor orders">
+            <h3 className="brief__label">Advisor</h3>
+            <div className="brief__advisor-row">
               <img
                 className="dash__advisor"
                 src={ART.advisors[briefing.nationId]}
@@ -1339,15 +1363,29 @@ function RoundBriefingOverlay({
                 title="Military advisor"
                 draggable={false}
               />
-              <div className="dash__orders" aria-label="Recommended orders">
+              <ul className="brief__orders" aria-label="Recommended orders">
                 <DashOrderCard kind="defence" order={briefing.defence} state={state} />
-                {briefing.offence && (
+                {briefing.offence ? (
                   <DashOrderCard kind="offence" order={briefing.offence} state={state} />
+                ) : (
+                  <li className="brief__order is-none">No target worth a warhead yet</li>
                 )}
-              </div>
+              </ul>
             </div>
-          </div>
+          </section>
         </div>
+
+        <section className="brief__card brief__card--world" aria-label="World standings">
+          <div className="brief__card-head">
+            <h3 className="brief__label">World standings</h3>
+            <span className="brief__legend">
+              <i className="is-defence" /> cover
+              <i className="is-offence" /> strike
+            </span>
+          </div>
+          <DashWorld state={state} briefing={briefing} />
+        </section>
+      </div>
       </div>
     </div>
   );
@@ -3081,7 +3119,6 @@ function GameBoard({
           state={state}
           actorId={actorId}
           leaderSrc={leaderArt(state, actorId)}
-          playerName={playerDisplayName(state, actorId)}
           deadline={purchaseDeadline}
           othersPending={
             isOnline ? waitingHumans.filter((id) => id !== actorId).length : null
