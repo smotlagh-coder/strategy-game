@@ -204,8 +204,8 @@ function CopPie({
               r={PIE_OUTER}
             >
               <stop offset="0.25" stopColor={SECTION_COLOR[sec.id]} stopOpacity="0" />
-              <stop offset="0.7" stopColor={SECTION_COLOR[sec.id]} stopOpacity="0.02" />
-              <stop offset="1" stopColor={SECTION_COLOR[sec.id]} stopOpacity="0.09" />
+              <stop offset="0.7" stopColor={SECTION_COLOR[sec.id]} stopOpacity="0" />
+              <stop offset="1" stopColor={SECTION_COLOR[sec.id]} stopOpacity="0.03" />
             </radialGradient>
           ))}
         </defs>

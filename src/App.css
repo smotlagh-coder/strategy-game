@@ -7492,3 +7492,83 @@ img { max-width: 100%; display: block; }
 /* Titles stay inside the space between the hub and the icon ring */
 .cop-pie__label { width: 21%; }
 .cop-pie__label b { font-size: clamp(0.6rem, 3.05cqw, 1.55rem); letter-spacing: 0.06em; text-wrap: balance; }
+
+/* ---------- Less green: black glass and white type, green kept for small accents ---------- */
+.cop { --ops-text: #eef5f0; --ops-dim: #93a69a; }
+
+.cop__flag { filter: brightness(1.12) saturate(1); }
+.cop__veil {
+  background:
+    repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.1) 0 1px, transparent 1px 3px),
+    radial-gradient(ellipse at 50% 50%, rgba(0, 0, 0, 0.22), rgba(0, 0, 0, 0.66) 100%);
+}
+
+.cop-pie__svg { filter: drop-shadow(0 16px 34px rgba(0, 0, 0, 0.55)); }
+.cop-pie__ticks { stroke: rgba(255, 255, 255, 0.34); }
+.cop-pie__halo { stroke: rgba(255, 255, 255, 0.22); }
+.cop-pie__base { fill: #000; fill-opacity: 0.72; }
+.cop-pie__wedge { stroke: rgba(255, 255, 255, 0.24); stroke-opacity: 1; stroke-width: 0.2; }
+.cop-pie__wedge:hover,
+.cop-pie__wedge:focus-visible {
+  fill: rgba(255, 255, 255, 0.07);
+  stroke: rgba(109, 255, 140, 0.8);
+  filter: none;
+}
+.cop-pie__track { stroke: rgba(255, 255, 255, 0.14); }
+.cop-pie__meter { stroke: var(--ops); filter: none; }
+.cop-pie__hubdisc { fill: #000; stroke: rgba(255, 255, 255, 0.25); }
+.cop-pie__ring-track { stroke: rgba(255, 255, 255, 0.14); }
+.cop-pie__ring { stroke: var(--ops); filter: none; }
+.cop-pie__ring.is-urgent { stroke: #ff6a4a; }
+.cop-pie__hub { border-color: rgba(255, 255, 255, 0.7); box-shadow: 0 0 22px rgba(0, 0, 0, 0.6); }
+
+.cop-pie__label b { color: var(--ops-text); text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9); }
+.cop-pie__count { background: rgba(0, 0, 0, 0.6); border-color: rgba(255, 255, 255, 0.3); color: var(--ops) !important; }
+
+.cop-pie__icon { border-color: rgba(255, 255, 255, 0.2); background: radial-gradient(circle at 35% 28%, #1c211e, #050706 72%); }
+.cop-pie__icon.is-lit {
+  border-color: var(--ops);
+  box-shadow: 0 0 0 2px rgba(109, 255, 140, 0.18), 0 0 14px rgba(109, 255, 140, 0.55);
+}
+
+.cop__status,
+.cop__hint { background: rgba(0, 0, 0, 0.66); border-color: rgba(255, 255, 255, 0.16); }
+.cop__status { color: var(--ops-text); }
+.cop__hint { color: var(--ops-dim); }
+
+.cop__clock,
+.cop__treasury {
+  background: rgba(0, 0, 0, 0.66);
+  border-color: rgba(255, 255, 255, 0.24);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+.cop__clock-label,
+.cop__treasury span { color: var(--ops-dim); }
+.cop__clock b { color: var(--ops-text); text-shadow: none; }
+.cop__clock i { background: rgba(255, 255, 255, 0.12); }
+.cop__clock em { background: var(--ops); }
+.cop__clock.is-urgent b { color: #ff8f7a; }
+.cop__clock.is-urgent em { background: #ff6a4a; }
+.cop__treasury b { color: var(--ops-text); text-shadow: none; }
+
+.cop-target__label { background: rgba(0, 0, 0, 0.7); border-color: rgba(255, 255, 255, 0.28); }
+.cop-target.is-lock .cop-target__label { border-color: rgba(255, 255, 255, 0.28); }
+.cop-target.is-lock .cop-target__disc {
+  background: radial-gradient(circle at 35% 30%, #3fbf6f, #16723f 70%);
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.1), 0 10px 30px rgba(0, 0, 0, 0.6);
+}
+.cop-target.is-lock .cop-target__disc::after { border-color: rgba(255, 255, 255, 0.3); }
+
+.cop__fit .cop__panel {
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0.82));
+  border-color: rgba(255, 255, 255, 0.18);
+}
+.cop__bar { border-bottom-color: rgba(255, 255, 255, 0.14); }
+.cop__page-title--offence span,
+.cop__page-title--defence span,
+.cop__page-title--finance span { color: var(--ops-text); text-shadow: none; }
+.cop__page-title em { color: var(--ops-dim); }
+
+/* The rotating dial at the edge keeps the green */
+.cop-pie__ticks { stroke: rgba(109, 255, 140, 0.7); }
+.cop-pie__halo { stroke: rgba(109, 255, 140, 0.5); }
