@@ -20,7 +20,7 @@ function table(
   const base = createInitialState();
   const nations = { ...base.nations };
   for (const id of seats) {
-    nations[id] = { ...nations[id], money: 30, ...(overrides[id] ?? {}) };
+    nations[id] = { ...nations[id], money: 300, ...(overrides[id] ?? {}) };
   }
   nations[seats[0]] = { ...nations[seats[0]], isHuman: true };
   return startGame({

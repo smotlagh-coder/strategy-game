@@ -29,8 +29,8 @@ function table(overrides: Partial<Record<NationId, Partial<GameState['nations'][
     humanNations: ['us'],
     nations: {
       ...base.nations,
-      us: { ...base.nations.us, isHuman: true, money: 20, ...(overrides.us ?? {}) },
-      uk: { ...base.nations.uk, money: 20, ...(overrides.uk ?? {}) },
+      us: { ...base.nations.us, isHuman: true, money: 200, ...(overrides.us ?? {}) },
+      uk: { ...base.nations.uk, money: 200, ...(overrides.uk ?? {}) },
     },
   });
   return s;
@@ -53,17 +53,17 @@ function armed(extra: Partial<GameState['nations']['us']> = {}) {
 }
 
 describe('drone economy', () => {
-  it('prices packs at $1M and the tech at $2M', () => {
-    expect(COSTS.drone).toBe(1);
-    expect(COSTS.aerospaceTech).toBe(2);
-    expect(DRONE_DAMAGE).toBe(2);
+  it('prices packs at $10M and the tech at $20M', () => {
+    expect(COSTS.drone).toBe(10);
+    expect(COSTS.aerospaceTech).toBe(20);
+    expect(DRONE_DAMAGE).toBe(20);
   });
 
   it('lets packs fly the same round Aerospace Tech is bought', () => {
     let s = table();
     expect(canBuyDrones(s, 'us')).toBe(false);
     s = buyAerospaceTech(s, 'us');
-    expect(s.nations.us.money).toBe(20 - COSTS.aerospaceTech);
+    expect(s.nations.us.money).toBe(200 - COSTS.aerospaceTech);
     expect(canBuyDrones(s, 'us')).toBe(true);
     expect(buyDrones(s, 2, 'us').nations.us.drones).toBe(2);
 
@@ -76,7 +76,7 @@ describe('drone economy', () => {
     expect(maxDronesPurchasable(s, 'us')).toBe(MAX_DRONES_PER_ROUND);
     const bought = buyDrones(s, 5, 'us');
     expect(bought.nations.us.drones).toBe(MAX_DRONES_PER_ROUND);
-    expect(bought.nations.us.money).toBe(20 - MAX_DRONES_PER_ROUND * COSTS.drone);
+    expect(bought.nations.us.money).toBe(200 - MAX_DRONES_PER_ROUND * COSTS.drone);
     expect(maxDronesPurchasable(bought, 'us')).toBe(0);
   });
 

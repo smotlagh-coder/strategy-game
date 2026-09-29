@@ -31,7 +31,7 @@ function table(overrides: { us?: Partial<NationState>; uk?: Partial<NationState>
       us: {
         ...base.nations.us,
         isHuman: true,
-        money: 20,
+        money: 200,
         hasNuclearTech: true,
         nuclearTechUnlockedRound: 0,
         bombs: 2,
@@ -42,7 +42,7 @@ function table(overrides: { us?: Partial<NationState>; uk?: Partial<NationState>
       },
       uk: {
         ...base.nations.uk,
-        money: 20,
+        money: 200,
         hasAerospaceTech: true,
         aerospaceTechUnlockedRound: 0,
         ...(overrides.uk ?? {}),
@@ -58,7 +58,7 @@ describe('buying a spy service', () => {
 
     const after = buySpyNetwork(s, 'us');
     expect(after.nations.us.hasSpyNetwork).toBe(true);
-    expect(after.nations.us.money).toBe(20 - COSTS.spy);
+    expect(after.nations.us.money).toBe(200 - COSTS.spy);
 
     // No second service to buy
     expect(canBuySpyNetwork(after, 'us')).toBe(false);
@@ -66,7 +66,7 @@ describe('buying a spy service', () => {
   });
 
   it('is out of reach on an empty treasury', () => {
-    const s = table({ us: { money: COSTS.spy - 0.5 } });
+    const s = table({ us: { money: COSTS.spy - 5 } });
     expect(canBuySpyNetwork(s, 'us')).toBe(false);
     expect(buySpyNetwork(s, 'us')).toBe(s);
   });
@@ -136,7 +136,7 @@ describe('attacking blind', () => {
     let s = table({
       us: { drones: 0 },
       // Clear top threat so the warhead lands on this board, not a peer city
-      uk: { money: 40, bombs: 3, hasNuclearTech: true, nuclearTechUnlockedRound: 0 },
+      uk: { money: 400, bombs: 3, hasNuclearTech: true, nuclearTechUnlockedRound: 0 },
     });
     const [shielded] = s.nations.uk.cities;
     s = buyShield(s, shielded.id, 'uk');
@@ -157,8 +157,8 @@ describe('AI and intel', () => {
   /** An AI nation with money to spend and a rival that has put a shield up. */
   function aiTable(rivalShields: number): GameState {
     const base = table({
-      us: { isHuman: false, money: 20, hasSpyNetwork: false },
-      uk: { money: 20 },
+      us: { isHuman: false, money: 200, hasSpyNetwork: false },
+      uk: { money: 200 },
     });
     let s: GameState = { ...base, round: 2, currentTurnIndex: base.turnOrder.indexOf('us') };
     for (const city of s.nations.uk.cities.slice(0, rivalShields)) {

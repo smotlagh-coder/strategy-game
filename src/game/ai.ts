@@ -1,6 +1,7 @@
 import {
   COSTS,
   MAX_BOMBS_PER_ROUND,
+  MONEY_SCALE,
   RESEARCH_INCOME,
   SCORE_CITY,
   SCORE_RESEARCH,
@@ -107,13 +108,13 @@ export function threatScore(state: GameState, id: NationId): number {
   const roundsLeft = Math.max(0, state.maxRounds - state.round);
   // A live warhead is a standing city about to leave the board
   const arsenal =
-    (n.hasNuclearTech ? COSTS.ballisticMissileTech : 0) +
+    (n.hasNuclearTech ? COSTS.ballisticMissileTech / MONEY_SCALE : 0) +
     totalWarheads(n) * SCORE_CITY +
     n.drones * (SCORE_CITY / 4);
   return (
     computeScore(state, id).total +
     cities * SURVIVAL_POINTS_PER_CITY * roundsLeft +
-    researchCount(state, id) * (SCORE_RESEARCH + RESEARCH_INCOME * roundsLeft) +
+    researchCount(state, id) * (SCORE_RESEARCH + (RESEARCH_INCOME / MONEY_SCALE) * roundsLeft) +
     arsenal
   );
 }

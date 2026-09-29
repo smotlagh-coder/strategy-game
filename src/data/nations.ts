@@ -161,6 +161,7 @@ export const TABLE_SIZE = 5;
 
 export {
   COSTS,
+  MONEY_SCALE,
   STARTING_MONEY,
   INCOME_PER_CITY,
   RESEARCH_INCOME,

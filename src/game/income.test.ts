@@ -12,15 +12,15 @@ import { mergeNationPlanning } from '../lib/onlineSync';
 import type { NationId } from '../types';
 
 describe('economy constants', () => {
-  it('pays $1.75M per city, $1M research, 10% sanctions capped at 40%', () => {
-    expect(INCOME_PER_CITY).toBe(1.75);
-    expect(RESEARCH_INCOME).toBe(1);
+  it('pays $18M per city, $10M research, 10% sanctions capped at 40%', () => {
+    expect(INCOME_PER_CITY).toBe(18);
+    expect(RESEARCH_INCOME).toBe(10);
     expect(SANCTION_PENALTY).toBe(0.1);
   });
 });
 
 describe('applyIncome', () => {
-  it('pays $1.75M per standing city once per round starting in round 2', () => {
+  it('pays $18M per standing city once per round starting in round 2', () => {
     let s = startGame({
       ...createInitialState(),
       mode: 'single',
@@ -68,7 +68,7 @@ describe('applyIncome', () => {
     const base = createInitialState();
     const us = {
       ...base.nations.us,
-      money: 1,
+      money: 10,
       cities: base.nations.us.cities.map((c, i) =>
         i === 0 ? { ...c, hasResearch: true } : c,
       ),
@@ -84,8 +84,8 @@ describe('applyIncome', () => {
       turnOrder: seatTable(['us', 'uk']),
       nations: { ...base.nations, us, uk },
     });
-    // gross 5.25 + 1.0 = 6.25, −10% → 5.625, + previous 1 → 6.625
-    expect(s.nations.us.money).toBe(6.63);
+    // gross 54 + 10 = 64, −10% → 57.6 → 58, + previous 10 → 68
+    expect(s.nations.us.money).toBe(68);
   });
 
   it('caps stacked sanctions so four rivals cannot wipe the treasury', () => {
@@ -103,8 +103,8 @@ describe('applyIncome', () => {
       turnOrder: seatTable(seats, { size: 5 }),
       nations,
     });
-    // 3 cities × $1.75 = $5.25, four sanctions would be 40% under the cap
-    expect(s.nations.us.money).toBe(3.15);
+    // 3 cities × $18 = $54, four sanctions would be 40% under the cap: 32.4 → 32
+    expect(s.nations.us.money).toBe(32);
   });
 
   it('ensureIncome pays nations missing incomeRound after sync', () => {
@@ -116,10 +116,10 @@ describe('applyIncome', () => {
       turnOrder: seatTable(['us']),
       nations: {
         ...base.nations,
-        us: { ...base.nations.us, money: 2, incomeRound: undefined },
+        us: { ...base.nations.us, money: 20, incomeRound: undefined },
       },
     });
-    expect(s.nations.us.money).toBe(2 + INCOME_PER_CITY * 3);
+    expect(s.nations.us.money).toBe(20 + INCOME_PER_CITY * 3);
     expect(s.nations.us.incomeRound).toBe(2);
   });
 });
@@ -127,10 +127,10 @@ describe('applyIncome', () => {
 describe('mergeNationPlanning money', () => {
   it('does not discard income against a stale pre-income snapshot', () => {
     const base = createInitialState().nations.us;
-    const withIncome = { ...base, money: 5, incomeRound: 2, isHuman: true };
-    const stale = { ...base, money: 2, incomeRound: undefined, isHuman: true };
+    const withIncome = { ...base, money: 50, incomeRound: 2, isHuman: true };
+    const stale = { ...base, money: 20, incomeRound: undefined, isHuman: true };
     const merged = mergeNationPlanning(stale, withIncome);
-    expect(merged.money).toBe(5);
+    expect(merged.money).toBe(50);
     expect(merged.incomeRound).toBe(2);
   });
 });

@@ -53,9 +53,9 @@ describe('AI target selection', () => {
     const s = table({
       uk: armed(),
       // ru is coasting to the win: full board, cash, warheads
-      russia: { money: 30, bombs: 2, hasNuclearTech: true, nuclearTechUnlockedRound: 0 },
-      china: { money: 1 },
-      france: { money: 1 },
+      russia: { money: 300, bombs: 2, hasNuclearTech: true, nuclearTechUnlockedRound: 0 },
+      china: { money: 10 },
+      france: { money: 10 },
     });
     expect(threatScore(s, 'russia')).toBeGreaterThan(threatScore(s, 'china'));
     expect(pickBombTarget(s, 'uk')?.nationId).toBe('russia');
@@ -109,7 +109,7 @@ describe('AI target selection', () => {
       nations: {
         ...base.nations,
         // The leader's cities are all shielded and uk has no swarm to suppress them
-        russia: { ...ru, money: 30, cities: ru.cities.map((c) => ({ ...c, hasShield: true })) },
+        russia: { ...ru, money: 300, cities: ru.cities.map((c) => ({ ...c, hasShield: true })) },
       },
     };
     const target = pickBombTarget(s, 'uk');
@@ -142,7 +142,7 @@ describe('AI target selection', () => {
     // must not all resolve to cities[0] the way the old sort did.
     const attackers: NationId[] = ['uk', 'russia', 'china', 'france'];
     const s = table({
-      us: { money: 40, bombs: 4, hasNuclearTech: true, nuclearTechUnlockedRound: 0 },
+      us: { money: 400, bombs: 4, hasNuclearTech: true, nuclearTechUnlockedRound: 0 },
       ...Object.fromEntries(
         attackers.map((id) => [id, armed({ hasSpyNetwork: false })]),
       ),
@@ -159,7 +159,7 @@ describe('AI target selection', () => {
 
 describe('AI purchasing', () => {
   it('covers a city and builds research before stockpiling warheads', () => {
-    let s = table({ uk: { money: 20, hasNuclearTech: true, nuclearTechUnlockedRound: 0 } });
+    let s = table({ uk: { money: 200, hasNuclearTech: true, nuclearTechUnlockedRound: 0 } });
     s = { ...s, currentTurnIndex: s.turnOrder.indexOf('uk') };
     const after = runAiBuyPhase(s);
     const uk = after.nations.uk;
@@ -171,7 +171,7 @@ describe('AI purchasing', () => {
   });
 
   it('installs only one shield per round', () => {
-    let s = table({ uk: { money: 30 } });
+    let s = table({ uk: { money: 300 } });
     s = { ...s, currentTurnIndex: s.turnOrder.indexOf('uk') };
     const round1 = runAiBuyPhase(s);
     expect(round1.nations.uk.cities.filter((c) => c.hasShield).length).toBe(1);
@@ -188,7 +188,7 @@ describe('AI purchasing', () => {
         us: { hasAerospaceTech: true, drones: 2 },
         [id]: {
           isHuman: false,
-          money: 40,
+          money: 400,
           hasNuclearTech: true,
           nuclearTechUnlockedRound: 0,
         },
@@ -211,7 +211,7 @@ describe('AI purchasing', () => {
   });
 
   it('arms the same round it unlocks the tech, from round two on', () => {
-    let s = table({ uk: { money: 20 } });
+    let s = table({ uk: { money: 200 } });
     s = { ...s, round: 2, currentTurnIndex: s.turnOrder.indexOf('uk') };
     const after = runAiBuyPhase(s);
     expect(after.nations.uk.hasNuclearTech).toBe(true);
@@ -220,7 +220,7 @@ describe('AI purchasing', () => {
 
   it('buys no warheads when nothing on the board can be levelled', () => {
     let s = table({
-      uk: { money: 30, hasNuclearTech: true, nuclearTechUnlockedRound: 0, hasSpyNetwork: true },
+      uk: { money: 300, hasNuclearTech: true, nuclearTechUnlockedRound: 0, hasSpyNetwork: true },
     });
     s = {
       ...s,
@@ -355,7 +355,7 @@ describe('AI purchasing', () => {
 
   it('never stacks a shield on the bunker city', () => {
     let s = table({
-      uk: { money: 40, hasNuclearTech: true, nuclearTechUnlockedRound: 0 },
+      uk: { money: 400, hasNuclearTech: true, nuclearTechUnlockedRound: 0 },
     });
     s = { ...s, currentTurnIndex: s.turnOrder.indexOf('uk') };
     const after = runAiBuyPhase(s);
@@ -403,9 +403,9 @@ describe('AI purchasing', () => {
 describe('AI diplomacy', () => {
   it('spends both slots on the rivals it considers most dangerous', () => {
     let s = table({
-      russia: { money: 30, bombs: 2, hasNuclearTech: true, nuclearTechUnlockedRound: 0 },
-      china: { money: 20, bombs: 1, hasNuclearTech: true, nuclearTechUnlockedRound: 0 },
-      france: { money: 1 },
+      russia: { money: 300, bombs: 2, hasNuclearTech: true, nuclearTechUnlockedRound: 0 },
+      china: { money: 200, bombs: 1, hasNuclearTech: true, nuclearTechUnlockedRound: 0 },
+      france: { money: 10 },
     });
     s = { ...s, currentTurnIndex: s.turnOrder.indexOf('uk') };
     const after = runAiDiplomacy(s);
@@ -421,7 +421,7 @@ describe('AI diplomacy', () => {
       currentTurnIndex: base.turnOrder.indexOf('uk'),
       nations: {
         ...base.nations,
-        france: { ...base.nations.france, money: 1, sanctions: ['uk' as NationId] },
+        france: { ...base.nations.france, money: 10, sanctions: ['uk' as NationId] },
       },
     };
     const before = rankedRivals(s, 'uk').indexOf('france');
@@ -434,7 +434,7 @@ describe('AI diplomacy', () => {
   });
 
   it('does not swap a sanction for a rival that is barely ahead', () => {
-    let s = table({ russia: { money: 30 }, china: { money: 28 } });
+    let s = table({ russia: { money: 300 }, china: { money: 280 } });
     s = { ...s, currentTurnIndex: s.turnOrder.indexOf('uk') };
     const first = runAiDiplomacy(s);
     const held = [...first.nations.uk.sanctions].sort();

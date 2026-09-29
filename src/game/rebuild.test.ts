@@ -15,7 +15,7 @@ import { mergeNationPlanning } from '../lib/onlineSync';
 import type { GameState } from '../types';
 
 /** A US armed with enough warheads to level the UK, which has cash to rebuild. */
-function table(ukMoney = 20, usBombs = 3) {
+function table(ukMoney = 200, usBombs = 3) {
   const base = createInitialState();
   return startGame({
     ...base,
@@ -27,7 +27,7 @@ function table(ukMoney = 20, usBombs = 3) {
       us: {
         ...base.nations.us,
         isHuman: true,
-        money: 20,
+        money: 200,
         hasNuclearTech: true,
         nuclearTechUnlockedRound: 0,
         bombs: usBombs,
@@ -51,7 +51,7 @@ function levelTheUk(state: GameState): GameState {
 }
 
 describe('rebuilding a burnt city', () => {
-  it('costs $6M and puts the city back on the board', () => {
+  it('costs $50M and puts the city back on the board', () => {
     let s = table();
     const city = s.nations.uk.cities[0];
     s = queueStrike(s, 'uk', city.id, 'us');
@@ -90,7 +90,7 @@ describe('rebuilding a burnt city', () => {
     const intact = table();
     expect(canBuyRebuild(intact, 'uk')).toBe(false);
 
-    let s = table(COSTS.rebuild - 0.5);
+    let s = table(COSTS.rebuild - 5);
     const city = s.nations.uk.cities[0];
     s = queueStrike(s, 'uk', city.id, 'us');
     s = applyQueuedStrike(s, s.pendingStrikes[0]);
@@ -113,11 +113,11 @@ describe('rebuilding a burnt city', () => {
 
 describe('the emergency rebuild when the last city falls', () => {
   it('keeps a nation alive that can still pay for it', () => {
-    const s = levelTheUk(table(20));
+    const s = levelTheUk(table(200));
 
     expect(s.nations.uk.eliminated).toBe(false);
     expect(s.nations.uk.cities.filter((c) => !c.destroyed)).toHaveLength(1);
-    expect(s.nations.uk.money).toBe(20 - COSTS.rebuild);
+    expect(s.nations.uk.money).toBe(200 - COSTS.rebuild);
 
     const rescue = s.roundEvents.find((e) => e.kind === 'cityRebuilt');
     expect(rescue?.automatic).toBe(true);
@@ -125,13 +125,13 @@ describe('the emergency rebuild when the last city falls', () => {
   });
 
   it('raises the city that fell last', () => {
-    const s = levelTheUk(table(20));
+    const s = levelTheUk(table(200));
     const standing = s.nations.uk.cities.find((c) => !c.destroyed);
     expect(standing?.id).toBe(s.nations.uk.cities[s.nations.uk.cities.length - 1].id);
   });
 
   it('still eliminates a nation that cannot afford it', () => {
-    const s = levelTheUk(table(COSTS.rebuild - 0.5));
+    const s = levelTheUk(table(COSTS.rebuild - 5));
 
     expect(s.nations.uk.eliminated).toBe(true);
     expect(s.roundEvents.some((e) => e.kind === 'nationEliminated')).toBe(true);

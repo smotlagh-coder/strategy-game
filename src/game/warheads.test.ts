@@ -23,7 +23,7 @@ function table(tweaks: Partial<Record<NationId, Partial<NationState>>> = {}): Ga
     nations[id] = {
       ...nations[id],
       isHuman: id === 'us',
-      money: 40,
+      money: 400,
       hasNuclearTech: true,
       nuclearTechUnlockedRound: 0,
       ...(tweaks[id] ?? {}),
@@ -40,10 +40,10 @@ function table(tweaks: Partial<Record<NationId, Partial<NationState>>> = {}): Ga
 
 describe('warhead arsenal', () => {
   it('prices specialty warheads above a nuclear and at/above bunker cost for hydrogen', () => {
-    expect(COSTS.bomb).toBe(2);
+    expect(COSTS.bomb).toBe(20);
     expect(COSTS.bombMagnetic).toBeGreaterThan(COSTS.laser);
     expect(COSTS.bombHydrogen).toBeGreaterThanOrEqual(COSTS.underground);
-    expect(COSTS.ballisticMissileTech).toBe(3);
+    expect(COSTS.ballisticMissileTech).toBe(30);
   });
 
   it('caps hydrogen at one and magnetic at two for the match', () => {

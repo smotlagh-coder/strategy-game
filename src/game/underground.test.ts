@@ -29,7 +29,7 @@ function table(usExtra: Partial<GameState['nations']['us']> = {}) {
       us: {
         ...base.nations.us,
         isHuman: true,
-        money: 20,
+        money: 200,
         hasNuclearTech: true,
         nuclearTechUnlockedRound: 0,
         bombs: 2,
@@ -41,17 +41,17 @@ function table(usExtra: Partial<GameState['nations']['us']> = {}) {
         hasSpyNetwork: true,
         ...usExtra,
       },
-      uk: { ...base.nations.uk, money: 20 },
+      uk: { ...base.nations.uk, money: 200 },
     },
   });
 }
 
 describe('buying an underground city', () => {
-  it('costs $5M and marks the chosen city', () => {
+  it('costs $60M and marks the chosen city', () => {
     let s = table();
     const city = s.nations.uk.cities[0];
     s = buyUnderground(s, city.id, 'uk');
-    expect(s.nations.uk.money).toBe(20 - COSTS.underground);
+    expect(s.nations.uk.money).toBe(200 - COSTS.underground);
     expect(s.nations.uk.cities[0].isUnderground).toBe(true);
   });
 
@@ -70,7 +70,7 @@ describe('buying an underground city', () => {
     const base = table();
     const s: GameState = {
       ...base,
-      nations: { ...base.nations, uk: { ...base.nations.uk, money: COSTS.underground - 0.5 } },
+      nations: { ...base.nations, uk: { ...base.nations.uk, money: COSTS.underground - 5 } },
     };
     expect(canBuyUnderground(s, 'uk')).toBe(false);
   });

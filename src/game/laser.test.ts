@@ -32,7 +32,7 @@ function table(overrides: Partial<Record<NationId, Partial<NationState>>> = {}):
       us: {
         ...base.nations.us,
         isHuman: true,
-        money: 20,
+        money: 200,
         hasAerospaceTech: true,
         aerospaceTechUnlockedRound: 0,
         drones: 2,
@@ -45,7 +45,7 @@ function table(overrides: Partial<Record<NationId, Partial<NationState>>> = {}):
       },
       uk: {
         ...base.nations.uk,
-        money: 20,
+        money: 200,
         hasAerospaceTech: true,
         aerospaceTechUnlockedRound: 0,
         ...(overrides.uk ?? {}),
@@ -64,8 +64,8 @@ function resolveAll(state: GameState): GameState {
 }
 
 describe('laser defence', () => {
-  it('costs $3M and needs Aerospace Tech first', () => {
-    expect(COSTS.laser).toBe(3);
+  it('costs $30M and needs Aerospace Tech first', () => {
+    expect(COSTS.laser).toBe(30);
 
     const noTech = table({ uk: { hasAerospaceTech: false, aerospaceTechUnlockedRound: null } });
     expect(canBuyLaser(noTech, 'uk')).toBe(false);
@@ -74,7 +74,7 @@ describe('laser defence', () => {
 
     const s = buyLaser(table(), city.id, 'uk');
     expect(s.nations.uk.cities[0].hasLaser).toBe(true);
-    expect(s.nations.uk.money).toBe(20 - COSTS.laser);
+    expect(s.nations.uk.money).toBe(200 - COSTS.laser);
   });
 
   it('sells one network per nation, not one battery per city', () => {
@@ -289,7 +289,7 @@ describe('AI and laser defence', () => {
   function aiTable(usDrones: number): GameState {
     const base = table({
       us: { drones: usDrones },
-      uk: { isHuman: false, money: 20, hasNuclearTech: true, nuclearTechUnlockedRound: 0 },
+      uk: { isHuman: false, money: 200, hasNuclearTech: true, nuclearTechUnlockedRound: 0 },
     });
     return { ...base, currentTurnIndex: base.turnOrder.indexOf('uk') };
   }

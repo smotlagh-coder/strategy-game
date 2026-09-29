@@ -63,7 +63,7 @@ describe('opening tempo', () => {
 
 describe('shield rationing', () => {
   it('allows one install per round and no more', () => {
-    let s = table({ us: { money: 30 } });
+    let s = table({ us: { money: 300 } });
     expect(canBuyShield(s, 'us')).toBe(true);
 
     s = buyShield(s, s.nations.us.cities[0].id, 'us');
@@ -76,7 +76,7 @@ describe('shield rationing', () => {
   });
 
   it('hands back the allowance at the start of the next round', () => {
-    let s = table({ us: { money: 30 } });
+    let s = table({ us: { money: 300 } });
     s = buyShield(s, s.nations.us.cities[0].id, 'us');
     s = nextRound({ ...s, phase: 'roundSummary' });
 
@@ -87,7 +87,7 @@ describe('shield rationing', () => {
   });
 
   it('cannot be dodged by covering a city that is already shielded', () => {
-    let s = table({ us: { money: 30 } });
+    let s = table({ us: { money: 300 } });
     const city = s.nations.us.cities[0].id;
     s = buyShield(s, city, 'us');
     const again = buyShield(s, city, 'us');

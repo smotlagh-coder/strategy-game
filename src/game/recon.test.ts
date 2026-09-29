@@ -29,7 +29,7 @@ function table(overrides: { us?: Partial<NationState>; uk?: Partial<NationState>
       us: {
         ...base.nations.us,
         isHuman: true,
-        money: 20,
+        money: 200,
         hasNuclearTech: true,
         nuclearTechUnlockedRound: 0,
         bombs: 2,
@@ -40,7 +40,7 @@ function table(overrides: { us?: Partial<NationState>; uk?: Partial<NationState>
       },
       uk: {
         ...base.nations.uk,
-        money: 20,
+        money: 200,
         hasAerospaceTech: true,
         aerospaceTechUnlockedRound: 0,
         ...(overrides.uk ?? {}),

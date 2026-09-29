@@ -15,9 +15,9 @@ function table(me: Partial<NationState> = {}, round = 2): GameState {
     humanNations: ['us'],
     nations: {
       ...base.nations,
-      us: { ...base.nations.us, isHuman: true, money: 20, ...me },
-      uk: { ...base.nations.uk, money: 20 },
-      russia: { ...base.nations.russia, money: 20 },
+      us: { ...base.nations.us, isHuman: true, money: 200, ...me },
+      uk: { ...base.nations.uk, money: 200 },
+      russia: { ...base.nations.russia, money: 200 },
     },
   });
   return { ...s, round };

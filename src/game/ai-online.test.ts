@@ -29,7 +29,7 @@ describe('online AI planning', () => {
       const n = s.nations[id];
       // The opening turn goes on research and a shield, not on an arsenal
       expect(researchCount(s, id) + n.cities.filter((c) => c.hasShield).length).toBeGreaterThan(0);
-      expect(n.money).toBeLessThan(10);
+      expect(n.money).toBeLessThan(100);
     }
   });
 
@@ -95,7 +95,7 @@ describe('online AI planning', () => {
     s = runOnlineAiPlanning(s);
     expect(s.aiPlanningComplete).toBe(true);
     const aiIds = s.turnOrder.filter((id) => !s.nations[id].isHuman);
-    // Round-1 dig-outs can leave a nation short of the $6M strike package once
+    // Round-1 dig-outs can leave a nation short of the $60M strike package once
     // income scales with cities — arming is still the goal for anyone who can.
     expect(aiIds.some((id) => s.nations[id].hasNuclearTech)).toBe(true);
     for (const id of aiIds) {

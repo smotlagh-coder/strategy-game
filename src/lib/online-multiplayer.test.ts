@@ -143,7 +143,7 @@ describe('3-player online simulation', () => {
       expect(
         state.nations[id].cities.some((c) => c.hasResearch || c.hasShield),
       ).toBe(true);
-      expect(state.nations[id].money).toBeLessThan(10);
+      expect(state.nations[id].money).toBeLessThan(100);
     }
   });
 
@@ -251,7 +251,7 @@ describe('3-player online simulation', () => {
     expect(aiIds.length).toBeGreaterThan(0);
     for (const id of aiIds) {
       const n = room.shared.nations[id];
-      expect(n.money).toBeLessThan(10);
+      expect(n.money).toBeLessThan(100);
       expect(n.cities.some((c) => c.hasResearch || c.hasShield)).toBe(true);
     }
   });
@@ -765,7 +765,7 @@ describe('3-player online simulation', () => {
         ...state.nations,
         [myNation]: {
           ...state.nations[myNation],
-          money: 30,
+          money: 300,
           hasNuclearTech: true,
           nuclearTechUnlockedRound: state.round - 1,
         },

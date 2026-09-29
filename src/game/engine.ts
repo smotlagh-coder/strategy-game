@@ -859,7 +859,7 @@ export function startGame(state: GameState): GameState {
     round: 1,
     log: [
       log(
-        'Round 1 begins. Spend your starting funds — city income starts in round 2 ($1.75M per standing city).',
+        `Round 1 begins. Spend your starting funds — city income starts in round 2 ($${INCOME_PER_CITY}M per standing city).`,
         'neutral',
       ),
     ],
@@ -895,7 +895,8 @@ export function applyIncome(state: GameState): GameState {
       (other) => other !== id && !nations[other].eliminated && nations[other].sanctions.includes(id),
     );
     const sanctionPenalty = Math.min(MAX_SANCTION_CUT, sanctioners.length * SANCTION_PENALTY);
-    const revenue = +(gross * (1 - sanctionPenalty)).toFixed(2);
+    // Whole units only: no decimals ever reach the treasury
+    const revenue = Math.round(gross * (1 - sanctionPenalty));
 
     if (n.incomeRound === state.round) {
       const prevEntry = state.lastIncomeLedger.find((e) => e.nationId === id);
@@ -2290,6 +2291,5 @@ export function nextRound(state: GameState): GameState {
 }
 
 export function formatMoney(m: number): string {
-  if (Number.isInteger(m)) return `${m}M`;
-  return `${m.toFixed(1)}M`;
+  return `${Math.round(m)}M`;
 }

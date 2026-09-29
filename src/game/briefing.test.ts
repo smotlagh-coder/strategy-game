@@ -24,9 +24,9 @@ function table(): GameState {
     humanNations: ['us'],
     nations: {
       ...base.nations,
-      us: { ...base.nations.us, isHuman: true, money: 20 },
-      uk: { ...base.nations.uk, money: 20 },
-      russia: { ...base.nations.russia, money: 20 },
+      us: { ...base.nations.us, isHuman: true, money: 200 },
+      uk: { ...base.nations.uk, money: 200 },
+      russia: { ...base.nations.russia, money: 200 },
     },
   });
 }
@@ -73,7 +73,7 @@ function setUs(state: GameState, patch: Partial<GameState['nations']['us']>): Ga
 /** A nation with nothing wrong with it, as a base for the weakness rules. */
 function healthy(state: GameState): GameState {
   return setUs(state, {
-    money: 20,
+    money: 200,
     bombs: 2,
     hasNuclearTech: true,
     nuclearTechUnlockedRound: 1,
@@ -286,12 +286,12 @@ describe('round briefing', () => {
     it('leads with the last city standing above everything else', () => {
       let s = table();
       s = playRound(nuke(nuke(s, 'uk', 'us', 0), 'russia', 'us', 1));
-      s = setUs(s, { money: 20, hasNuclearTech: true, nuclearTechUnlockedRound: 1, bombs: 2 });
+      s = setUs(s, { money: 200, hasNuclearTech: true, nuclearTechUnlockedRound: 1, bombs: 2 });
 
       const { weakness } = buildRoundBriefing(s, 'us')!;
       expect(weakness.id).toBe('lastStand');
       expect(weakness.severity).toBe('critical');
-      expect(weakness.advice).toContain('$6M');
+      expect(weakness.advice).toContain('$60M');
     });
 
     it('does not panic over a last city that is already dug in', () => {
@@ -307,17 +307,17 @@ describe('round briefing', () => {
     it('flags rubble the treasury cannot raise', () => {
       let s = table();
       s = playRound(nuke(s, 'uk', 'us', 0));
-      s = setUs(s, { money: 1 });
+      s = setUs(s, { money: 10 });
 
       const { weakness } = buildRoundBriefing(s, 'us')!;
       expect(weakness.id).toBe('cannotRebuild');
-      expect(weakness.detail).toContain('$1M');
+      expect(weakness.detail).toContain('$10M');
     });
 
     it('pushes the rebuild when the money is there', () => {
       let s = table();
       s = playRound(nuke(s, 'uk', 'us', 0));
-      s = setUs(s, { money: 12 });
+      s = setUs(s, { money: 120 });
 
       const { weakness } = buildRoundBriefing(s, 'us')!;
       expect(weakness.id).toBe('rubbleIdle');
@@ -325,13 +325,13 @@ describe('round briefing', () => {
     });
 
     it('calls out cities with nothing over them', () => {
-      const s = setUs(playRound(table()), { money: 20 });
+      const s = setUs(playRound(table()), { money: 200 });
       expect(buildRoundBriefing(s, 'us')!.weakness.id).toBe('openCities');
     });
 
     it('calls out a nation that cannot shoot back', () => {
       const s = setUs(playRound(table()), {
-        money: 20,
+        money: 200,
         cities: table().nations.us.cities.map((c, i) => ({ ...c, hasShield: i === 0 })),
       });
       expect(buildRoundBriefing(s, 'us')!.weakness.id).toBe('noWarheads');
@@ -343,7 +343,7 @@ describe('round briefing', () => {
     });
 
     it('calls out a treasury that cannot buy anything', () => {
-      const s = setUs(healthy(playRound(table())), { money: 1 });
+      const s = setUs(healthy(playRound(table())), { money: 10 });
       expect(buildRoundBriefing(s, 'us')!.weakness.id).toBe('brokeTreasury');
     });
 
@@ -395,8 +395,8 @@ describe('round briefing', () => {
     it('quotes prices as money, not as "$2MM"', () => {
       // formatMoney already carries the M, so the advice must not add its own
       const states = [
-        setUs(playRound(table()), { money: 20 }),
-        setUs(healthy(playRound(table())), { money: 1 }),
+        setUs(playRound(table()), { money: 200 }),
+        setUs(healthy(playRound(table())), { money: 10 }),
         setUs(healthy(playRound(table())), { bombs: 0, drones: 0 }),
         healthy(playRound(table())),
       ];
@@ -518,7 +518,7 @@ describe('round briefing', () => {
   it('points defence at an open prize city and offence at a rival city', () => {
     let s = settle(table());
     s = setUs(s, {
-      money: 20,
+      money: 200,
       bombs: 2,
       hasNuclearTech: true,
       nuclearTechUnlockedRound: 1,

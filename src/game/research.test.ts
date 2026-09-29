@@ -29,7 +29,7 @@ describe('research centres', () => {
   it('breaks ground on one site a round, however much cash is on hand', () => {
     expect(MAX_RESEARCH_PER_ROUND).toBe(1);
 
-    let s = table({ us: { money: 30 } });
+    let s = table({ us: { money: 300 } });
     const cities = s.nations.us.cities;
 
     s = buyResearch(s, cities[0].id, 'us');
@@ -42,7 +42,7 @@ describe('research centres', () => {
   });
 
   it('frees the site again next round', () => {
-    let s = table({ us: { money: 30 } });
+    let s = table({ us: { money: 300 } });
     s = buyResearch(s, s.nations.us.cities[0].id, 'us');
     s = nextRound(s);
 
@@ -53,12 +53,12 @@ describe('research centres', () => {
   });
 
   it('refuses when the cash is short or every city already has one', () => {
-    const broke = table({ us: { money: COSTS.research - 0.5 } });
+    const broke = table({ us: { money: COSTS.research - 5 } });
     expect(canBuyResearch(broke, 'us')).toBe(false);
 
     const full = table({
       us: {
-        money: 30,
+        money: 300,
         cities: createInitialState().nations.us.cities.map((c) => ({ ...c, hasResearch: true })),
       },
     });
@@ -66,7 +66,7 @@ describe('research centres', () => {
   });
 
   it('holds the AI to a single centre per round too', () => {
-    let s = table({ uk: { money: 30 } });
+    let s = table({ uk: { money: 300 } });
     s = runAiNationTurn(s, 'uk');
     expect(researchCount(s, 'uk')).toBe(1);
 
@@ -75,7 +75,7 @@ describe('research centres', () => {
   });
 
   it('keeps the cap when two online clients report the same round', () => {
-    let s = table({ us: { money: 30 } });
+    let s = table({ us: { money: 300 } });
     s = buyResearch(s, s.nations.us.cities[0].id, 'us');
     const merged = mergeNationPlanning(s.nations.us, {
       ...s.nations.us,
