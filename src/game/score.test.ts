@@ -97,6 +97,33 @@ describe('computeScore', () => {
     expect(s.nations.us.attackPoints).toBe(SCORE_KILL);
   });
 
+  it('splits the kill credit between nations that both aimed at the same city', () => {
+    const base = createInitialState();
+    const armed = { bombs: 1, hasNuclearTech: true, nuclearTechUnlockedRound: 0, hasSpyNetwork: true };
+    let s = startGame({
+      ...base,
+      mode: 'two',
+      turnOrder: seatTable(['us', 'uk', 'russia']),
+      humanNations: ['us'],
+      nations: {
+        ...base.nations,
+        us: { ...base.nations.us, isHuman: true, ...armed },
+        uk: { ...base.nations.uk, ...armed },
+        russia: { ...base.nations.russia },
+      },
+    });
+    const city = s.nations.russia.cities[0];
+    s = queueStrike(s, 'russia', city.id, 'us');
+    s = queueStrike(s, 'russia', city.id, 'uk');
+    // Whoever's warhead lands first takes the city; both were after it
+    s = applyQueuedStrike(s, s.pendingStrikes[0]);
+    s = applyQueuedStrike(s, s.pendingStrikes[1]);
+    const half = Math.floor(SCORE_KILL / 2);
+    expect(s.nations.us.attackPoints).toBe(half);
+    expect(s.nations.uk.attackPoints).toBe(half);
+    expect(s.nations.us.attackPoints + s.nations.uk.attackPoints).toBe(SCORE_KILL);
+  });
+
   it('crowns one angel and one evil each round for prestige / infamy', () => {
     const base = createInitialState();
     let s = startGame({

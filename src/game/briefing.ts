@@ -7,8 +7,9 @@ import {
   canBuyRebuild,
   canBuyShield,
   canBuyUnderground,
+  cityAsSeenBy,
+  seesCity,
   formatMoney,
-  seesDefences,
   totalWarheads,
   whoIsSanctioning,
 } from './engine';
@@ -108,6 +109,7 @@ export interface BriefingWeakness {
 export type BriefingOrderIcon =
   | 'shield'
   | 'bunker'
+  | 'laser'
   | 'rebuild'
   | 'nuke'
   | 'drone'
@@ -122,6 +124,29 @@ export interface BriefingOrder {
   cityId: string;
   cityName: string;
   icon: BriefingOrderIcon;
+}
+
+/** One city on the world table, as this commander is able to read it. */
+export interface BriefingWorldCity {
+  id: string;
+  name: string;
+  destroyed: boolean;
+  /** Spy service or a swarm has read this city — otherwise defences are not known */
+  known: boolean;
+  hasShield: boolean;
+  isUnderground: boolean;
+  hasResearch: boolean;
+  hasLaser: boolean;
+}
+
+/** One ranked nation on the world table. */
+export interface BriefingWorldRow {
+  nationId: NationId;
+  rank: number;
+  total: number;
+  eliminated: boolean;
+  isYou: boolean;
+  cities: BriefingWorldCity[];
 }
 
 export interface RoundBriefing {
@@ -151,6 +176,12 @@ export interface RoundBriefing {
   defence: BriefingOrder;
   /** Strike this rival city next, when armed */
   offence: BriefingOrder | null;
+  /** Every city the advisor wants covered, most urgent first */
+  defenceOrders: BriefingOrder[];
+  /** Every rival city the advisor wants hit, best first — only what we can actually see */
+  offenceOrders: BriefingOrder[];
+  /** Ranked table of the whole world, defences hidden wherever we have no eyes */
+  world: BriefingWorldRow[];
   /** Nobody laid a finger on us — the page is standings and treasury only */
   untouched: boolean;
 }
@@ -457,8 +488,13 @@ function cityValue(city: City): number {
   return score;
 }
 
-/** Cover, bury, or rebuild the city most worth saving this round. */
-export function findDefenceOrder(state: GameState, myId: NationId): BriefingOrder {
+/**
+ * What to spend on defence, in the order it matters: rebuild rubble, then one
+ * bunker or shield over the city worth most, a laser net when swarms are about,
+ * then a second shield. Every order fits the treasury; if nothing does, the one
+ * order is to hold the best city. Your own cities are never hidden from you.
+ */
+export function findDefenceOrders(state: GameState, myId: NationId): BriefingOrder[] {
   const n = state.nations[myId];
   const rubble = n.cities.filter((c) => c.destroyed);
   const alive = n.cities.filter((c) => !c.destroyed);
@@ -469,44 +505,79 @@ export function findDefenceOrder(state: GameState, myId: NationId): BriefingOrde
     cityName: city.name,
     icon,
   });
+  const orders: BriefingOrder[] = [];
+  let budget = n.money;
 
   if (rubble.length > 0 && canBuyRebuild(state, myId)) {
-    const city = rubble[0];
-    return order(city, 'Rebuild', 'rebuild');
+    orders.push(order(rubble[0], 'Rebuild', 'rebuild'));
+    budget -= COSTS.rebuild;
   }
 
-  const last = alive.length === 1 ? alive[0] : null;
-  if (last && !last.isUnderground) {
-    if (canBuyUnderground(state, myId)) return order(last, 'Bunker', 'bunker');
-    if (!last.hasShield && canBuyShield(state, myId)) return order(last, 'Shield', 'shield');
-    return order(last, 'Hold', 'hold');
-  }
+  const byValue = [...alive].sort((a, b) => cityValue(b) - cityValue(a));
+  const open = byValue.filter((c) => !c.hasShield && !c.isUnderground);
+  const covered = new Set<string>();
 
-  const open = alive
-    .filter((c) => !c.hasShield && !c.isUnderground)
-    .sort((a, b) => cityValue(b) - cityValue(a));
-  if (open.length > 0) {
-    const city = open[0];
-    if (canBuyUnderground(state, myId) && alive.every((c) => !c.isUnderground)) {
-      return order(city, 'Bunker', 'bunker');
+  // One bunker per nation: bury the city that matters most
+  const target = open[0];
+  if (target) {
+    if (canBuyUnderground(state, myId) && budget >= COSTS.underground && alive.every((c) => !c.isUnderground)) {
+      orders.push(order(target, 'Bunker', 'bunker'));
+      budget -= COSTS.underground;
+      covered.add(target.id);
+    } else if (canBuyShield(state, myId) && budget >= COSTS.shield) {
+      orders.push(order(target, 'Shield', 'shield'));
+      budget -= COSTS.shield;
+      covered.add(target.id);
     }
-    if (canBuyShield(state, myId)) return order(city, 'Shield', 'shield');
-    return order(city, 'Hold', 'hold');
   }
 
-  const prize = [...alive].sort((a, b) => cityValue(b) - cityValue(a))[0] ?? n.cities[0];
-  return order(prize, 'Hold', 'hold');
+  // Swarms go around shields; one laser network shoots them down nation-wide
+  const swarmThreat =
+    (state.previousRoundEvents ?? []).some(
+      (e) => e.nationId === myId && (e.kind === 'droneDamage' || e.kind === 'dronesIntercepted'),
+    ) ||
+    state.turnOrder.some((id) => id !== myId && !state.nations[id].eliminated && state.nations[id].drones > 0);
+  if (
+    swarmThreat &&
+    n.hasAerospaceTech &&
+    !alive.some((c) => c.hasLaser) &&
+    budget >= COSTS.laser &&
+    alive.length > 0
+  ) {
+    const host = byValue.find((c) => !c.hasLaser) ?? byValue[0];
+    orders.push(order(host, 'Laser', 'laser'));
+    budget -= COSTS.laser;
+  }
+
+  // A second shield on the next most valuable open city
+  const next = open.find((c) => !covered.has(c.id));
+  if (next && orders.length < 3 && canBuyShield(state, myId) && budget >= COSTS.shield) {
+    orders.push(order(next, 'Shield', 'shield'));
+    budget -= COSTS.shield;
+  }
+
+  if (orders.length > 0) return orders.slice(0, 3);
+
+  const prize = byValue[0] ?? n.cities[0];
+  return [order(prize, 'Hold', 'hold')];
+}
+
+/** Cover, bury, or rebuild the city most worth saving this round. */
+export function findDefenceOrder(state: GameState, myId: NationId): BriefingOrder {
+  return findDefenceOrders(state, myId)[0];
 }
 
 /**
- * Best rival city to hit next. Prefers the score leader, open cities when
- * defences are visible, and swarms when a shield is in the way.
+ * Rival cities worth hitting next, best first. The advisor only reasons from
+ * what this commander can see: without a spy service (or a swarm that flew
+ * over the city) shields, bunkers and lasers are unknown, so the advice is a
+ * plain warhead on the strongest rival and never claims an open city.
  */
-export function findOffenceOrder(state: GameState, myId: NationId): BriefingOrder | null {
+export function findOffenceOrders(state: GameState, myId: NationId, limit = 3): BriefingOrder[] {
   const me = state.nations[myId];
   const scores = allScores(state);
   const rivals = state.turnOrder.filter((id) => id !== myId && !state.nations[id].eliminated);
-  if (rivals.length === 0) return null;
+  if (rivals.length === 0) return [];
 
   const mine = scores.find((s) => s.nationId === myId);
   const top = scores.find((s) => !s.eliminated && s.nationId !== myId);
@@ -515,6 +586,14 @@ export function findOffenceOrder(state: GameState, myId: NationId): BriefingOrde
   const raiders = new Set(
     prior.filter((e) => e.nationId === myId && e.attackerId).map((e) => e.attackerId as NationId),
   );
+
+  const canNuke = totalWarheads(me) > 0 || (canBuyBombs(state, myId) && me.money >= COSTS.bomb);
+  const canHydrogen =
+    (me.hydrogenBombs ?? 0) > 0 || (canBuyBombs(state, myId) && me.money >= COSTS.bombHydrogen);
+  const canMagnetic =
+    (me.magneticBombs ?? 0) > 0 || (canBuyBombs(state, myId) && me.money >= COSTS.bombMagnetic);
+  const canSwarm = me.drones > 0 || (canBuyDrones(state, myId) && me.money >= COSTS.drone);
+  if (!canNuke && !canHydrogen && !canSwarm) return [];
 
   const nationRank = (id: NationId): number => {
     let score = 0;
@@ -526,74 +605,103 @@ export function findOffenceOrder(state: GameState, myId: NationId): BriefingOrde
     return score;
   };
 
-  type Candidate = {
-    nationId: NationId;
-    city: City;
-    action: string;
-    icon: BriefingOrderIcon;
-    score: number;
-  };
+  type Candidate = { nationId: NationId; city: City; action: string; icon: BriefingOrderIcon; score: number };
   const picks: Candidate[] = [];
+  const nuke = { action: 'Nuke', icon: 'nuke' as BriefingOrderIcon };
+  const swarm = { action: 'Drone', icon: 'drone' as BriefingOrderIcon };
 
   for (const nationId of rivals) {
     const nation = state.nations[nationId];
-    const eyes = seesDefences(state, myId, nationId);
-    for (const city of nation.cities) {
-      if (city.destroyed) continue;
-      let action = 'Hit';
-      let icon: BriefingOrderIcon = 'nuke';
+    // Only what we can read: a laser we cannot see does not exist for the advisor
+    const laserKnown = nation.cities.some(
+      (c) => !c.destroyed && seesCity(state, myId, nationId, c.id) && c.hasLaser,
+    );
+    for (const raw of nation.cities) {
+      if (raw.destroyed) continue;
+      const known = seesCity(state, myId, nationId, raw.id);
+      const city = cityAsSeenBy(state, myId, nationId, raw);
+      let pick: { action: string; icon: BriefingOrderIcon } | null = null;
       let score = nationRank(nationId) + cityValue(city);
 
-      if (eyes) {
-        if (city.isUnderground) {
-          if ((me.hydrogenBombs ?? 0) > 0 || me.money >= COSTS.bombHydrogen) {
-            action = 'Hydrogen';
-            icon = 'hydrogen';
-            score += 8;
-          } else {
-            continue; // Cannot crack it with what we can field
-          }
-        } else if (city.hasShield) {
-          if (me.drones > 0 || canBuyDrones(state, myId)) {
-            action = 'Swarm';
-            icon = 'drone';
-            score += 6;
-          } else if ((me.hydrogenBombs ?? 0) > 0) {
-            action = 'Hydrogen';
-            icon = 'hydrogen';
-            score += 5;
-          } else {
-            score -= 20; // Bare warhead dies on the dome
-          }
-        } else {
-          score += 14; // Open city — best kill
-        }
-        if (nation.cities.some((c) => !c.destroyed && c.hasLaser) && (me.magneticBombs ?? 0) > 0) {
-          if (!city.isUnderground) {
-            action = 'Magnetic';
-            icon = 'magnetic';
-            score += 4;
-          }
-        }
-      } else {
-        // Blind: still name a city so the commander has a mark on the map
+      if (!known) {
+        // Blind: a warhead is a gamble, and a swarm is how we learn what is there
+        if (canNuke) pick = nuke;
+        else if (canSwarm) pick = swarm;
         score += 2;
+      } else if (city.isUnderground) {
+        if (canHydrogen) {
+          pick = { action: 'Hydrogen', icon: 'hydrogen' };
+          score += 8;
+        }
+      } else if (city.hasShield) {
+        if (canSwarm) {
+          pick = swarm;
+          score += 6;
+        } else if (canHydrogen) {
+          pick = { action: 'Hydrogen', icon: 'hydrogen' };
+          score += 5;
+        } else if (canNuke) {
+          pick = nuke;
+          score -= 20; // A bare warhead dies on the dome
+        }
+      } else if (canNuke) {
+        pick = nuke;
+        score += 14; // Open city — best kill
+      } else if (canSwarm) {
+        pick = swarm;
+        score += 4;
       }
 
-      picks.push({ nationId, city, action, icon, score });
+      if (pick && known && laserKnown && !city.isUnderground && canMagnetic && pick.icon !== 'drone') {
+        pick = { action: 'Magnetic', icon: 'magnetic' };
+        score += 4;
+      }
+      if (!pick) continue;
+      picks.push({ nationId, city: raw, action: pick.action, icon: pick.icon, score });
     }
   }
 
   picks.sort((a, b) => b.score - a.score);
-  const best = picks[0];
-  if (!best) return null;
-  return {
+  return picks.slice(0, limit).map((best) => ({
     action: best.action,
     nationId: best.nationId,
     cityId: best.city.id,
     cityName: best.city.name,
     icon: best.icon,
-  };
+  }));
+}
+
+/** The single best rival city to hit next. */
+export function findOffenceOrder(state: GameState, myId: NationId): BriefingOrder | null {
+  return findOffenceOrders(state, myId, 1)[0] ?? null;
+}
+
+/** Ranked world table with every defence the viewer has no eyes on hidden. */
+function buildWorld(state: GameState, myId: NationId, scores: RoundScore[]): BriefingWorldRow[] {
+  return scores.map((row, i) => {
+    const nation = state.nations[row.nationId];
+    return {
+      nationId: row.nationId,
+      rank: i + 1,
+      total: row.total,
+      eliminated: row.eliminated,
+      isYou: row.nationId === myId,
+      cities: nation.cities.map((raw) => {
+        const known = seesCity(state, myId, row.nationId, raw.id);
+        const city = cityAsSeenBy(state, myId, row.nationId, raw);
+        return {
+          id: raw.id,
+          name: raw.name,
+          destroyed: raw.destroyed,
+          known,
+          hasShield: Boolean(city.hasShield),
+          isUnderground: Boolean(city.isUnderground),
+          hasResearch: Boolean(city.hasResearch),
+          hasLaser: Boolean(city.hasLaser),
+        };
+      }),
+    };
+  });
 }
 
 /**
@@ -665,6 +773,8 @@ export function buildRoundBriefing(
   const assets = readAssets(state, myId);
   const priorEvents = state.previousRoundEvents ?? [];
   const combat = combatLedger(state, [myId]);
+  const defenceOrders = findDefenceOrders(state, myId);
+  const offenceOrders = findOffenceOrders(state, myId);
 
   return {
     round: state.round,
@@ -684,8 +794,11 @@ export function buildRoundBriefing(
     scores,
     assets,
     weakness: findWeakness(state, myId, assets, scores, sanctioners, income, sanctionPenalty),
-    defence: findDefenceOrder(state, myId),
-    offence: findOffenceOrder(state, myId),
+    defence: defenceOrders[0],
+    offence: offenceOrders[0] ?? null,
+    defenceOrders,
+    offenceOrders,
+    world: buildWorld(state, myId, scores),
     untouched: raiders.length === 0 && cities.every((c) => c.status === 'quiet'),
   };
 }

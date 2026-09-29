@@ -542,7 +542,58 @@ describe('round briefing', () => {
     expect(brief.defence.nationId).toBe('us');
     expect(brief.offence).not.toBeNull();
     expect(brief.offence!.nationId).toBe('uk');
-    expect(['Hit', 'Swarm', 'Hydrogen', 'Magnetic']).toContain(brief.offence!.action);
+    expect(['Nuke', 'Drone', 'Hydrogen', 'Magnetic']).toContain(brief.offence!.action);
+  });
+
+  it('ranks the whole world and hides enemy defences without a spy service', () => {
+    let s = settle(table());
+    s = {
+      ...s,
+      nations: {
+        ...s.nations,
+        uk: {
+          ...s.nations.uk,
+          cities: s.nations.uk.cities.map((c) => ({ ...c, hasShield: true, hasLaser: true })),
+        },
+      },
+    };
+    s = setUs(s, { hasSpyNetwork: false, scoutedCities: [] });
+    const brief = buildRoundBriefing(s, 'us')!;
+    expect(brief.world.map((r) => r.rank)).toEqual([1, 2, 3]);
+    const uk = brief.world.find((r) => r.nationId === 'uk')!;
+    expect(uk.cities.every((c) => !c.known && !c.hasShield && !c.hasLaser)).toBe(true);
+    const us = brief.world.find((r) => r.nationId === 'us')!;
+    expect(us.cities.every((c) => c.known)).toBe(true);
+    // Blind advice never claims to know a shield: it is a plain warhead or swarm
+    for (const order of brief.offenceOrders) {
+      expect(['Nuke', 'Drone']).toContain(order.action);
+    }
+  });
+
+  it('advises around defences once a spy service has read them', () => {
+    let s = settle(table());
+    s = {
+      ...s,
+      nations: {
+        ...s.nations,
+        uk: {
+          ...s.nations.uk,
+          cities: s.nations.uk.cities.map((c) => ({ ...c, hasShield: true })),
+        },
+      },
+    };
+    s = setUs(s, {
+      hasSpyNetwork: true,
+      drones: 2,
+      bombs: 2,
+      hasNuclearTech: true,
+      nuclearTechUnlockedRound: 1,
+    });
+    const brief = buildRoundBriefing(s, 'us')!;
+    const uk = brief.world.find((r) => r.nationId === 'uk')!;
+    expect(uk.cities.every((c) => c.known && c.hasShield)).toBe(true);
+    const ukOrder = brief.offenceOrders.find((o) => o.nationId === 'uk');
+    if (ukOrder) expect(ukOrder.icon).toBe('drone');
   });
 
   it('leaves the exchange at zero when nobody fired', () => {

@@ -654,21 +654,33 @@ function checkEliminations(state: GameState): GameState {
       // Credit the attacker who landed the finishing city for ending the nation
       if (SCORE_ELIMINATION > 0) {
         let finisher: NationId | null = null;
+        let partners: NationId[] = [];
         for (let i = roundEvents.length - 1; i >= 0; i -= 1) {
           const e = roundEvents[i];
           if (e.kind === 'cityDestroyed' && e.nationId === id && e.attackerId) {
             finisher = e.attackerId;
+            partners = e.sharedWith ?? [];
             break;
           }
         }
         if (finisher && nations[finisher] && !nations[finisher].eliminated) {
+          // Nations that also went for the last city split the elimination bonus
+          const team = partners.filter((p) => nations[p] && !nations[p].eliminated);
+          const { share, bonus } = splitReward(SCORE_ELIMINATION, 1 + team.length);
           nations[finisher] = {
             ...nations[finisher],
-            attackPoints: (nations[finisher].attackPoints ?? 0) + SCORE_ELIMINATION,
+            attackPoints: (nations[finisher].attackPoints ?? 0) + share + bonus,
           };
+          if (share > 0) {
+            for (const p of team) {
+              nations[p] = { ...nations[p], attackPoints: (nations[p].attackPoints ?? 0) + share };
+            }
+          }
           logEntries.push(
             log(
-              `${nationDef(finisher).name} scored +${SCORE_ELIMINATION} for eliminating ${nationDef(id).name}.`,
+              team.length > 0 && share > 0
+                ? `${[finisher, ...team].map((n) => nationDef(n).name).join(' and ')} split the credit for eliminating ${nationDef(id).name}.`
+                : `${nationDef(finisher).name} scored +${share + bonus} for eliminating ${nationDef(id).name}.`,
               'attack',
             ),
           );
@@ -1786,6 +1798,34 @@ function applyDroneStrike(
   };
 }
 
+/**
+ * Divide a reward between the nations that went after the same city. Whole
+ * points only: everyone gets the even share and the nation that landed the
+ * blow keeps the remainder, so the total handed out never changes.
+ */
+export function splitReward(total: number, sharers: number): { share: number; bonus: number } {
+  const n = Math.max(1, sharers);
+  const share = Math.floor(total / n);
+  return { share, bonus: total - share * n };
+}
+
+/** Other living nations with a strike queued on this same city this round. */
+function coAttackers(state: GameState, strike: PendingStrike): NationId[] {
+  const seen = new Set<NationId>();
+  for (const other of state.pendingStrikes) {
+    if (
+      other.attackerId !== strike.attackerId &&
+      other.targetNationId === strike.targetNationId &&
+      other.cityId === strike.cityId &&
+      state.nations[other.attackerId] &&
+      !state.nations[other.attackerId].eliminated
+    ) {
+      seen.add(other.attackerId);
+    }
+  }
+  return [...seen];
+}
+
 /** Apply damage for a previously queued strike (bomb or drone pack already spent). */
 export function applyQueuedStrike(state: GameState, strike: PendingStrike): GameState {
   const attacker = state.nations[strike.attackerId];
@@ -1854,6 +1894,7 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
   let cities = defender.cities;
   let message: string;
   let hitEvent: RoundWorldEvent;
+  const partners = coAttackers(state, strikeNorm);
   // Hydrogen punches through shields and bunkers alike — no escort required.
   // Other warheads need the shield busy (drone swarm) or they only strip it.
   const shielded =
@@ -1903,6 +1944,7 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
       attackerId: strike.attackerId,
       amount: cityAssetValue(city),
       cover: city.isUnderground ? 'bunker' : city.hasShield ? 'shield' : undefined,
+      sharedWith: partners.length > 0 ? partners : undefined,
       laserDown:
         magnetic && laserNetwork(state, strike.targetNationId) ? true : undefined,
     });
@@ -1930,16 +1972,23 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
     ? state.roundEvents.filter((e) => !swarmedThisCity(e))
     : state.roundEvents;
 
-  const killCredit = !shielded && SCORE_KILL > 0 ? SCORE_KILL : 0;
-  const attackerPatch =
-    killCredit > 0
-      ? {
-          [strike.attackerId]: {
-            ...attacker,
-            attackPoints: (attacker.attackPoints ?? 0) + killCredit,
-          },
-        }
-      : {};
+  // Every nation that went after this city shares the credit for taking it
+  const killed = !shielded && SCORE_KILL > 0;
+  const { share, bonus } = splitReward(SCORE_KILL, 1 + partners.length);
+  const killCredit = killed ? share + bonus : 0;
+  const attackerPatch: Partial<GameState['nations']> = {};
+  if (killed && share + bonus > 0) {
+    attackerPatch[strike.attackerId] = {
+      ...attacker,
+      attackPoints: (attacker.attackPoints ?? 0) + share + bonus,
+    };
+    if (share > 0) {
+      for (const id of partners) {
+        const partner = state.nations[id];
+        attackerPatch[id] = { ...partner, attackPoints: (partner.attackPoints ?? 0) + share };
+      }
+    }
+  }
 
   let next: GameState = {
     ...state,
@@ -1959,7 +2008,11 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
       ...(killCredit > 0
         ? [
             log(
-              `${nationDef(strike.attackerId).name} scored +${killCredit} for destroying ${city.name}.`,
+              partners.length > 0 && share > 0
+                ? `${[strike.attackerId, ...partners].map((id) => nationDef(id).name).join(' and ')} split the credit for destroying ${city.name} — ${
+                    bonus > 0 ? `+${killCredit} to ${nationDef(strike.attackerId).name}, +${share} each to the rest` : `+${share} each`
+                  }.`
+                : `${nationDef(strike.attackerId).name} scored +${killCredit} for destroying ${city.name}.`,
               'attack',
             ),
           ]

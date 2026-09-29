@@ -169,13 +169,16 @@ export function mergeNationPlanning(
     // back in
     // from the side that never saw it.
     if (newer) return { ...newer, destroyed: false, rebuiltRound };
+    // A bunker replaces surface cover, so a shield bought on the other side of
+    // the sync must not survive on a city that went underground.
+    const underground = Boolean(rc.isUnderground || lc.isUnderground);
     return {
       ...rc,
       destroyed: false,
       rebuiltRound,
-      hasShield: Boolean(rc.hasShield || lc.hasShield),
+      hasShield: !underground && Boolean(rc.hasShield || lc.hasShield),
       hasResearch: Boolean(rc.hasResearch || lc.hasResearch),
-      isUnderground: Boolean(rc.isUnderground || lc.isUnderground),
+      isUnderground: underground,
       hasLaser: Boolean(rc.hasLaser || lc.hasLaser),
     };
   });

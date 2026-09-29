@@ -3,6 +3,7 @@ import {
   buyBomb,
   buyResearch,
   buyShield,
+  buyUnderground,
   queueStrike,
   markHumanReady,
   allAliveHumansReady,
@@ -165,6 +166,19 @@ describe('3-player online simulation', () => {
     );
     expect(merged.cities[0].hasResearch).toBe(true);
     expect(merged.cities[1].hasShield).toBe(true);
+  });
+
+  it('never keeps a shield on a city that went underground after a sync', () => {
+    const { state, uids } = makeThreePlayerGame();
+    const nationId = state.uidToNation![uids[0]] as NationId;
+    const cityId = state.nations[nationId].cities[0].id;
+    const shielded = buyShield(state, cityId, nationId);
+    const buried = buyUnderground(state, cityId, nationId);
+    const merged = mergeNationPlanning(shielded.nations[nationId], buried.nations[nationId]);
+    expect(merged.cities[0].isUnderground).toBe(true);
+    expect(merged.cities[0].hasShield).toBe(false);
+    const flipped = mergeNationPlanning(buried.nations[nationId], shielded.nations[nationId]);
+    expect(flipped.cities[0].hasShield).toBe(false);
   });
 
   it('lets a player swap sanctions once both slots are full', () => {

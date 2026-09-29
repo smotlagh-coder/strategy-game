@@ -6,13 +6,7 @@ import {
   nationDef,
   COSTS,
   DRONE_DAMAGE,
-  MAX_DRONES_PER_ROUND,
-  MAX_BOMBS_PER_ROUND,
-  MAX_HYDROGEN_PER_GAME,
-  MAX_MAGNETIC_PER_GAME,
   LASER_INTERCEPTS_PER_ROUND,
-  MAX_SANCTIONS,
-  RESEARCH_INCOME,
 } from './data/nations';
 import {
   applyQueuedStrike,
@@ -21,27 +15,8 @@ import {
   allAliveHumansReady,
   armAftermathTimer,
   isHumanDisconnected,
-  buyAerospaceTech,
-  buyBombs,
-  buyHydrogenBomb,
-  buyMagneticBombs,
-  buyLaser,
-  buySpyNetwork,
-  buyRebuild,
-  buyUnderground,
-  canBuyLaser,
-  canBuyResearch,
-  canBuySpyNetwork,
-  canBuyShield,
-  sanctionsLeft,
   seesCity,
-  canBuyRebuild,
-  canBuyUnderground,
   droneDamageFor,
-  buyDrones,
-  buyNuclearTech,
-  buyResearch,
-  buyShield,
   createInitialState,
   currentNationId,
   computeScore,
@@ -51,13 +26,7 @@ import {
   groupStrikesByAttacker,
   formatMoney,
   markHumanReady,
-  markPromptDone,
-  maxBombsPurchasable,
-  maxHydrogenPurchasable,
-  maxMagneticPurchasable,
-  canBuyAnyWarhead,
   totalWarheads,
-  maxDronesPurchasable,
   needsOvertime,
   nextRound,
   tiedForTheLead,
@@ -67,7 +36,6 @@ import {
   setMode,
   setPlayerNames,
   playerDisplayName,
-  toggleSanction,
   touchHumanActivity,
   citiesLeft,
   shieldsLeft,
@@ -128,70 +96,12 @@ import {
 } from './lib/onlineConstants';
 import { aftermathMyCityIds, aftermathWorldIds } from './lib/lobbyInvite';
 import { NameGate } from './screens/NameGate';
+import { CommandDashboard } from './screens/CommandDashboard';
 import { LobbyScreen } from './screens/Lobby';
 import { LeaderboardScreen } from './screens/Leaderboard';
 
 type FxKind = 'buy' | 'strike-label';
-type WizardStep =
-  | 'tech'
-  | 'aerospace'
-  | 'researchAsk'
-  | 'researchPick'
-  | 'bombs'
-  | 'drones'
-  | 'undergroundAsk'
-  | 'undergroundPick'
-  | 'rebuildAsk'
-  | 'rebuildPick'
-  | 'shieldAsk'
-  | 'shieldPick'
-  | 'laserAsk'
-  | 'laserPick'
-  | 'spyAsk'
-  | 'sanctionAsk'
-  | 'sanctionPick'
-  | 'strike'
-  | 'droneStrike';
-
-function wizardArt(step: WizardStep): string {
-  switch (step) {
-    case 'tech':
-      return ART.nukeTech;
-    case 'aerospace':
-      return ART.aerospaceTech;
-    case 'drones':
-      return ART.droneSwarm;
-    case 'researchAsk':
-    case 'researchPick':
-      return ART.researchLab;
-    case 'bombs':
-      return ART.warheads;
-    /* The strike steps dock beside the board, so they keep the small cut-outs */
-    case 'droneStrike':
-      return ART.drone;
-    case 'strike':
-      return ART.missile;
-    case 'undergroundAsk':
-    case 'undergroundPick':
-      return ART.undergroundCity;
-    case 'rebuildAsk':
-    case 'rebuildPick':
-      return ART.rebuildCity;
-    case 'shieldAsk':
-    case 'shieldPick':
-      return ART.cityShield;
-    case 'laserAsk':
-    case 'laserPick':
-      return ART.laserDefence;
-    case 'spyAsk':
-      return ART.spyServices;
-    case 'sanctionAsk':
-    case 'sanctionPick':
-      return ART.sanction;
-    default:
-      return ART.missile;
-  }
-}
+type WizardStep = 'command' | 'strike' | 'droneStrike';
 
 /**
  * Angel / evil portraits follow the seats crowned at the last resolution.
@@ -1068,6 +978,7 @@ function cityStatusMark(status: BriefingCityStatus): { src: string; label: strin
 function orderIcon(icon: BriefingOrderIcon): string {
   if (icon === 'shield' || icon === 'hold') return ART.shield;
   if (icon === 'bunker') return ART.undergroundCity;
+  if (icon === 'laser') return ART.laserIcon;
   if (icon === 'rebuild') return ART.rebuildCity;
   if (icon === 'drone') return ART.drone;
   if (icon === 'hydrogen') return ART.missileHydrogen;
@@ -1105,6 +1016,96 @@ function DashOrderCard({
   );
 }
 
+/**
+ * The whole world, ranked, with the advisor's orders drawn on it as arrows:
+ * blue over the cities to cover (and with what), red over the rival cities to
+ * hit. Defences show only where this commander has eyes; everywhere else the
+ * city is plain ground and the advisor points at it on guesswork.
+ */
+function DashWorld({
+  state,
+  briefing,
+}: {
+  state: GameState;
+  briefing: RoundBriefing;
+}) {
+  const arrows = new Map<string, { kind: 'defence' | 'offence'; order: BriefingOrder }>();
+  briefing.defenceOrders.forEach((order) => {
+    if (order.action !== 'Hold') arrows.set(`${order.nationId}:${order.cityId}`, { kind: 'defence', order });
+  });
+  briefing.offenceOrders.forEach((order) => {
+    arrows.set(`${order.nationId}:${order.cityId}`, { kind: 'offence', order });
+  });
+
+  return (
+    <ol className="dash__world" aria-label="World standings and advisor orders">
+      {briefing.world.map((row) => (
+        <li
+          key={row.nationId}
+          className={`dash__nation ${row.eliminated ? 'is-out' : ''} ${row.isYou ? 'is-you' : ''} ${
+            row.rank === 1 && !row.eliminated ? 'is-lead' : ''
+          }`}
+        >
+          <span className="dash__rank">{row.eliminated ? '—' : row.rank}</span>
+          <img
+            className="dash__nation-face"
+            src={leaderArt(state, row.nationId)}
+            alt=""
+            title={nationDef(row.nationId).name}
+            draggable={false}
+          />
+          <span className="dash__nation-copy">
+            <b>{nationDef(row.nationId).shortName}</b>
+            <em>{row.eliminated ? 'OUT' : `${row.total} pts`}</em>
+          </span>
+          <ul className="dash__nation-cities">
+            {row.cities.map((city) => {
+              const arrow = arrows.get(`${row.nationId}:${city.id}`);
+              const cover = city.isUnderground && !city.destroyed;
+              return (
+                <li
+                  key={city.id}
+                  className={`dash__chip ${city.destroyed ? 'is-rubble' : ''} ${
+                    city.known || row.isYou ? '' : 'is-unseen'
+                  } ${arrow ? `has-${arrow.kind}` : ''}`}
+                  title={
+                    arrow
+                      ? `${arrow.order.action} — ${city.name}`
+                      : city.destroyed
+                        ? `${city.name} — destroyed`
+                        : city.name
+                  }
+                >
+                  {arrow && (
+                    <span className={`dash__arrow is-${arrow.kind}`} aria-label={arrow.order.action}>
+                      <img src={orderIcon(arrow.order.icon)} alt="" draggable={false} />
+                    </span>
+                  )}
+                  <img
+                    className="dash__chip-art"
+                    src={cover ? ART.citiesUnderground[city.id] : ART.cities[city.id]}
+                    alt=""
+                    draggable={false}
+                  />
+                  {city.hasShield && !city.isUnderground && !city.destroyed && (
+                    <i className="dash__chip-dome" aria-hidden />
+                  )}
+                  {(city.hasLaser || city.hasResearch) && !city.destroyed && (
+                    <span className="dash__chip-tags">
+                      {city.hasLaser && <img src={ART.laserIcon} alt="" draggable={false} />}
+                      {city.hasResearch && <img src={ART.researchIcon} alt="" draggable={false} />}
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 function RoundBriefingOverlay({
   state,
   briefing,
@@ -1115,22 +1116,34 @@ function RoundBriefingOverlay({
   onDone: () => void;
 }) {
   const [secondsLeft, setSecondsLeft] = useState(Math.round(ROUND_BRIEFING_MS / 1000));
+  // One fixed deadline: a throttled tab, a re-render or a lost interval can't stretch it.
+  const deadlineRef = useRef(Date.now() + ROUND_BRIEFING_MS);
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
 
   useEffect(() => {
-    const tick = window.setInterval(() => setSecondsLeft((s) => Math.max(0, s - 1)), 1000);
-    const end = window.setTimeout(onDone, ROUND_BRIEFING_MS);
+    let done = false;
+    const check = () => {
+      const left = deadlineRef.current - Date.now();
+      setSecondsLeft(Math.max(0, Math.ceil(left / 1000)));
+      if (left <= 0 && !done) {
+        done = true;
+        onDoneRef.current();
+      }
+    };
+    const tick = window.setInterval(check, 250);
+    const end = window.setTimeout(check, ROUND_BRIEFING_MS + 50);
+    document.addEventListener('visibilitychange', check);
+    window.addEventListener('focus', check);
     return () => {
       window.clearInterval(tick);
       window.clearTimeout(end);
+      document.removeEventListener('visibilitychange', check);
+      window.removeEventListener('focus', check);
     };
-  }, [onDone]);
+  }, []);
 
   const me = nationDef(briefing.nationId);
-  const leadIndex = briefing.scores.findIndex((s) => !s.eliminated);
-  const maxScore = Math.max(
-    1,
-    ...briefing.scores.map((row) => (row.eliminated ? 0 : row.total)),
-  );
 
   return (
     <div
@@ -1224,7 +1237,7 @@ function RoundBriefingOverlay({
                       alt=""
                       draggable={false}
                     />
-                    {city.hasShield && !city.destroyed && (
+                    {city.hasShield && !city.isUnderground && !city.destroyed && (
                       <span className="dash__dome" title="Shield" aria-hidden />
                     )}
                     {city.destroyed && (
@@ -1275,26 +1288,7 @@ function RoundBriefingOverlay({
         </section>
 
         <div className="dash__lower">
-          <ol className="dash__board" aria-label="Standings">
-            {briefing.scores.map((row, i) => {
-              const height = row.eliminated
-                ? 6
-                : Math.max(8, Math.round((row.total / maxScore) * 52));
-              return (
-                <li
-                  key={row.nationId}
-                  className={`dash__seat ${row.eliminated ? 'is-out' : ''} ${
-                    i === leadIndex && !row.eliminated ? 'is-lead' : ''
-                  } ${row.nationId === briefing.nationId ? 'is-you' : ''}`}
-                >
-                  <i style={{ height }} aria-hidden />
-                  <img src={leaderArt(state, row.nationId)} alt="" draggable={false} />
-                  <b>{row.eliminated ? 'OUT' : row.total}</b>
-                  <span>{nationDef(row.nationId).shortName}</span>
-                </li>
-              );
-            })}
-          </ol>
+          <DashWorld state={state} briefing={briefing} />
 
           <div className="dash__rail">
             {(briefing.raiders.length > 0 || briefing.sanctioners.length > 0) && (
@@ -1441,30 +1435,85 @@ function StrikeRecap({
  * still runs on the phases where the board is unmounted — otherwise a client
  * that adopts an already-resolved board never sees a missile.
  */
+type StrikeJob = {
+  /** Round whose launches still owe this client a cinema, or null. */
+  jobRound: number | null;
+  /** True from the moment the round resolves until the cinema has played. */
+  pending: boolean;
+  finish: (round: number) => void;
+};
+
+/**
+ * Decides, synchronously during render, whether this client still owes the
+ * previous round its strike cinema. Living in render (not in an effect) means
+ * the board, briefing and summary can be held back on the very first frame —
+ * otherwise an online summary that arrives with its clock already armed
+ * advanced the table before the animation had a chance to start.
+ */
+function useStrikeJob(state: GameState): StrikeJob {
+  const seenRef = useRef<Set<number>>(new Set());
+  const finishedRef = useRef<Set<number>>(new Set());
+  const gameKeyRef = useRef<string | null>(null);
+  const [, bump] = useState(0);
+
+  const phase = state.phase;
+  const inMatch =
+    phase === 'buy' ||
+    phase === 'action' ||
+    phase === 'income' ||
+    phase === 'resolveStrikes' ||
+    phase === 'roundSummary';
+  const showing = phase === 'roundSummary' || phase === 'gameOver';
+  const gameKey = state.onlineGameId ?? state.mode ?? null;
+  const preGame =
+    phase === 'session' ||
+    phase === 'mode' ||
+    phase === 'names' ||
+    phase === 'lobby' ||
+    phase === 'country';
+  if (gameKeyRef.current !== gameKey || preGame) {
+    seenRef.current = new Set();
+    finishedRef.current = new Set();
+    gameKeyRef.current = gameKey;
+  }
+  if (inMatch) seenRef.current.add(state.round);
+
+  const summaryRound = state.previousRoundNumber ?? null;
+  const jobRound =
+    summaryRound != null &&
+    seenRef.current.has(summaryRound) &&
+    ((showing && state.round === summaryRound) || state.round === summaryRound + 1)
+      ? summaryRound
+      : null;
+  const pending = jobRound != null && !finishedRef.current.has(jobRound);
+
+  const finish = useCallback((round: number) => {
+    if (finishedRef.current.has(round)) return;
+    finishedRef.current.add(round);
+    bump((n) => n + 1);
+  }, []);
+
+  return { jobRound, pending, finish };
+}
+
 function StrikeTheater({
   state,
   setState,
-  cinemaHoldRef,
-  onBusyChange,
+  job,
 }: {
   state: GameState;
   setState: React.Dispatch<React.SetStateAction<GameState>>;
-  cinemaHoldRef: React.MutableRefObject<{ round: number; until: number } | null>;
-  onBusyChange?: (busy: boolean) => void;
+  job: StrikeJob;
 }) {
   const [cinema, setCinema] = useState<StrikeShow | null>(null);
   const [recap, setRecap] = useState<RoundWorldEvent[] | null>(null);
-  /** Veil while waiting for the report / between volleys so RoundSummary cannot flash. */
-  const [holding, setHolding] = useState(false);
   const cinemaResolveRef = useRef<(() => void) | null>(null);
   const recapResolveRef = useRef<(() => void) | null>(null);
-  /** Round whose cinema finished successfully — remounts may retry until then. */
-  const finishedRoundRef = useRef<number | null>(null);
   const sessionRef = useRef(0);
   const stateRef = useRef(state);
   stateRef.current = state;
-  const onBusyChangeRef = useRef(onBusyChange);
-  onBusyChangeRef.current = onBusyChange;
+  const finishRef = useRef(job.finish);
+  finishRef.current = job.finish;
 
   const onCinemaComplete = useCallback(() => {
     setCinema(null);
@@ -1480,35 +1529,29 @@ function StrikeTheater({
     resolve?.();
   }, []);
 
-  const phase = state.phase;
-  const round = state.round;
-  const summaryRound = state.previousRoundNumber;
-  const showing = phase === 'roundSummary' || phase === 'gameOver';
-  // Peers often land on summary before the strike report syncs — bump this when
-  // the payload arrives so a timed-out empty wait can start the cinema.
-  const reportKey = `${(state.resolvedStrikes ?? []).length}:${(state.previousRoundEvents ?? []).length}`;
+  const round = job.jobRound;
+  const holding = job.pending;
 
-  const theaterBusy = holding || Boolean(cinema) || Boolean(recap);
+  // Keyed on the round alone: the cinema plays from its own snapshot of the
+  // report and no later sync (next round, heartbeat, late report) may cut it off.
   useEffect(() => {
-    onBusyChangeRef.current?.(theaterBusy);
-  }, [theaterBusy]);
-
-  useEffect(() => {
-    if (!showing) {
-      setHolding(false);
-      return;
-    }
-    if (summaryRound !== round) return;
-    if (finishedRoundRef.current === round) {
-      setHolding(false);
-      return;
-    }
+    if (round == null) return;
+    if (!job.pending) return;
 
     const session = ++sessionRef.current;
     let cancelled = false;
     let reportTimer = 0;
+    let watchdog = 0;
     const alive = () => !cancelled && sessionRef.current === session;
-    setHolding(true);
+
+    const complete = () => finishRef.current(round);
+
+    // Whatever goes wrong, the table is never held longer than this
+    watchdog = window.setTimeout(() => {
+      cancelled = true;
+      clearTheater();
+      complete();
+    }, REPORT_WAIT_MS + 4_000);
 
     const armClock = () =>
       setState((cur) => {
@@ -1533,18 +1576,15 @@ function StrikeTheater({
     };
 
     const play = async (strikes: PendingStrike[], events: RoundWorldEvent[]) => {
-      // Keep a peer that already moved on from cutting our animation short
       const volleyCount = groupStrikesByAttacker(strikes).length;
-      const runtimeMs = volleyCount * STRIKE_CINEMA_MS + (events.length > 0 ? RECAP_AUTO_MS : 0);
-      cinemaHoldRef.current = { round, until: Date.now() + runtimeMs + 4_000 };
-
-      // A report that arrived late must not be cut off by a clock already ticking
-      setState((cur) => {
-        if (cur.round !== round || cur.phase !== 'roundSummary') return cur;
-        const needUntil = Date.now() + runtimeMs + AFTERMATH_THINK_MS;
-        if (cur.aftermathEndsAt == null || cur.aftermathEndsAt >= needUntil) return cur;
-        return { ...cur, aftermathEndsAt: needUntil };
-      });
+      const runtimeMs = volleyCount * (STRIKE_CINEMA_MS + 1_500) + (events.length > 0 ? RECAP_AUTO_MS : 0);
+      // Re-arm the watchdog with the real runtime of this report
+      window.clearTimeout(watchdog);
+      watchdog = window.setTimeout(() => {
+        cancelled = true;
+        clearTheater();
+        complete();
+      }, runtimeMs + 6_000);
 
       try {
         const volleys = groupStrikesByAttacker(strikes).slice().sort((a, b) => {
@@ -1657,18 +1697,18 @@ function StrikeTheater({
           });
         }
         if (alive()) {
-          finishedRoundRef.current = round;
           armClock();
-          setHolding(false);
+          complete();
         }
       } finally {
-        if (sessionRef.current === session) cinemaHoldRef.current = null;
+        window.clearTimeout(watchdog);
       }
     };
 
     /** The strike report can trail the phase change, so wait for it to land. */
+    let dataSeenAt = 0;
     const attempt = (waitedMs: number) => {
-      if (!alive() || finishedRoundRef.current === round) return;
+      if (!alive()) return;
       const strikes = stateRef.current.resolvedStrikes ?? [];
       const events = stateRef.current.previousRoundEvents ?? [];
 
@@ -1677,8 +1717,7 @@ function StrikeTheater({
         armClock();
         if (waitedMs >= REPORT_WAIT_MS) {
           // Peaceful round (or report never came) — don't block forever
-          finishedRoundRef.current = round;
-          setHolding(false);
+          complete();
           return;
         }
         reportTimer = window.setTimeout(
@@ -1688,6 +1727,18 @@ function StrikeTheater({
         return;
       }
 
+      // Strikes and their outcomes can land a beat apart — give the outcomes a moment
+      if (strikes.length > 0 && events.length === 0) {
+        dataSeenAt = dataSeenAt || Date.now();
+        if (Date.now() - dataSeenAt < 1_200) {
+          reportTimer = window.setTimeout(
+            () => attempt(waitedMs + REPORT_POLL_MS),
+            REPORT_POLL_MS,
+          );
+          return;
+        }
+      }
+
       void play(strikes, events);
     };
     attempt(0);
@@ -1695,14 +1746,11 @@ function StrikeTheater({
     return () => {
       cancelled = true;
       window.clearTimeout(reportTimer);
-      if (sessionRef.current === session) {
-        cinemaHoldRef.current = null;
-        clearTheater();
-        // Leave holding true across Strict Mode remounts so RoundSummary
-        // cannot flash between cleanup and the next play() arm.
-      }
+      window.clearTimeout(watchdog);
+      if (sessionRef.current === session) clearTheater();
     };
-  }, [showing, round, summaryRound, reportKey, setState, cinemaHoldRef]);
+    // Only the round decides when the show starts; everything else is read live.
+  }, [round, setState]);
 
   return (
     <>
@@ -1748,57 +1796,6 @@ function cityStatusLabel(c: {
 /** A city with everything a spy service would have told you stripped out. */
 function hideDefences(c: City): City {
   return { ...c, hasShield: false, hasResearch: false, isUnderground: false, hasLaser: false };
-}
-
-/**
- * A city in one of the wizard's pickers. Every city is always on screen —
- * the ones you cannot pick are greyed out with the reason — so the choice is
- * made against the full picture of what the nation already has.
- */
-function WizardCityCard({
-  city,
-  blocked,
-  onPick,
-}: {
-  city: City;
-  /** Why this city is not selectable, or undefined when it is */
-  blocked?: string;
-  onPick: () => void;
-}) {
-  /* The shield is the dome over the art and underground is the art itself, so
-     only these two still need a badge */
-  const badges = [
-    city.hasResearch &&
-      !city.destroyed && { key: 'research', src: ART.researchIcon, label: 'Research' },
-    city.hasLaser && !city.destroyed && { key: 'laser', src: ART.laserIcon, label: 'Lasers' },
-  ].filter(Boolean) as { key: string; src: string; label: string }[];
-
-  return (
-    <button
-      className={`turn-wizard__city-card ${city.destroyed ? 'is-rubble' : ''}`}
-      onClick={onPick}
-      disabled={Boolean(blocked)}
-      title={`${city.name} — ${blocked ?? cityStatusLabel(city)}`}
-    >
-      <span className="turn-wizard__city-art">
-        <img src={cityArt(city)} alt="" draggable={false} />
-        {city.hasShield && !city.destroyed && <span className="city-dome" aria-hidden />}
-        {badges.length > 0 && (
-          <span className="turn-wizard__city-badges">
-            {badges.map((b) => (
-              <span key={b.key} className={`is-${b.key}`} title={b.label}>
-                <img src={b.src} alt={b.label} draggable={false} />
-              </span>
-            ))}
-          </span>
-        )}
-      </span>
-      <span>{city.name}</span>
-      <em className={`turn-wizard__city-state ${blocked ? 'is-blocked' : ''}`}>
-        {blocked ?? cityStatusLabel(city)}
-      </em>
-    </button>
-  );
 }
 
 function ResourceBar({
@@ -2011,7 +2008,7 @@ function NationPod({
           const canTarget = Boolean(
             targetable && !c.destroyed && !hitThisRound && (!bombProof || selected),
           );
-          const className = `city-tile ${c.destroyed ? 'is-destroyed' : ''} ${c.hasShield ? 'has-shield' : ''} ${c.hasResearch ? 'has-research' : ''} ${selected ? 'is-selected' : ''} ${canTarget ? 'is-targetable' : ''} ${hitThisRound && !c.destroyed && !bombLocked ? 'is-hit-this-round' : ''} ${bombLocked ? 'is-bomb-locked' : ''} ${droneLocked || droneSelected ? 'is-drone-locked' : ''} ${c.isUnderground && !c.destroyed ? 'is-underground' : ''} ${c.hasLaser && !c.destroyed ? 'has-laser' : ''} ${c.rebuiltRound != null && !c.destroyed ? 'is-rebuilt' : ''} ${justHit ? 'is-just-hit' : ''}`;
+          const className = `city-tile ${c.destroyed ? 'is-destroyed' : ''} ${c.hasShield && !c.isUnderground ? 'has-shield' : ''} ${c.hasResearch ? 'has-research' : ''} ${selected ? 'is-selected' : ''} ${canTarget ? 'is-targetable' : ''} ${hitThisRound && !c.destroyed && !bombLocked ? 'is-hit-this-round' : ''} ${bombLocked ? 'is-bomb-locked' : ''} ${droneLocked || droneSelected ? 'is-drone-locked' : ''} ${c.isUnderground && !c.destroyed ? 'is-underground' : ''} ${c.hasLaser && !c.destroyed ? 'has-laser' : ''} ${c.rebuiltRound != null && !c.destroyed ? 'is-rebuilt' : ''} ${justHit ? 'is-just-hit' : ''}`;
           const unknown = !open && !c.destroyed;
           const weaponLabel =
             assignedWeapon === 'hydrogen'
@@ -2045,7 +2042,9 @@ function NationPod({
                 alt={c.name}
                 draggable={false}
               />
-              {c.hasShield && !c.destroyed && <span className="city-dome" aria-hidden />}
+              {c.hasShield && !c.isUnderground && !c.destroyed && (
+                <span className="city-dome" aria-hidden />
+              )}
               {c.hasResearch && !c.destroyed && (
                 <span className="city-tile__research" title="Research" aria-label="Research">
                   <img src={ART.researchIcon} alt="" draggable={false} />
@@ -2302,53 +2301,6 @@ function CountrySelect({
   );
 }
 
-function canOfferTech(state: GameState, actorId: NationId): boolean {
-  const n = state.nations[actorId];
-  return !n.hasNuclearTech && n.money >= COSTS.ballisticMissileTech;
-}
-
-function canOfferAerospace(state: GameState, actorId: NationId): boolean {
-  const n = state.nations[actorId];
-  return !n.hasAerospaceTech && n.money >= COSTS.aerospaceTech;
-}
-
-function canOfferDrones(state: GameState, actorId: NationId): boolean {
-  return maxDronesPurchasable(state, actorId) > 0;
-}
-
-function canOfferResearch(state: GameState, actorId: NationId): boolean {
-  return canBuyResearch(state, actorId);
-}
-
-function canOfferBombs(state: GameState, actorId: NationId): boolean {
-  return canBuyAnyWarhead(state, actorId);
-}
-
-function canOfferUnderground(state: GameState, actorId: NationId): boolean {
-  return canBuyUnderground(state, actorId);
-}
-
-function canOfferRebuild(state: GameState, actorId: NationId): boolean {
-  return canBuyRebuild(state, actorId);
-}
-
-function canOfferShield(state: GameState, actorId: NationId): boolean {
-  return canBuyShield(state, actorId);
-}
-
-function canOfferLaser(state: GameState, actorId: NationId): boolean {
-  return canBuyLaser(state, actorId);
-}
-function canOfferSpy(state: GameState, actorId: NationId): boolean {
-  return canBuySpyNetwork(state, actorId);
-}
-
-function canOfferSanction(state: GameState, actorId: NationId): boolean {
-  const n = state.nations[actorId];
-  if (n.promptsDoneThisRound?.includes('sanctionAsk')) return false;
-  return state.turnOrder.some((nid) => nid !== actorId && !state.nations[nid].eliminated);
-}
-
 function canOfferStrike(state: GameState, actorId: NationId): boolean {
   return totalWarheads(state.nations[actorId]) > 0;
 }
@@ -2357,51 +2309,19 @@ function canOfferDroneStrike(state: GameState, actorId: NationId): boolean {
   return state.nations[actorId].drones > 0;
 }
 
-/** Next wizard prompt after `from` (null = start of turn). */
+/**
+ * Turn flow: the command dashboard (every purchase, on one screen), then the
+ * warhead targets, then the drone targets. Null once nothing is left to aim.
+ */
 function nextWizardStep(
   state: GameState,
   from: WizardStep | null,
   actorId: NationId,
 ): WizardStep | null {
-  const sequence: WizardStep[] = [
-    'tech',
-    'aerospace',
-    'researchAsk',
-    'bombs',
-    'drones',
-    'undergroundAsk',
-    'rebuildAsk',
-    'shieldAsk',
-    'laserAsk',
-    'spyAsk',
-    'sanctionAsk',
-    'strike',
-    'droneStrike',
-  ];
-  let start = 0;
-  if (from === 'researchPick') start = sequence.indexOf('researchAsk') + 1;
-  else if (from === 'undergroundPick') start = sequence.indexOf('undergroundAsk') + 1;
-  else if (from === 'rebuildPick') start = sequence.indexOf('rebuildAsk') + 1;
-  else if (from === 'shieldPick') start = sequence.indexOf('shieldAsk') + 1;
-  else if (from === 'laserPick') start = sequence.indexOf('laserAsk') + 1;
-  else if (from === 'sanctionPick') start = sequence.indexOf('sanctionAsk') + 1;
-  else if (from != null) start = sequence.indexOf(from) + 1;
-
-  for (let i = start; i < sequence.length; i += 1) {
+  if (from == null) return 'command';
+  const sequence: WizardStep[] = ['command', 'strike', 'droneStrike'];
+  for (let i = sequence.indexOf(from) + 1; i < sequence.length; i += 1) {
     const step = sequence[i];
-    if (step === 'tech' && canOfferTech(state, actorId)) return 'tech';
-    if (step === 'aerospace' && canOfferAerospace(state, actorId)) return 'aerospace';
-    if (step === 'researchAsk' && canOfferResearch(state, actorId)) return 'researchAsk';
-    if (step === 'bombs' && canOfferBombs(state, actorId)) return 'bombs';
-    if (step === 'drones' && canOfferDrones(state, actorId)) return 'drones';
-    if (step === 'undergroundAsk' && canOfferUnderground(state, actorId)) {
-      return 'undergroundAsk';
-    }
-    if (step === 'rebuildAsk' && canOfferRebuild(state, actorId)) return 'rebuildAsk';
-    if (step === 'shieldAsk' && canOfferShield(state, actorId)) return 'shieldAsk';
-    if (step === 'laserAsk' && canOfferLaser(state, actorId)) return 'laserAsk';
-    if (step === 'spyAsk' && canOfferSpy(state, actorId)) return 'spyAsk';
-    if (step === 'sanctionAsk' && canOfferSanction(state, actorId)) return 'sanctionAsk';
     if (step === 'strike' && canOfferStrike(state, actorId)) return 'strike';
     if (step === 'droneStrike' && canOfferDroneStrike(state, actorId)) return 'droneStrike';
   }
@@ -2598,6 +2518,29 @@ function GameBoard({
     [setState, sessionUid],
   );
 
+  /** Apply one purchase from the command dashboard and keep online peers in step. */
+  const applyOrder = useCallback(
+    (fn: (s: GameState) => GameState, label?: string) => {
+      const actor =
+        stateRef.current.mode === 'online' &&
+        sessionUid &&
+        stateRef.current.uidToNation?.[sessionUid]
+          ? stateRef.current.uidToNation[sessionUid]
+          : currentNationId(stateRef.current);
+      if (!actor) return;
+      bumpSelectionActivity();
+      const cur = stateRef.current;
+      let next = fn(cur);
+      if (next === cur) return;
+      if (label) pushFx({ kind: 'buy', label }, 700);
+      if (next.mode === 'online') next = touchHumanActivity(next, actor);
+      stateRef.current = next;
+      setState(next);
+      if (next.mode === 'online') syncPlanning(next, actor);
+    },
+    [sessionUid, bumpSelectionActivity, pushFx, setState, syncPlanning],
+  );
+
   const advanceAfter = useCallback(
     (s: GameState, from: WizardStep) => {
       const actor =
@@ -2606,29 +2549,11 @@ function GameBoard({
           : currentNationId(s);
       if (!actor) return;
       bumpSelectionActivity();
-      let nextState = markPromptDone(s, actor, from);
-      if (from === 'researchPick') nextState = markPromptDone(nextState, actor, 'researchAsk');
-      if (from === 'undergroundPick') {
-        nextState = markPromptDone(nextState, actor, 'undergroundAsk');
-      }
-      if (from === 'rebuildPick') nextState = markPromptDone(nextState, actor, 'rebuildAsk');
-      if (from === 'shieldPick') nextState = markPromptDone(nextState, actor, 'shieldAsk');
-      if (from === 'laserPick') nextState = markPromptDone(nextState, actor, 'laserAsk');
-      if (from === 'sanctionPick') nextState = markPromptDone(nextState, actor, 'sanctionAsk');
-      if (s.mode === 'online') {
-        nextState = touchHumanActivity(nextState, actor);
-        stateRef.current = nextState;
-        setState(nextState);
-        syncPlanning(nextState, actor);
-      } else {
-        stateRef.current = nextState;
-        setState(nextState);
-      }
-      const next = nextWizardStep(nextState, from, actor);
+      const next = nextWizardStep(s, from, actor);
       if (next == null) closeHumanTurn([]);
       else setWizardStep(next);
     },
-    [closeHumanTurn, sessionUid, bumpSelectionActivity, setState, syncPlanning],
+    [closeHumanTurn, sessionUid, bumpSelectionActivity],
   );
 
   // Start turn prompts when this human can act (once per round), after briefing
@@ -2647,20 +2572,8 @@ function GameBoard({
     setIdleSecondsLeft(Math.ceil(SELECTION_IDLE_MS / 1000));
     setTargets([]);
     setDroneTargets([]);
-    const first = nextWizardStep(stateRef.current, null, actorId);
-    if (first == null) {
-      const t = window.setTimeout(() => closeHumanTurn([]), 40);
-      return () => window.clearTimeout(t);
-    }
-    setWizardStep(first);
-  }, [isMyHumanTurn, actorId, state.round, closeHumanTurn, roundBriefingActive]);
-
-  // Nothing left in the arsenal — don't make them press Done.
-  useEffect(() => {
-    if (wizardStep !== 'bombs') return;
-    if (canBuyAnyWarhead(state, actorId)) return;
-    advanceAfter(state, 'bombs');
-  }, [wizardStep, state, actorId, advanceAfter]);
+    setWizardStep('command');
+  }, [isMyHumanTurn, actorId, state.round, roundBriefingActive]);
 
   // 60s idle kick — only while this client must make selections
   useEffect(() => {
@@ -3042,9 +2955,6 @@ function GameBoard({
     closeHumanTurn(picked);
   };
 
-  const bombMax = maxBombsPurchasable(state, actorId);
-  const hydrogenMax = maxHydrogenPurchasable(state, actorId);
-  const magneticMax = maxMagneticPurchasable(state, actorId);
   const warheadCap = totalWarheads(turn);
   const warheadsConfirming = wizardStep === 'strike' && warheadCap > 0 && targets.length >= warheadCap;
   const dronesConfirming =
@@ -3095,7 +3005,6 @@ function GameBoard({
     };
   }, [targetConfirmKey, closeHumanTurn, actorId, bumpSelectionActivity]);
 
-  const droneMax = maxDronesPurchasable(state, actorId);
   const selectedCityIds = droneSelectMode
     ? droneTargets.map((t) => t.cityId)
     : targets.map((t) => t.cityId);
@@ -3146,648 +3055,18 @@ function GameBoard({
       />
       <FxLayer events={fx} />
 
-      {isMyHumanTurn && wizardStep && !strikeSelectMode && (
-        <div className="turn-wizard" role="dialog" aria-modal="true">
-          <div className="turn-wizard__panel enter-pop">
-            <WizardNationHeader
-              state={state}
-              nationId={actorId}
-              money={turn.money}
-              bombs={totalWarheads(turn)}
-              drones={turn.drones}
-              idleSecondsLeft={isOnline ? idleSecondsLeft : null}
-            />
-
-            <div className={`turn-wizard__hero turn-wizard__hero--${wizardStep}`}>
-              <img src={wizardArt(wizardStep)} alt="" draggable={false} />
-            </div>
-
-            {wizardStep === 'tech' && (
-              <>
-                <h3 className="turn-wizard__q">Do you want to purchase Ballistic Missile Tech?</h3>
-                <p className="turn-wizard__hint">
-                  Unlocks warheads right away · {COSTS.ballisticMissileTech}M
-                </p>
-                <div className="turn-wizard__actions">
-                  <button
-                    className="btn btn--xl btn--primary"
-                    onClick={() => {
-                      pushFx({ kind: 'buy', label: 'Ballistic Missile Tech Unlocked!' }, 700);
-                      const next = buyNuclearTech(stateRef.current, actorId);
-                      setState(next);
-                      advanceAfter(next, 'tech');
-                    }}
-                  >
-                    Yes
-                  </button>
-                  <button
-                    className="btn btn--xl"
-                    onClick={() => advanceAfter(stateRef.current, 'tech')}
-                  >
-                    No
-                  </button>
-                </div>
-              </>
-            )}
-
-            {wizardStep === 'aerospace' && (
-              <>
-                <h3 className="turn-wizard__q">Do you want to purchase Aerospace Tech?</h3>
-                <p className="turn-wizard__hint">
-                  Unlocks drone packs right away · {COSTS.aerospaceTech}M
-                </p>
-                <div className="turn-wizard__actions">
-                  <button
-                    className="btn btn--xl btn--primary"
-                    onClick={() => {
-                      pushFx({ kind: 'buy', label: 'Aerospace Tech Unlocked!' }, 700);
-                      const next = buyAerospaceTech(stateRef.current, actorId);
-                      setState(next);
-                      advanceAfter(next, 'aerospace');
-                    }}
-                  >
-                    Yes
-                  </button>
-                  <button
-                    className="btn btn--xl"
-                    onClick={() => advanceAfter(stateRef.current, 'aerospace')}
-                  >
-                    No
-                  </button>
-                </div>
-              </>
-            )}
-
-            {wizardStep === 'researchAsk' && (
-              <>
-                <h3 className="turn-wizard__q">Do you want to build a Research Center?</h3>
-                <p className="turn-wizard__hint">
-                  {COSTS.research}M · that city earns +${RESEARCH_INCOME}M each round
-                </p>
-                <div className="turn-wizard__actions">
-                  <button
-                    className="btn btn--xl btn--primary"
-                    onClick={() => {
-                      bumpSelectionActivity();
-                      setWizardStep('researchPick');
-                    }}
-                  >
-                    Yes
-                  </button>
-                  <button
-                    className="btn btn--xl"
-                    onClick={() => advanceAfter(stateRef.current, 'researchAsk')}
-                  >
-                    No
-                  </button>
-                </div>
-              </>
-            )}
-
-            {wizardStep === 'researchPick' && (
-              <>
-                <h3 className="turn-wizard__q">Select the city for your Research Center</h3>
-                <p className="turn-wizard__hint">
-                  +${RESEARCH_INCOME}M a round while it stands — it burns with the city
-                </p>
-                <div className="turn-wizard__city-grid">
-                  {turn.cities.map((c) => (
-                    <WizardCityCard
-                      key={c.id}
-                      city={c}
-                      blocked={
-                        c.destroyed
-                          ? 'In rubble'
-                          : c.hasResearch
-                            ? 'Already researching'
-                            : undefined
-                      }
-                      onPick={() => {
-                        pushFx({ kind: 'buy', label: `Research in ${c.name}` }, 700);
-                        const next = buyResearch(stateRef.current, c.id, actorId);
-                        setState(next);
-                        advanceAfter(next, 'researchPick');
-                      }}
-                    />
-                  ))}
-                </div>
-                <div className="turn-wizard__actions">
-                  <button
-                    className="btn btn--xl"
-                    onClick={() => advanceAfter(stateRef.current, 'researchPick')}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </>
-            )}
-
-            {wizardStep === 'bombs' && (
-              <>
-                <h3 className="turn-wizard__q">Arm your warheads</h3>
-                <p className="turn-wizard__hint">
-                  Nuclear refreshes each round. Hydrogen cracks bunkers (1/game). Magnetic
-                  kills lasers (2/game).
-                </p>
-                <div className="arsenal-buy">
-                  <div className="arsenal-buy__row">
-                    <div className="arsenal-buy__meta">
-                      <img src={ART.missile} alt="" draggable={false} />
-                      <div>
-                        <strong>Nuclear</strong>
-                        <span>
-                          {COSTS.bomb}M each · {turn.bombs}/{MAX_BOMBS_PER_ROUND} stock this round
-                        </span>
-                      </div>
-                    </div>
-                    <div className="arsenal-buy__picks">
-                      {([1, 2, 3] as const).map((n) => (
-                        <button
-                          key={n}
-                          type="button"
-                          className="btn btn--primary arsenal-buy__add"
-                          disabled={n > bombMax}
-                          onClick={() => {
-                            pushFx({ kind: 'buy', label: `+${n} Nuclear` }, 700);
-                            setState(buyBombs(stateRef.current, n, actorId));
-                          }}
-                        >
-                          {n}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="arsenal-buy__row">
-                    <div className="arsenal-buy__meta">
-                      <img src={ART.missileHydrogen} alt="" draggable={false} />
-                      <div>
-                        <strong>Hydrogen</strong>
-                        <span>
-                          {COSTS.bombHydrogen}M · bunkers ·{' '}
-                          {MAX_HYDROGEN_PER_GAME - (turn.hydrogenBought ?? 0)} left · stock{' '}
-                          {turn.hydrogenBombs ?? 0}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="arsenal-buy__picks">
-                      <button
-                        type="button"
-                        className="btn btn--primary arsenal-buy__add"
-                        disabled={hydrogenMax < 1}
-                        onClick={() => {
-                          pushFx({ kind: 'buy', label: '+1 Hydrogen' }, 700);
-                          setState(buyHydrogenBomb(stateRef.current, actorId));
-                        }}
-                      >
-                        1
-                      </button>
-                    </div>
-                  </div>
-                  <div className="arsenal-buy__row">
-                    <div className="arsenal-buy__meta">
-                      <img src={ART.missileMagnetic} alt="" draggable={false} />
-                      <div>
-                        <strong>Magnetic</strong>
-                        <span>
-                          {COSTS.bombMagnetic}M · kills lasers ·{' '}
-                          {MAX_MAGNETIC_PER_GAME - (turn.magneticBought ?? 0)} left · stock{' '}
-                          {turn.magneticBombs ?? 0}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="arsenal-buy__picks">
-                      {([1, 2] as const).map((n) => (
-                        <button
-                          key={n}
-                          type="button"
-                          className="btn btn--primary arsenal-buy__add"
-                          disabled={n > magneticMax}
-                          onClick={() => {
-                            pushFx({ kind: 'buy', label: `+${n} Magnetic` }, 700);
-                            setState(buyMagneticBombs(stateRef.current, n, actorId));
-                          }}
-                        >
-                          {n}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-                {canBuyAnyWarhead(state, actorId) && (
-                  <div className="turn-wizard__actions">
-                    <button
-                      className="btn btn--xl btn--primary"
-                      onClick={() => advanceAfter(stateRef.current, 'bombs')}
-                    >
-                      Done
-                    </button>
-                  </div>
-                )}
-              </>
-            )}
-
-            {wizardStep === 'drones' && (
-              <>
-                <h3 className="turn-wizard__q">How many drone packs do you want?</h3>
-                <p className="turn-wizard__hint">
-                  {COSTS.drone}M each · max {droneMax} this round (cap {MAX_DRONES_PER_ROUND}) ·
-                  drones cost the target ${DRONE_DAMAGE}M in damages (half against a
-                  shielded or underground city, nothing at all against laser defences)
-                  and tie up a city&apos;s shield so a bomb sent with them lands
-                </p>
-                <div className="turn-wizard__actions turn-wizard__actions--wrap">
-                  {[0, 1, 2, 3].map((n) => (
-                    <button
-                      key={n}
-                      className="btn btn--xl btn--primary"
-                      disabled={n > droneMax}
-                      onClick={() => {
-                        if (n === 0) {
-                          advanceAfter(stateRef.current, 'drones');
-                          return;
-                        }
-                        pushFx({ kind: 'buy', label: `+${n} Drone Pack${n > 1 ? 's' : ''}` }, 700);
-                        const next = buyDrones(stateRef.current, n, actorId);
-                        setState(next);
-                        advanceAfter(next, 'drones');
-                      }}
-                    >
-                      {n === 0 ? 'No Drones' : `${n} Pack${n > 1 ? 's' : ''}`}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-
-            {wizardStep === 'undergroundAsk' && (
-              <>
-                <h3 className="turn-wizard__q">Move a city underground?</h3>
-                <p className="turn-wizard__hint">
-                  {COSTS.underground}M · one city per nation, for the whole match · nukes
-                  cannot destroy it and it never needs a shield. Drone swarms still cost it
-                  {` $${DRONE_DAMAGE / 2}M`} in repairs.
-                </p>
-                <div className="turn-wizard__actions">
-                  <button
-                    className="btn btn--xl btn--primary"
-                    onClick={() => {
-                      bumpSelectionActivity();
-                      setWizardStep('undergroundPick');
-                    }}
-                  >
-                    Yes
-                  </button>
-                  <button
-                    className="btn btn--xl"
-                    onClick={() => advanceAfter(stateRef.current, 'undergroundAsk')}
-                  >
-                    No
-                  </button>
-                </div>
-              </>
-            )}
-
-            {wizardStep === 'undergroundPick' && (
-              <>
-                <h3 className="turn-wizard__q">Which city goes underground?</h3>
-                <p className="turn-wizard__hint">
-                  This is your one bunker city — only a hydrogen bomb can crack it
-                </p>
-                <div className="turn-wizard__city-grid">
-                  {turn.cities.map((c) => (
-                    <WizardCityCard
-                      key={c.id}
-                      city={c}
-                      blocked={
-                        c.destroyed
-                          ? 'In rubble'
-                          : c.isUnderground
-                            ? 'Already the bunker'
-                            : undefined
-                      }
-                      onPick={() => {
-                        pushFx({ kind: 'buy', label: `${c.name} goes underground` }, 700);
-                        const next = buyUnderground(stateRef.current, c.id, actorId);
-                        setState(next);
-                        advanceAfter(next, 'undergroundPick');
-                      }}
-                    />
-                  ))}
-                </div>
-                <div className="turn-wizard__actions">
-                  <button
-                    className="btn btn--xl"
-                    onClick={() => advanceAfter(stateRef.current, 'undergroundPick')}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </>
-            )}
-
-            {wizardStep === 'rebuildAsk' && (
-              <>
-                <h3 className="turn-wizard__q">Rebuild a burnt city?</h3>
-                <p className="turn-wizard__hint">
-                  ${COSTS.rebuild}M · stands again at half score, comes back bare (no
-                  shield, research, or bunker). Only one automatic last-city rebuild per
-                  match.
-                </p>
-                <div className="turn-wizard__actions">
-                  <button
-                    className="btn btn--xl btn--primary"
-                    onClick={() => {
-                      bumpSelectionActivity();
-                      setWizardStep('rebuildPick');
-                    }}
-                  >
-                    Yes
-                  </button>
-                  <button
-                    className="btn btn--xl"
-                    onClick={() => advanceAfter(stateRef.current, 'rebuildAsk')}
-                  >
-                    No
-                  </button>
-                </div>
-              </>
-            )}
-
-            {wizardStep === 'rebuildPick' && (
-              <>
-                <h3 className="turn-wizard__q">Which city do you rebuild?</h3>
-                <p className="turn-wizard__hint">Construction finishes before the next strikes</p>
-                <div className="turn-wizard__city-grid">
-                  {turn.cities.map((c) => (
-                    <WizardCityCard
-                      key={c.id}
-                      city={c}
-                      blocked={c.destroyed ? undefined : 'Still standing'}
-                      onPick={() => {
-                        pushFx({ kind: 'buy', label: `${c.name} rebuilt` }, 700);
-                        const next = buyRebuild(stateRef.current, c.id, actorId);
-                        setState(next);
-                        advanceAfter(next, 'rebuildPick');
-                      }}
-                    />
-                  ))}
-                </div>
-                <div className="turn-wizard__actions">
-                  <button
-                    className="btn btn--xl"
-                    onClick={() => advanceAfter(stateRef.current, 'rebuildPick')}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </>
-            )}
-
-            {wizardStep === 'shieldAsk' && (
-              <>
-                <h3 className="turn-wizard__q">Do you want to purchase a shield?</h3>
-                <p className="turn-wizard__hint">
-                  {COSTS.shield}M · protects one city · one shield per round
-                </p>
-                <div className="turn-wizard__actions">
-                  <button
-                    className="btn btn--xl btn--primary"
-                    onClick={() => {
-                      bumpSelectionActivity();
-                      setWizardStep('shieldPick');
-                    }}
-                  >
-                    Yes
-                  </button>
-                  <button
-                    className="btn btn--xl"
-                    onClick={() => advanceAfter(stateRef.current, 'shieldAsk')}
-                  >
-                    No
-                  </button>
-                </div>
-              </>
-            )}
-
-            {wizardStep === 'shieldPick' && (
-              <>
-                <h3 className="turn-wizard__q">Select the city for your shield</h3>
-                <p className="turn-wizard__hint">
-                  Stops one warhead, then it is spent — and this is your only install this
-                  round
-                </p>
-                <div className="turn-wizard__city-grid">
-                  {turn.cities.map((c) => (
-                    <WizardCityCard
-                      key={c.id}
-                      city={c}
-                      blocked={
-                        c.destroyed
-                          ? 'In rubble'
-                          : c.isUnderground
-                            ? 'Bunker — safe already'
-                            : c.hasShield
-                              ? 'Already shielded'
-                              : undefined
-                      }
-                      onPick={() => {
-                        pushFx({ kind: 'buy', label: `Shield on ${c.name}` }, 700);
-                        const next = buyShield(stateRef.current, c.id, actorId);
-                        setState(next);
-                        advanceAfter(next, 'shieldPick');
-                      }}
-                    />
-                  ))}
-                </div>
-                <div className="turn-wizard__actions">
-                  <button
-                    className="btn btn--xl"
-                    onClick={() => advanceAfter(stateRef.current, 'shieldPick')}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </>
-            )}
-
-            {wizardStep === 'laserAsk' && (
-              <>
-                <h3 className="turn-wizard__q">Build a laser defence network?</h3>
-                <p className="turn-wizard__hint">
-                  {COSTS.laser}M · one per nation · covers every city ·{' '}
-                  {LASER_INTERCEPTS_PER_ROUND} swarms shot down per round
-                </p>
-                <div className="turn-wizard__actions">
-                  <button
-                    className="btn btn--xl btn--primary"
-                    onClick={() => {
-                      bumpSelectionActivity();
-                      setWizardStep('laserPick');
-                    }}
-                  >
-                    Yes
-                  </button>
-                  <button
-                    className="btn btn--xl"
-                    onClick={() => advanceAfter(stateRef.current, 'laserAsk')}
-                  >
-                    No
-                  </button>
-                </div>
-              </>
-            )}
-
-            {wizardStep === 'spyAsk' && (
-              <>
-                <h3 className="turn-wizard__q">Open a spy service?</h3>
-                <p className="turn-wizard__hint">
-                  {COSTS.spy}M once · shields, research, bunkers and laser networks on every
-                  enemy city, for the rest of the war · the slow way is one drone swarm
-                  per city
-                </p>
-                <div className="turn-wizard__actions">
-                  <button
-                    className="btn btn--xl btn--primary"
-                    onClick={() => {
-                      pushFx({ kind: 'buy', label: 'Spy service opened' }, 700);
-                      const next = buySpyNetwork(stateRef.current, actorId);
-                      setState(next);
-                      advanceAfter(next, 'spyAsk');
-                    }}
-                  >
-                    Yes
-                  </button>
-                  <button
-                    className="btn btn--xl"
-                    onClick={() => advanceAfter(stateRef.current, 'spyAsk')}
-                  >
-                    No
-                  </button>
-                </div>
-              </>
-            )}
-
-            {wizardStep === 'laserPick' && (
-              <>
-                <h3 className="turn-wizard__q">Where do the lasers go?</h3>
-                <p className="turn-wizard__hint">
-                  The network covers all your cities wherever it sits — pick the city you
-                  trust to keep standing, because it burns with the control site
-                </p>
-                <div className="turn-wizard__city-grid">
-                  {turn.cities.map((c) => (
-                    <WizardCityCard
-                      key={c.id}
-                      city={c}
-                      blocked={c.destroyed ? 'In rubble' : undefined}
-                      onPick={() => {
-                        pushFx({ kind: 'buy', label: `Laser network — ${c.name}` }, 700);
-                        const next = buyLaser(stateRef.current, c.id, actorId);
-                        setState(next);
-                        advanceAfter(next, 'laserPick');
-                      }}
-                    />
-                  ))}
-                </div>
-                <div className="turn-wizard__actions">
-                  <button
-                    className="btn btn--xl"
-                    onClick={() => advanceAfter(stateRef.current, 'laserPick')}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </>
-            )}
-
-            {wizardStep === 'sanctionAsk' && (
-              <>
-                <h3 className="turn-wizard__q">Do you want to impose sanctions?</h3>
-                <p className="turn-wizard__hint">
-                  Free · −10% income each · up to {MAX_SANCTIONS} rivals · they will take it
-                  personally
-                </p>
-                <div className="turn-wizard__actions">
-                  <button
-                    className="btn btn--xl btn--primary"
-                    onClick={() => {
-                      bumpSelectionActivity();
-                      setState((s) => markPromptDone(s, actorId, 'sanctionAsk'));
-                      setWizardStep('sanctionPick');
-                    }}
-                  >
-                    Yes
-                  </button>
-                  <button
-                    className="btn btn--xl"
-                    onClick={() => advanceAfter(stateRef.current, 'sanctionAsk')}
-                  >
-                    No
-                  </button>
-                </div>
-              </>
-            )}
-
-            {wizardStep === 'sanctionPick' && (
-              <>
-                <h3 className="turn-wizard__q">Choose rivals to sanction</h3>
-                <p className="turn-wizard__hint">
-                  Tap to toggle · −10% income each · max {MAX_SANCTIONS} at a time ·{' '}
-                  {sanctionsLeft(state, actorId)} slot
-                  {sanctionsLeft(state, actorId) === 1 ? '' : 's'} left
-                </p>
-                <div className="turn-wizard__sanction-grid">
-                  {enemyIds.map((nid) => {
-                    const n = nationDef(nid);
-                    const alive = !state.nations[nid].eliminated;
-                    const active = turn.sanctions.includes(nid);
-                    const full = !active && sanctionsLeft(state, actorId) < 1;
-                    return (
-                      <button
-                        key={nid}
-                        type="button"
-                        className={`turn-wizard__sanction-card ${active ? 'is-on' : ''}`}
-                        disabled={!alive || full}
-                        onClick={() => {
-                          bumpSelectionActivity();
-                          setState((s) => {
-                            const next = touchHumanActivity(
-                              toggleSanction(s, nid, actorId),
-                              actorId,
-                            );
-                            stateRef.current = next;
-                            syncPlanning(next, actorId);
-                            return next;
-                          });
-                        }}
-                      >
-                        <img src={leaderArt(state, nid)} alt="" draggable={false} />
-                        <strong>{n.name}</strong>
-                        <span>
-                          {active
-                            ? 'Sanctioning'
-                            : !alive
-                              ? 'Out'
-                              : full
-                                ? 'No slots left'
-                                : 'Tap to sanction'}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="turn-wizard__actions">
-                  <button
-                    className="btn btn--xl btn--primary"
-                    onClick={() => advanceAfter(stateRef.current, 'sanctionPick')}
-                  >
-                    Done
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
+      {isMyHumanTurn && wizardStep === 'command' && (
+        <CommandDashboard
+          state={state}
+          actorId={actorId}
+          leaderSrc={leaderArt(state, actorId)}
+          playerName={playerDisplayName(state, actorId)}
+          idleSecondsLeft={isOnline ? idleSecondsLeft : null}
+          rivals={enemyIds}
+          rivalArt={(id) => leaderArt(state, id)}
+          onOrder={applyOrder}
+          onProceed={() => advanceAfter(stateRef.current, 'command')}
+        />
       )}
 
       {isMyHumanTurn && wizardStep === 'strike' && (
@@ -3874,6 +3153,13 @@ function GameBoard({
                 )}
               </div>
             )}
+            <button
+              type="button"
+              className="cop-link cop-link--back"
+              onClick={() => setWizardStep('command')}
+            >
+              ← Back to command dashboard
+            </button>
           </div>
         </div>
       )}
@@ -3939,6 +3225,13 @@ function GameBoard({
                 )}
               </div>
             )}
+            <button
+              type="button"
+              className="cop-link cop-link--back"
+              onClick={() => setWizardStep('command')}
+            >
+              ← Back to command dashboard
+            </button>
           </div>
         </div>
       )}
@@ -4131,15 +3424,21 @@ function RoundSummary({
   onContinue: () => void;
   sessionUid?: string | null;
 }) {
-  const endsAt = state.aftermathEndsAt ?? null;
+  const overtimeLeaders = state.round >= state.maxRounds ? tiedForTheLead(state) : [];
+  const goingToOvertime = needsOvertime(state) && overtimeLeaders.length > 1;
+  const isFinal = state.round >= state.maxRounds && !goingToOvertime;
+  // The last board is on screen only after the launch cinema, so it gets its own
+  // fixed hold before the superpower reveal — not whatever is left on the shared clock.
+  const finalDeadlineRef = useRef<number | null>(null);
+  if (isFinal && finalDeadlineRef.current == null) {
+    finalDeadlineRef.current = Date.now() + AFTERMATH_THINK_MS;
+  }
+  const endsAt = isFinal ? finalDeadlineRef.current : (state.aftermathEndsAt ?? null);
   const [secondsLeft, setSecondsLeft] = useState(() =>
     endsAt == null ? null : Math.max(0, Math.ceil((endsAt - Date.now()) / 1000)),
   );
   const continueOnceRef = useRef(false);
 
-  const overtimeLeaders = state.round >= state.maxRounds ? tiedForTheLead(state) : [];
-  const goingToOvertime = needsOvertime(state) && overtimeLeaders.length > 1;
-  const isFinal = state.round >= state.maxRounds && !goingToOvertime;
   // The commander dashboard is the round summary. This board only stays up
   // for the last round, on the way to the final results.
   const skipBoard = !isFinal && endsAt != null;
@@ -4552,9 +3851,6 @@ export default function App() {
   const advancePastAi = useCallback((s: GameState) => runAllAiUntilHumanOrSummary(s), []);
   const appStateRef = useRef(state);
   appStateRef.current = state;
-  // Set while a client is playing the strike cinema, so the published aftermath
-  // doesn't cut the animation short mid-flight.
-  const cinemaHoldRef = useRef<{ round: number; until: number } | null>(null);
   const lastRoundBannerRef = useRef(0);
   const [roundIntro, setRoundIntro] = useState<{
     round: number;
@@ -4568,8 +3864,9 @@ export default function App() {
   const lastDropoutSeqRef = useRef(0);
   const [rematchBusy, setRematchBusy] = useState(false);
   const [rematchError, setRematchError] = useState<string | null>(null);
-  /** Hide RoundSummary while strike cinema / hold veil is up (stops mobile flash). */
-  const [strikeTheaterBusy, setStrikeTheaterBusy] = useState(false);
+  /** Owes the last round its strike cinema — hides everything that would skip past it. */
+  const strikeJob = useStrikeJob(state);
+  const strikeTheaterBusy = strikeJob.pending;
 
   const advanceFromRoundSummary = useCallback(() => {
     const current = appStateRef.current;
@@ -4639,15 +3936,6 @@ export default function App() {
     setRoundIntro({ round: state.round, briefing: buildRoundBriefing(state, myId ?? null) });
   }, [state, sessionUid]);
 
-  /** True while the local strike cinema still owes this round its animation. */
-  const holdsCinema = useCallback((remote: GameState) => {
-    const hold = cinemaHoldRef.current;
-    if (!hold) return false;
-    if (Date.now() > hold.until) return false;
-    // Only block the next round; summary updates for this round are welcome
-    return Number(remote.round) > hold.round;
-  }, []);
-
   const dismissRoundStart = useCallback(() => setRoundIntro(null), []);
   const dismissDropout = useCallback(() => setDropoutNotice(null), []);
 
@@ -4698,8 +3986,6 @@ export default function App() {
         return;
       }
       if (!game.state) return;
-      // Let the launch cinema finish before adopting the aftermath board
-      if (holdsCinema(game.state)) return;
       const myIdNow =
         sessionUid && appStateRef.current.uidToNation?.[sessionUid]
           ? appStateRef.current.uidToNation[sessionUid]
@@ -4720,7 +4006,7 @@ export default function App() {
     });
     // Intentionally omit uidToNation — resolve myId from prev inside the callback
     // so we don't tear down the listener on every nation merge.
-  }, [state.onlineGameId, state.mode, sessionUid, notePublishedDropout, holdsCinema]);
+  }, [state.onlineGameId, state.mode, sessionUid, notePublishedDropout]);
 
   // Safety net: if a snapshot is missed, pull shared state so nobody sits on a dead board
   useEffect(() => {
@@ -4740,7 +4026,6 @@ export default function App() {
       try {
         const doc = await fetchGame(gameId);
         if (!doc?.state || cancelled) return;
-        if (holdsCinema(doc.state)) return;
         const myIdNow =
           sessionUid && appStateRef.current.uidToNation?.[sessionUid]
             ? appStateRef.current.uidToNation[sessionUid]
@@ -4805,7 +4090,6 @@ export default function App() {
     state.round,
     sessionUid,
     notePublishedDropout,
-    holdsCinema,
   ]);
 
   // If nobody armed the aftermath timer (cinema holder dropped), arm it so the table can move
@@ -4901,6 +4185,7 @@ export default function App() {
         }
       />
       {roundIntro &&
+        !strikeTheaterBusy &&
         (roundIntro.briefing ? (
           <RoundBriefingOverlay
             key={`brief-${roundIntro.round}`}
@@ -4997,7 +4282,7 @@ export default function App() {
           state={state}
           setState={setState}
           sessionUid={sessionUid}
-          roundBriefingActive={Boolean(roundIntro)}
+          roundBriefingActive={Boolean(roundIntro) || strikeTheaterBusy}
           onKicked={(message) => {
             if (sessionUid) void setPlayerStatus(sessionUid, 'available', null);
             setSessionError(message);
@@ -5008,8 +4293,7 @@ export default function App() {
       <StrikeTheater
         state={state}
         setState={setState}
-        cinemaHoldRef={cinemaHoldRef}
-        onBusyChange={setStrikeTheaterBusy}
+        job={strikeJob}
       />
       {state.phase === 'roundSummary' && !strikeTheaterBusy && (
         <RoundSummary
@@ -5018,7 +4302,7 @@ export default function App() {
           onContinue={advanceFromRoundSummary}
         />
       )}
-      {state.phase === 'gameOver' && (
+      {state.phase === 'gameOver' && !strikeTheaterBusy && (
         <GameOver
           state={state}
           sessionUid={sessionUid}

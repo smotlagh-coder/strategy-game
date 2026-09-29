@@ -182,6 +182,8 @@ export interface RoundWorldEvent {
   cityId?: string;
   cityName?: string;
   attackerId?: NationId;
+  /** Other nations that also aimed at this city in the round — they share the kill credit */
+  sharedWith?: NationId[];
   /** Drone repair bill, or capital lost when a city / shield is wiped */
   amount?: number;
   /** Rebuild the treasury paid for on its own to keep a wiped-out nation alive */
