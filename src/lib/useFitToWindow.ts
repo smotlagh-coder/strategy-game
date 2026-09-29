@@ -5,7 +5,8 @@ import { useLayoutEffect, useRef } from 'react';
  * scroll. Small windows shrink it; with `maxScale` above 1, roomy windows grow
  * it so text stays readable. The element gets an explicit width (up to
  * `maxWidth`) and a `--fit` scale; layout height is measured with the
- * transform ignored.
+ * transform ignored. `--fit-h` is the window height in the page's own pixels,
+ * for pages that stretch (`min-height: var(--fit-h)`) to use spare height.
  */
 export function useFitToWindow<T extends HTMLElement>(
   maxWidth: number,
@@ -20,8 +21,13 @@ export function useFitToWindow<T extends HTMLElement>(
     const fit = () => {
       const availW = window.innerWidth * 0.98;
       const availH = window.innerHeight * 0.98;
-      // Never grow so far that the layout would have to reflow narrower than this.
-      const cap = Math.max(1, Math.min(maxScale, availW / 760));
+      // Never grow so far that the layout would have to reflow narrower than
+      // this: phones have a purpose-built narrow layout (~320px works), so they
+      // may grow to use spare height; wider windows keep the roomier floor.
+      const minLayoutW = availW < 760 ? 320 : 760;
+      const cap = Math.max(1, Math.min(maxScale, availW / minLayoutW));
+      // Measure the natural height, not one stretched by a previous pass.
+      el.style.setProperty('--fit-h', '0px');
       // Width and height feed each other (a wider page reflows shorter), so
       // there is no closed form: walk down from the largest scale allowed and
       // take the first one whose page, measured at its own width, fits.
@@ -35,6 +41,9 @@ export function useFitToWindow<T extends HTMLElement>(
       }
       el.style.width = `${Math.min(maxWidth, availW / scale)}px`;
       el.style.setProperty('--fit', String(scale));
+      // Whatever height is left over, in the page's own (unscaled) pixels, so
+      // a page can stretch to fill the window instead of floating in it.
+      el.style.setProperty('--fit-h', `${Math.floor(availH / scale)}px`);
     };
     fit();
     const ro = new ResizeObserver(fit);

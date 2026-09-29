@@ -1212,7 +1212,7 @@ function RoundBriefingOverlay({
   }, []);
 
   // The briefing is one page: shrink it to the window instead of ever scrolling.
-  const fitRef = useFitToWindow<HTMLDivElement>(1400, 0.45, true, 1.5);
+  const fitRef = useFitToWindow<HTMLDivElement>(2000, 0.35, true, 1.5);
 
   const me = nationDef(briefing.nationId);
 

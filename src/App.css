@@ -7874,3 +7874,25 @@ img { max-width: 100%; display: block; }
 
 /* Room to spare on the command map: bigger icons along each wedge */
 .cop-pie__icon { width: 13%; }
+
+/* ---------- Briefing fills the window: spare height goes to the world table ---------- */
+.brief__fit { min-height: var(--fit-h, 0); display: flex; flex-direction: column; container: brief / inline-size; }
+.brief__fit .round-brief__panel { flex: 1 1 auto; }
+.brief__fit .brief__grid { flex: 1 1 auto; grid-template-rows: auto minmax(0, 1fr); }
+.brief__card--world { display: flex; flex-direction: column; }
+.brief__card--world .dash__world { flex: 1 1 auto; grid-auto-rows: minmax(min-content, 1fr); }
+.brief__card--world .dash__nation { grid-template-rows: auto minmax(0, 1fr); }
+.brief__card--world .dash__nation-cities { align-items: stretch; }
+.brief__card--world .dash__city { flex: 1; }
+.brief__card--world .dash__city-art { flex: 1 1 auto; min-height: 0; }
+
+/* Phones: the page is laid out wide and scaled down, so use that width —
+   two nations abreast and the advisor's orders in two columns */
+@media (max-width: 900px) {
+  .brief__card--world .dash__world,
+  .brief__card--world .dash__world.is-many { grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
+}
+@container brief (min-width: 600px) {
+  .brief__card--advisor .brief__orders { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.dash__city .dash__arrow { width: max-content; max-width: 100%; }
