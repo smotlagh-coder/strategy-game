@@ -93,6 +93,7 @@ import {
   SELECTION_IDLE_MS,
   STRIKE_CINEMA_MS,
   TARGET_CONFIRM_MS,
+  PURCHASE_WINDOW_MS,
 } from './lib/onlineConstants';
 import { aftermathMyCityIds, aftermathWorldIds } from './lib/lobbyInvite';
 import { NameGate } from './screens/NameGate';
@@ -2309,6 +2310,23 @@ function canOfferDroneStrike(state: GameState, actorId: NationId): boolean {
   return state.nations[actorId].drones > 0;
 }
 
+/** Back to the command map while the purchasing window is still open. */
+function BackToCommand({ deadline, onBack }: { deadline: number; onBack: () => void }) {
+  const [open, setOpen] = useState(() => Date.now() < deadline);
+  useEffect(() => {
+    const check = () => setOpen(Date.now() < deadline);
+    check();
+    const t = window.setInterval(check, 500);
+    return () => window.clearInterval(t);
+  }, [deadline]);
+  if (!open) return null;
+  return (
+    <button type="button" className="cop-link cop-link--back" onClick={onBack}>
+      ← Back to command map
+    </button>
+  );
+}
+
 /**
  * Turn flow: the command dashboard (every purchase, on one screen), then the
  * warhead targets, then the drone targets. Null once nothing is left to aim.
@@ -2358,6 +2376,8 @@ function GameBoard({
   >([]);
   const [strikeWeapon, setStrikeWeapon] = useState<WarheadKind>('nuke');
   const [wizardStep, setWizardStep] = useState<WizardStep | null>(null);
+  /** When the timed purchasing window on the command map closes. */
+  const [purchaseDeadline, setPurchaseDeadline] = useState(0);
   const [fx, setFx] = useState<FxEvent[]>([]);
   const [busy, setBusy] = useState(false);
   const [idleSecondsLeft, setIdleSecondsLeft] = useState<number | null>(null);
@@ -2572,6 +2592,7 @@ function GameBoard({
     setIdleSecondsLeft(Math.ceil(SELECTION_IDLE_MS / 1000));
     setTargets([]);
     setDroneTargets([]);
+    setPurchaseDeadline(Date.now() + PURCHASE_WINDOW_MS);
     setWizardStep('command');
   }, [isMyHumanTurn, actorId, state.round, roundBriefingActive]);
 
@@ -3061,7 +3082,10 @@ function GameBoard({
           actorId={actorId}
           leaderSrc={leaderArt(state, actorId)}
           playerName={playerDisplayName(state, actorId)}
-          idleSecondsLeft={isOnline ? idleSecondsLeft : null}
+          deadline={purchaseDeadline}
+          othersPending={
+            isOnline ? waitingHumans.filter((id) => id !== actorId).length : null
+          }
           rivals={enemyIds}
           rivalArt={(id) => leaderArt(state, id)}
           onOrder={applyOrder}
@@ -3153,13 +3177,7 @@ function GameBoard({
                 )}
               </div>
             )}
-            <button
-              type="button"
-              className="cop-link cop-link--back"
-              onClick={() => setWizardStep('command')}
-            >
-              ← Back to command dashboard
-            </button>
+            <BackToCommand deadline={purchaseDeadline} onBack={() => setWizardStep('command')} />
           </div>
         </div>
       )}
@@ -3225,13 +3243,7 @@ function GameBoard({
                 )}
               </div>
             )}
-            <button
-              type="button"
-              className="cop-link cop-link--back"
-              onClick={() => setWizardStep('command')}
-            >
-              ← Back to command dashboard
-            </button>
+            <BackToCommand deadline={purchaseDeadline} onBack={() => setWizardStep('command')} />
           </div>
         </div>
       )}

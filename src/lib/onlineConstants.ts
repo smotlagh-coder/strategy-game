@@ -30,6 +30,13 @@ export const ROUND_BANNER_MS = 3_000;
 export const ROUND_BRIEFING_MS = 15_000;
 
 /**
+ * The whole purchasing period on the command map. When it runs out the player
+ * moves on with what they bought; when every commander has locked in, play
+ * continues at once.
+ */
+export const PURCHASE_WINDOW_MS = 30_000;
+
+/**
  * After every warhead or drone pack has a city, hold this long on Lock Targets /
  * Send Drones so the player can retarget. A new city tap restarts the clock.
  */
