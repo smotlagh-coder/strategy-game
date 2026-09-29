@@ -15,36 +15,37 @@ import {
   nationDef,
 } from '../data/nations';
 import {
-  buyAerospaceTech,
-  buyBombs,
-  buyDrones,
-  buyHydrogenBomb,
-  buyLaser,
-  buyMagneticBombs,
-  buyNuclearTech,
   buyRebuild,
   buyResearch,
   buyShield,
   buySpyNetwork,
   buyUnderground,
-  canBuyBombs,
-  canBuyDrones,
-  canBuyLaser,
   canBuyRebuild,
   canBuyResearch,
   canBuyShield,
   canBuySpyNetwork,
   canBuyUnderground,
   formatMoney,
-  maxBombsPurchasable,
-  maxDronesPurchasable,
-  maxHydrogenPurchasable,
-  maxMagneticPurchasable,
   sanctionsLeft,
   toggleSanction,
   totalWarheads,
 } from '../game/engine';
-import { findDefenceOrders, findOffenceOrders } from '../game/briefing';
+import { findDefenceOrders, findIntelAdvice, findOffenceOrders } from '../game/briefing';
+import {
+  aerospaceBundleCost,
+  ballisticBundleCost,
+  buyBombsBundled,
+  buyDronesBundled,
+  buyHydrogenBundled,
+  buyLaserBundled,
+  buyMagneticBundled,
+  canBuyLaserBundled,
+  isTreasuryLow,
+  maxBombsBundled,
+  maxDronesBundled,
+  maxHydrogenBundled,
+  maxMagneticBundled,
+} from '../game/bundles';
 import type { BriefingOrderIcon } from '../game/briefing';
 import { PURCHASE_WINDOW_MS } from '../lib/onlineConstants';
 import { useFitToWindow } from '../lib/useFitToWindow';
@@ -52,6 +53,9 @@ import type { City, GameState, NationId } from '../types';
 
 type CityPick = 'research' | 'underground' | 'rebuild' | 'shield' | 'laser';
 type CardStatus = 'ready' | 'owned' | 'locked' | 'poor' | 'idle';
+
+/** How long the low-treasury notice shows before the turn moves on. */
+const LOW_TREASURY_NOTICE_MS = 3000;
 
 const cash = (amount: number) => `$${formatMoney(amount)}`;
 
@@ -313,6 +317,10 @@ function CopCard({
   advised,
   children,
   detail,
+  onPress,
+  locked,
+  active,
+  cta,
 }: {
   art: string;
   name: string;
@@ -322,9 +330,39 @@ function CopCard({
   advised?: boolean;
   detail: ReactNode;
   children?: ReactNode;
+  /** Cards without quantities are one big button: tapping anywhere buys. */
+  onPress?: () => void;
+  /** Nothing to buy here right now: the whole card greys out. */
+  locked?: boolean;
+  /** This card is waiting for a city to be picked. */
+  active?: boolean;
+  /** What tapping does (or why it cannot), shown where the button used to be. */
+  cta?: ReactNode;
 }) {
+  const tap = onPress != null;
+  const press = () => {
+    if (tap && !locked) onPress();
+  };
   return (
-    <article className={`cop-card is-${status}${advised ? ' is-advised' : ''}`}>
+    <article
+      className={`cop-card is-${status}${advised ? ' is-advised' : ''}${tap ? ' cop-card--tap' : ''}${
+        tap && locked ? ' is-off' : ''
+      }${active ? ' is-active' : ''}`}
+      {...(tap
+        ? {
+            role: 'button',
+            tabIndex: locked ? -1 : 0,
+            'aria-disabled': locked ? true : undefined,
+            onClick: press,
+            onKeyDown: (e: React.KeyboardEvent) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                press();
+              }
+            },
+          }
+        : {})}
+    >
       <img className="cop-card__art" src={art} alt="" draggable={false} />
       <div className="cop-card__body">
         <h4>
@@ -342,7 +380,10 @@ function CopCard({
           {price}
           {priceNote && <small>{priceNote}</small>}
         </span>
-        <div className="cop-card__actions">{children}</div>
+        <div className="cop-card__actions">
+          {children}
+          {tap && cta != null && <span className="cop-card__cta">{cta}</span>}
+        </div>
       </div>
     </article>
   );
@@ -380,7 +421,8 @@ export function CommandDashboard({
 }) {
   const [pick, setPick] = useState<CityPick | null>(null);
   const [view, setView] = useState<View>('hub');
-  const fitRef = useFitToWindow<HTMLDivElement>(1120, 0.45, view !== 'hub');
+  // Roomy windows (iPad landscape, desktop) grow the page so it reads at a glance
+  const fitRef = useFitToWindow<HTMLDivElement>(1120, 0.45, view !== 'hub', 1.7);
   const me = state.nations[actorId];
   const openView = (next: View) => {
     setPick(null);
@@ -393,6 +435,15 @@ export function CommandDashboard({
   pickRef.current = pick;
   const proceedRef = useRef(onProceed);
   proceedRef.current = onProceed;
+  // However it is triggered (timer, low treasury, the button) the turn moves on once
+  const proceededRef = useRef(false);
+  const proceed = () => {
+    if (proceededRef.current) return;
+    proceededRef.current = true;
+    proceedRef.current();
+  };
+  const proceedNowRef = useRef(proceed);
+  proceedNowRef.current = proceed;
   useEffect(() => {
     let fired = false;
     const check = () => {
@@ -400,7 +451,7 @@ export function CommandDashboard({
       setMsLeft(Math.max(0, left));
       if (left <= 0 && !fired) {
         fired = true;
-        proceedRef.current();
+        proceedNowRef.current();
       }
     };
     check();
@@ -414,6 +465,23 @@ export function CommandDashboard({
     };
   }, [deadline]);
   const secondsLeft = Math.ceil(msLeft / 1000);
+
+  // Nothing left to buy with what is in the treasury: say so for a moment, then move on.
+  const lowTreasury = isTreasuryLow(state, actorId);
+  const [lowUntil, setLowUntil] = useState<number | null>(null);
+  useEffect(() => {
+    if (!lowTreasury) {
+      setLowUntil(null);
+      return;
+    }
+    setLowUntil((prev) => prev ?? Date.now() + LOW_TREASURY_NOTICE_MS);
+  }, [lowTreasury]);
+  useEffect(() => {
+    if (lowUntil == null) return;
+    const wait = Math.max(0, lowUntil - Date.now());
+    const t = window.setTimeout(() => proceedNowRef.current(), wait);
+    return () => window.clearTimeout(t);
+  }, [lowUntil]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -438,14 +506,30 @@ export function CommandDashboard({
   }
   const advisedDefence = new Set(defenceOrders.map((o) => o.icon));
   const advisedOffence = new Set(offenceOrders.map((o) => o.icon));
+  const intelAdvice = useMemo(
+    () => findIntelAdvice(state, actorId, defenceOrders, offenceOrders),
+    [state, actorId, defenceOrders, offenceOrders],
+  );
+  const advisedIntel = new Set(intelAdvice.map((a) => a.kind));
+  const advisedSanction = intelAdvice.find((a) => a.kind === 'sanction')?.nationId ?? null;
 
   const warheads = totalWarheads(me);
-  const bombMax = maxBombsPurchasable(state, actorId);
-  const hydrogenMax = maxHydrogenPurchasable(state, actorId);
-  const magneticMax = maxMagneticPurchasable(state, actorId);
-  const droneMax = maxDronesPurchasable(state, actorId);
-  const armed = canBuyBombs(state, actorId);
-  const droneReady = canBuyDrones(state, actorId);
+  // Tech is bundled into the first warhead / drone pack / laser, so it is never a card of its own
+  const bombMax = maxBombsBundled(state, actorId);
+  const hydrogenMax = maxHydrogenBundled(state, actorId);
+  const magneticMax = maxMagneticBundled(state, actorId);
+  const droneMax = maxDronesBundled(state, actorId);
+  const ballisticExtra = ballisticBundleCost(state, actorId);
+  const aerospaceExtra = aerospaceBundleCost(state, actorId);
+  const ballisticNote = ballisticExtra > 0 ? ` · +${cash(ballisticExtra)} tech, once` : '';
+  const ballisticDetail =
+    ballisticExtra > 0
+      ? `First one also unlocks Ballistic Missile Tech (${cash(ballisticExtra)}, once). `
+      : '';
+  const aerospaceDetail =
+    aerospaceExtra > 0
+      ? `First one also unlocks Aerospace Tech (${cash(aerospaceExtra)}, once). `
+      : '';
   const rubble = me.cities.filter((c) => c.destroyed).length;
   const hasBunker = me.cities.some((c) => c.isUnderground && !c.destroyed);
   const hasLaserNet = me.cities.some((c) => c.hasLaser && !c.destroyed);
@@ -456,8 +540,35 @@ export function CommandDashboard({
     underground: canBuyUnderground(state, actorId),
     rebuild: canBuyRebuild(state, actorId),
     shield: canBuyShield(state, actorId),
-    laser: canBuyLaser(state, actorId),
+    laser: canBuyLaserBundled(state, actorId),
   };
+
+  // A page with nothing left to buy sends the player back to the command map so
+  // there is no Back button to hunt for. Sanctions are free and always
+  // reachable from their wedge, so they do not keep the Intel page open.
+  const pageEmpty: Record<Exclude<View, 'hub'>, boolean> = {
+    offence: bombMax + hydrogenMax + magneticMax + droneMax === 0,
+    defence: !pickable.underground && !pickable.rebuild && !pickable.shield && !pickable.laser,
+    finance: !pickable.research && !canBuySpyNetwork(state, actorId),
+  };
+  const emptyHere = view !== 'hub' && pageEmpty[view];
+  const viewSeenRef = useRef<View>('hub');
+  const enteredEmptyRef = useRef(false);
+  useEffect(() => {
+    if (view === 'hub') {
+      viewSeenRef.current = 'hub';
+      return;
+    }
+    // Opening a page that is already spent is the player's choice: leave it be.
+    if (viewSeenRef.current !== view) {
+      viewSeenRef.current = view;
+      enteredEmptyRef.current = emptyHere;
+    }
+    if (!emptyHere || enteredEmptyRef.current || lowTreasury || pick) return;
+    // Short beat so the last purchase visibly lands before the page closes
+    const t = window.setTimeout(() => setView('hub'), 700);
+    return () => window.clearTimeout(t);
+  }, [view, emptyHere, lowTreasury, pick]);
 
   const buyInto = (city: City) => {
     if (!pick) return;
@@ -471,24 +582,26 @@ export function CommandDashboard({
     if (kind === 'rebuild') onOrder((s) => buyRebuild(s, city.id, actorId), `${city.name} rebuilt`);
     if (kind === 'shield') onOrder((s) => buyShield(s, city.id, actorId), `Shield on ${city.name}`);
     if (kind === 'laser') {
-      onOrder((s) => buyLaser(s, city.id, actorId), `Laser network — ${city.name}`);
+      onOrder((s) => buyLaserBundled(s, city.id, actorId), `Laser network — ${city.name}`);
     }
   };
 
-  /** A button that opens the city strip for one purchase. */
-  const cityButton = (kind: CityPick, label: string) => {
-    const cost = PICK_COST[kind];
-    const affordable = canPay(cost);
-    return (
-      <button
-        type="button"
-        className={`cop-btn${pick === kind ? ' is-active' : ''}`}
-        disabled={!pickable[kind]}
-        onClick={() => setPick(pick === kind ? null : kind)}
-      >
-        {!affordable ? `Need ${cash(need(cost))}` : pick === kind ? 'Pick a city ↑' : label}
-      </button>
-    );
+  /** Tapping the whole card opens the city strip for one purchase. */
+  const cityTap = (kind: CityPick, label: string) => {
+    const cost = pickCost(kind);
+    const locked = !pickable[kind];
+    return {
+      onPress: () => setPick(pick === kind ? null : kind),
+      locked,
+      active: pick === kind,
+      cta: !canPay(cost)
+        ? `Need ${cash(need(cost))}`
+        : locked
+          ? 'Unavailable'
+          : pick === kind
+            ? 'Pick a city ↑'
+            : label,
+    };
   };
 
   const qtyButtons = (counts: readonly number[], max: number, buy: (n: number) => void) =>
@@ -505,15 +618,15 @@ export function CommandDashboard({
       </button>
     ));
 
-  const techStatus = (owned: boolean, cost: number): CardStatus =>
-    owned ? 'owned' : canPay(cost) ? 'ready' : 'poor';
+  /** A laser network's price includes Aerospace Tech until the nation owns it. */
+  const pickCost = (kind: CityPick) => PICK_COST[kind] + (kind === 'laser' ? aerospaceExtra : 0);
 
   const citiesStrip = (
     <div className={`cop-cities${pick ? ' is-picking' : ''}`} aria-label="Your cities">
       {pick && (
         <p className="cop-cities__prompt">
           <b>
-            {PICK_TITLE[pick]} · {cash(PICK_COST[pick])}
+            {PICK_TITLE[pick]} · {cash(pickCost(pick))}
           </b>{' '}
           — tap a city
           {pick === 'underground' ? ' (this is your one bunker; a shield on it is scrapped)' : ''}
@@ -602,12 +715,6 @@ export function CommandDashboard({
       advised: advisedOffence.size > 0,
       icons: [
         {
-          key: 'ballistic',
-          art: ART.cop.ballisticTech,
-          label: 'Ballistic Missile Tech',
-          lit: me.hasNuclearTech,
-        },
-        {
           key: 'nuke',
           art: ART.missile,
           label: 'Nuclear warheads',
@@ -627,12 +734,6 @@ export function CommandDashboard({
           label: 'Hydrogen bomb',
           lit: (me.hydrogenBombs ?? 0) > 0,
           count: me.hydrogenBombs ?? 0,
-        },
-        {
-          key: 'aerospace',
-          art: ART.cop.aerospaceTech,
-          label: 'Aerospace Tech',
-          lit: me.hasAerospaceTech,
         },
         {
           key: 'drone',
@@ -676,7 +777,7 @@ export function CommandDashboard({
       id: 'finance',
       title: 'Finance & Intel',
       center: 150,
-      advised: false,
+      advised: intelAdvice.length > 0,
       icons: [
         {
           key: 'research',
@@ -770,7 +871,7 @@ export function CommandDashboard({
             <button
               type="button"
               className={`cop-target${hasStrike ? '' : ' is-lock'}`}
-              onClick={onProceed}
+              onClick={proceed}
               aria-label={hasStrike ? 'Choose targets' : 'Lock orders'}
             >
               <span className="cop-target__disc">
@@ -814,125 +915,48 @@ export function CommandDashboard({
               {view === 'offence' && (
                 <section className="cop__page cop__page--offence" aria-label="Offence">
                   <CopCard
-                    art={ART.cop.ballisticTech}
-                    name="Ballistic Missile Tech"
-                    price={cash(COSTS.ballisticMissileTech)}
-                    priceNote="once"
-                    status={techStatus(me.hasNuclearTech, COSTS.ballisticMissileTech)}
-                    detail={
-                      me.hasNuclearTech
-                        ? 'Unlocked — warheads are open'
-                        : 'Unlocks warheads right away'
-                    }
-                  >
-                    {me.hasNuclearTech ? (
-                      <span className="cop-owned">✓ Owned</span>
-                    ) : (
-                      <button
-                        type="button"
-                        className="cop-btn"
-                        disabled={!canPay(COSTS.ballisticMissileTech)}
-                        onClick={() =>
-                          onOrder(
-                            (s) => buyNuclearTech(s, actorId),
-                            'Ballistic Missile Tech Unlocked!',
-                          )
-                        }
-                      >
-                        {canPay(COSTS.ballisticMissileTech)
-                          ? 'Buy'
-                          : `Need ${cash(need(COSTS.ballisticMissileTech))}`}
-                      </button>
-                    )}
-                  </CopCard>
-
-                  <CopCard
                     art={ART.missile}
                     name="Nuclear warheads"
                     price={cash(COSTS.bomb)}
-                    priceNote="each"
-                    status={!armed ? 'locked' : bombMax > 0 ? 'ready' : 'poor'}
+                    priceNote={`each${ballisticNote}`}
+                    status={bombMax > 0 ? 'ready' : 'poor'}
                     advised={advisedOffence.has('nuke')}
-                    detail={
-                      armed
-                        ? `In stock ${me.bombs} · ${MAX_BOMBS_PER_ROUND - me.bombsBoughtThisRound} more this round. Stops at shields without a swarm; breaks on bunkers.`
-                        : 'Needs Ballistic Missile Tech'
-                    }
+                    detail={`${ballisticDetail}In stock ${me.bombs} · ${MAX_BOMBS_PER_ROUND - me.bombsBoughtThisRound} more this round. Stops at shields without a swarm; breaks on bunkers.`}
                   >
-                    {armed &&
-                      qtyButtons([1, 2, 3], bombMax, (n) =>
-                        onOrder((s) => buyBombs(s, n, actorId), `+${n} Nuclear`),
-                      )}
+                    {qtyButtons([1, 2, 3], bombMax, (n) =>
+                      onOrder((s) => buyBombsBundled(s, n, actorId), `+${n} Nuclear`),
+                    )}
                   </CopCard>
 
                   <CopCard
                     art={ART.missileMagnetic}
                     name="Magnetic bombs"
                     price={cash(COSTS.bombMagnetic)}
-                    priceNote="each"
-                    status={!armed ? 'locked' : magneticMax > 0 ? 'ready' : 'poor'}
+                    priceNote={`each${ballisticNote}`}
+                    status={magneticMax > 0 ? 'ready' : 'poor'}
                     advised={advisedOffence.has('magnetic')}
-                    detail={
-                      armed
-                        ? `Kills laser networks so swarms get through · ${
-                            MAX_MAGNETIC_PER_GAME - (me.magneticBought ?? 0)
-                          } left in the game · stock ${me.magneticBombs ?? 0}`
-                        : 'Needs Ballistic Missile Tech'
-                    }
+                    detail={`${ballisticDetail}Kills laser networks so swarms get through · ${
+                      MAX_MAGNETIC_PER_GAME - (me.magneticBought ?? 0)
+                    } left in the game · stock ${me.magneticBombs ?? 0}`}
                   >
-                    {armed &&
-                      qtyButtons([1, 2], magneticMax, (n) =>
-                        onOrder((s) => buyMagneticBombs(s, n, actorId), `+${n} Magnetic`),
-                      )}
+                    {qtyButtons([1, 2], magneticMax, (n) =>
+                      onOrder((s) => buyMagneticBundled(s, n, actorId), `+${n} Magnetic`),
+                    )}
                   </CopCard>
 
                   <CopCard
                     art={ART.missileHydrogen}
                     name="Hydrogen bomb"
                     price={cash(COSTS.bombHydrogen)}
-                    status={!armed ? 'locked' : hydrogenMax > 0 ? 'ready' : 'poor'}
+                    priceNote={ballisticExtra > 0 ? `${ballisticNote.slice(3)}` : undefined}
+                    status={hydrogenMax > 0 ? 'ready' : 'poor'}
                     advised={advisedOffence.has('hydrogen')}
-                    detail={
-                      armed
-                        ? `Cracks bunkers and ignores shields · ${
-                            MAX_HYDROGEN_PER_GAME - (me.hydrogenBought ?? 0)
-                          } left in the game · stock ${me.hydrogenBombs ?? 0}`
-                        : 'Needs Ballistic Missile Tech'
-                    }
+                    detail={`${ballisticDetail}Cracks bunkers and ignores shields · ${
+                      MAX_HYDROGEN_PER_GAME - (me.hydrogenBought ?? 0)
+                    } left in the game · stock ${me.hydrogenBombs ?? 0}`}
                   >
-                    {armed &&
-                      qtyButtons([1], hydrogenMax, () =>
-                        onOrder((s) => buyHydrogenBomb(s, actorId), '+1 Hydrogen'),
-                      )}
-                  </CopCard>
-
-                  <CopCard
-                    art={ART.cop.aerospaceTech}
-                    name="Aerospace Tech"
-                    price={cash(COSTS.aerospaceTech)}
-                    priceNote="once"
-                    status={techStatus(me.hasAerospaceTech, COSTS.aerospaceTech)}
-                    detail={
-                      me.hasAerospaceTech
-                        ? 'Unlocked — drones and laser defences are open'
-                        : 'Unlocks drone packs and laser defences'
-                    }
-                  >
-                    {me.hasAerospaceTech ? (
-                      <span className="cop-owned">✓ Owned</span>
-                    ) : (
-                      <button
-                        type="button"
-                        className="cop-btn"
-                        disabled={!canPay(COSTS.aerospaceTech)}
-                        onClick={() =>
-                          onOrder((s) => buyAerospaceTech(s, actorId), 'Aerospace Tech Unlocked!')
-                        }
-                      >
-                        {canPay(COSTS.aerospaceTech)
-                          ? 'Buy'
-                          : `Need ${cash(need(COSTS.aerospaceTech))}`}
-                      </button>
+                    {qtyButtons([1], hydrogenMax, () =>
+                      onOrder((s) => buyHydrogenBundled(s, actorId), '+1 Hydrogen'),
                     )}
                   </CopCard>
 
@@ -940,22 +964,17 @@ export function CommandDashboard({
                     art={ART.cop.drone}
                     name="Drone packs"
                     price={cash(COSTS.drone)}
-                    priceNote="each"
-                    status={!droneReady ? 'locked' : droneMax > 0 ? 'ready' : 'poor'}
+                    priceNote={`each${aerospaceExtra > 0 ? ` · +${cash(aerospaceExtra)} tech, once` : ''}`}
+                    status={droneMax > 0 ? 'ready' : 'poor'}
                     advised={advisedOffence.has('drone')}
-                    detail={
-                      droneReady
-                        ? `In stock ${me.drones} · up to ${MAX_DRONES_PER_ROUND - me.dronesBoughtThisRound} more. Bills a city ${cash(DRONE_DAMAGE)} and keeps its shield busy.`
-                        : 'Needs Aerospace Tech'
-                    }
+                    detail={`${aerospaceDetail}In stock ${me.drones} · up to ${MAX_DRONES_PER_ROUND - me.dronesBoughtThisRound} more. Bills a city ${cash(DRONE_DAMAGE)} and keeps its shield busy.`}
                   >
-                    {droneReady &&
-                      qtyButtons([1, 2, 3], droneMax, (n) =>
-                        onOrder(
-                          (s) => buyDrones(s, n, actorId),
-                          `+${n} Drone Pack${n > 1 ? 's' : ''}`,
-                        ),
-                      )}
+                    {qtyButtons([1, 2, 3], droneMax, (n) =>
+                      onOrder(
+                        (s) => buyDronesBundled(s, n, actorId),
+                        `+${n} Drone Pack${n > 1 ? 's' : ''}`,
+                      ),
+                    )}
                   </CopCard>
                 </section>
               )}
@@ -967,6 +986,7 @@ export function CommandDashboard({
                     art={ART.cop.shield}
                     name="Shield"
                     price={cash(COSTS.shield)}
+                    {...cityTap('shield', 'Tap to place')}
                     priceNote={`${MAX_SHIELDS_PER_ROUND}/round`}
                     status={pickable.shield ? 'ready' : canPay(COSTS.shield) ? 'idle' : 'poor'}
                     advised={advisedDefence.has('shield')}
@@ -976,13 +996,15 @@ export function CommandDashboard({
                         : 'Absorbs one warhead, then it is spent. Not needed on a bunker.'
                     }
                   >
-                    {cityButton('shield', 'Place')}
                   </CopCard>
 
                   <CopCard
                     art={ART.cop.bunker}
                     name="Bunker"
                     price={cash(COSTS.underground)}
+                    {...(hasBunker
+                      ? { onPress: () => undefined, locked: true, cta: '✓ Dug in' }
+                      : cityTap('underground', 'Tap to place'))}
                     priceNote="1/game"
                     status={hasBunker ? 'owned' : pickable.underground ? 'ready' : 'poor'}
                     advised={advisedDefence.has('bunker')}
@@ -992,47 +1014,33 @@ export function CommandDashboard({
                         : `One city, for the whole match: nukes cannot destroy it. Drones still cost it ${cash(DRONE_DAMAGE / 2)}.`
                     }
                   >
-                    {hasBunker ? (
-                      <span className="cop-owned">✓ Dug in</span>
-                    ) : (
-                      cityButton('underground', 'Place')
-                    )}
                   </CopCard>
 
                   <CopCard
                     art={ART.cop.laser}
                     name="Laser network"
                     price={cash(COSTS.laser)}
-                    priceNote="1/nation"
-                    status={
-                      !me.hasAerospaceTech
-                        ? 'locked'
-                        : hasLaserNet
-                          ? 'owned'
-                          : pickable.laser
-                            ? 'ready'
-                            : 'poor'
-                    }
+                    {...(hasLaserNet
+                      ? { onPress: () => undefined, locked: true, cta: '✓ Online' }
+                      : cityTap('laser', 'Tap to place'))}
+                    priceNote={`1/nation${aerospaceExtra > 0 ? ` · +${cash(aerospaceExtra)} tech, once` : ''}`}
+                    status={hasLaserNet ? 'owned' : pickable.laser ? 'ready' : 'poor'}
                     advised={advisedDefence.has('laser')}
                     detail={
-                      !me.hasAerospaceTech
-                        ? 'Needs Aerospace Tech'
-                        : hasLaserNet
-                          ? 'Covering every city — burns with its control site'
-                          : `Covers every city · shoots down ${LASER_INTERCEPTS_PER_ROUND} swarms a round. A magnetic bomb darkens it.`
+                      hasLaserNet
+                        ? 'Covering every city — burns with its control site'
+                        : `${aerospaceDetail}Covers every city · shoots down ${LASER_INTERCEPTS_PER_ROUND} swarms a round. A magnetic bomb darkens it.`
                     }
                   >
-                    {!me.hasAerospaceTech ? null : hasLaserNet ? (
-                      <span className="cop-owned">✓ Online</span>
-                    ) : (
-                      cityButton('laser', 'Place')
-                    )}
                   </CopCard>
 
                   <CopCard
                     art={ART.cop.rebuild}
                     name="Rebuild"
                     price={cash(COSTS.rebuild)}
+                    {...(rubble === 0
+                      ? { onPress: () => undefined, locked: true, cta: 'All standing' }
+                      : cityTap('rebuild', 'Tap to rebuild'))}
                     status={rubble === 0 ? 'idle' : pickable.rebuild ? 'ready' : 'poor'}
                     advised={advisedDefence.has('rebuild')}
                     detail={
@@ -1041,11 +1049,6 @@ export function CommandDashboard({
                         : `${rubble} ${rubble === 1 ? 'city' : 'cities'} in ruins. Stands again at half score, bare of upgrades.`
                     }
                   >
-                    {rubble === 0 ? (
-                      <span className="cop-owned">All standing</span>
-                    ) : (
-                      cityButton('rebuild', 'Rebuild')
-                    )}
                   </CopCard>
                 </section>
               )}
@@ -1059,17 +1062,27 @@ export function CommandDashboard({
                   <CopCard
                     art={ART.cop.research}
                     name="Research Center"
+                    advised={advisedIntel.has('research')}
                     price={cash(COSTS.research)}
+                    {...cityTap('research', 'Tap to build')}
                     status={pickable.research ? 'ready' : canPay(COSTS.research) ? 'idle' : 'poor'}
                     detail={`That city earns +${cash(RESEARCH_INCOME)} every round while it stands. Burns with the city.`}
-                  >
-                    {cityButton('research', 'Build')}
-                  </CopCard>
+                  />
                   <CopCard
                     art={ART.cop.spy}
                     name="Spy service"
+                    advised={advisedIntel.has('spy')}
                     price={cash(COSTS.spy)}
                     priceNote="once"
+                    onPress={() => onOrder((s) => buySpyNetwork(s, actorId), 'Spy service opened')}
+                    locked={!canBuySpyNetwork(state, actorId)}
+                    cta={
+                      me.hasSpyNetwork
+                        ? '✓ Active'
+                        : canPay(COSTS.spy)
+                          ? 'Tap to buy'
+                          : `Need ${cash(need(COSTS.spy))}`
+                    }
                     status={me.hasSpyNetwork ? 'owned' : canPay(COSTS.spy) ? 'ready' : 'poor'}
                     detail={
                       me.hasSpyNetwork
@@ -1077,23 +1090,11 @@ export function CommandDashboard({
                         : 'Shields, bunkers, labs and lasers on every enemy city'
                     }
                   >
-                    {me.hasSpyNetwork ? (
-                      <span className="cop-owned">✓ Active</span>
-                    ) : (
-                      <button
-                        type="button"
-                        className="cop-btn"
-                        disabled={!canBuySpyNetwork(state, actorId)}
-                        onClick={() =>
-                          onOrder((s) => buySpyNetwork(s, actorId), 'Spy service opened')
-                        }
-                      >
-                        {canPay(COSTS.spy) ? 'Buy' : `Need ${cash(need(COSTS.spy))}`}
-                      </button>
-                    )}
                   </CopCard>
 
-                  <article className="cop-card is-ready cop-card--sanction">
+                  <article
+                    className={`cop-card is-ready cop-card--sanction${advisedIntel.has('sanction') ? ' is-advised' : ''}`}
+                  >
                     <img
                       className="cop-card__art"
                       src={ART.cop.sanction}
@@ -1101,7 +1102,14 @@ export function CommandDashboard({
                       draggable={false}
                     />
                     <div className="cop-card__body">
-                      <h4>Sanctions</h4>
+                      <h4>
+                        Sanctions
+                        {advisedIntel.has('sanction') && (
+                          <span className="cop-card__star" title="Your advisor recommends this">
+                            ★ Advisor
+                          </span>
+                        )}
+                      </h4>
                       <p>
                         −10% of their income each · up to {MAX_SANCTIONS} rivals · {slotsLeft} slot
                         {slotsLeft === 1 ? '' : 's'} left. They will take it personally.
@@ -1115,7 +1123,7 @@ export function CommandDashboard({
                             <button
                               key={id}
                               type="button"
-                              className={`cop-sanction${on ? ' is-on' : ''}`}
+                              className={`cop-sanction${on ? ' is-on' : ''}${id === advisedSanction ? ' is-advised' : ''}`}
                               disabled={!alive || full}
                               title={`${nationDef(id).name}${on ? ' — sanctioned' : ''}`}
                               onClick={() => onOrder((s) => toggleSanction(s, id, actorId))}
@@ -1135,6 +1143,16 @@ export function CommandDashboard({
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {lowUntil != null && (
+        <div className="cop-low" role="status" aria-live="polite" key={lowUntil}>
+          <b>Treasury is low</b>
+          <span>{hasStrike ? 'Moving to Choose Targets' : 'Moving to battle'}</span>
+          <i aria-hidden>
+            <em style={{ animationDuration: `${LOW_TREASURY_NOTICE_MS}ms` }} />
+          </i>
         </div>
       )}
     </div>

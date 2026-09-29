@@ -22,13 +22,16 @@ export function useFitToWindow<T extends HTMLElement>(
       const availH = window.innerHeight * 0.98;
       // Never grow so far that the layout would have to reflow narrower than this.
       const cap = Math.max(1, Math.min(maxScale, availW / 760));
-      let scale = 1;
-      for (let i = 0; i < 5; i += 1) {
-        el.style.width = `${Math.min(maxWidth, availW / scale)}px`;
-        const next = Math.max(minScale, Math.min(cap, availH / el.offsetHeight));
-        const settled = Math.abs(next - scale) < 0.01;
-        scale = next;
-        if (settled) break;
+      // Width and height feed each other (a wider page reflows shorter), so
+      // there is no closed form: walk down from the largest scale allowed and
+      // take the first one whose page, measured at its own width, fits.
+      let scale = minScale;
+      for (let candidate = cap; candidate >= minScale; candidate -= 0.02) {
+        el.style.width = `${Math.min(maxWidth, availW / candidate)}px`;
+        if (el.offsetHeight * candidate <= availH) {
+          scale = candidate;
+          break;
+        }
       }
       el.style.width = `${Math.min(maxWidth, availW / scale)}px`;
       el.style.setProperty('--fit', String(scale));

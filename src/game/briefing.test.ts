@@ -268,7 +268,8 @@ describe('round briefing', () => {
       drones: 1,
       spyNetwork: true,
       canArmNukes: true,
-      canArmDrones: false,
+      // Aerospace Tech comes bundled with the first drone pack, so drones can still be armed
+      canArmDrones: true,
     });
   });
 

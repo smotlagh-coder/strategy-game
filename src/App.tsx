@@ -20,6 +20,7 @@ import {
   createInitialState,
   currentNationId,
   computeScore,
+  rankNationIds,
   endTurn,
   finishBuyPhase,
   finishStrikeResolution,
@@ -43,7 +44,13 @@ import {
 } from './game/engine';
 import { runAllAiUntilHumanOrSummary, runAiTurn, runOnlineAiPlanning } from './game/ai';
 import { buildRoundBriefing, combatLedger } from './game/briefing';
-import type { BriefingCityStatus, BriefingOrder, BriefingOrderIcon, RoundBriefing } from './game/briefing';
+import type {
+  BriefingCityStatus,
+  BriefingIntelAdvice,
+  BriefingOrder,
+  BriefingOrderIcon,
+  RoundBriefing,
+} from './game/briefing';
 import type {
   City,
   GameMode,
@@ -988,6 +995,26 @@ function orderIcon(icon: BriefingOrderIcon): string {
   return ART.missile;
 }
 
+function DashIntelCard({ advice }: { advice: BriefingIntelAdvice }) {
+  const art =
+    advice.kind === 'spy' ? ART.cop.spy : advice.kind === 'research' ? ART.cop.research : ART.cop.sanction;
+  return (
+    <li className={`brief__order is-intel is-${advice.kind}`}>
+      <div className="brief__order-art">
+        <img className="brief__order-city" src={art} alt="" draggable={false} />
+      </div>
+      <div className="brief__order-copy">
+        <span className="brief__order-tag">{advice.kind === 'spy' ? 'Intel' : 'Finance'}</span>
+        <b>
+          {advice.action}
+          {advice.nationId && <em> · {nationDef(advice.nationId).shortName}</em>}
+        </b>
+        <span className="brief__order-where">{advice.reason}</span>
+      </div>
+    </li>
+  );
+}
+
 function DashOrderCard({
   kind,
   order,
@@ -1074,11 +1101,21 @@ function DashWorld({
             {row.cities.map((city) => {
               const arrow = arrows.get(`${row.nationId}:${city.id}`);
               const cover = city.isUnderground && !city.destroyed;
+              const seen = city.known || row.isYou;
+              const dome = city.hasShield && !city.isUnderground && !city.destroyed;
+              const mark = row.isYou && city.status ? cityStatusMark(city.status) : null;
+              const assets: { key: string; icon: string; label: string }[] = [];
+              if (!city.destroyed) {
+                if (dome) assets.push({ key: 'shield', icon: ART.shield, label: 'Shield' });
+                if (cover) assets.push({ key: 'bunker', icon: ART.undergroundCity, label: 'Bunker' });
+                if (city.hasLaser) assets.push({ key: 'laser', icon: ART.laserIcon, label: 'Laser' });
+                if (city.hasResearch) assets.push({ key: 'lab', icon: ART.researchIcon, label: 'Lab' });
+              }
               return (
                 <li
                   key={city.id}
-                  className={`dash__chip ${city.destroyed ? 'is-rubble' : ''} ${
-                    city.known || row.isYou ? '' : 'is-unseen'
+                  className={`dash__city ${city.destroyed ? 'is-rubble' : ''} ${
+                    seen ? '' : 'is-unseen'
                   } ${arrow ? `has-${arrow.kind}` : ''}`}
                   title={
                     arrow
@@ -1091,22 +1128,41 @@ function DashWorld({
                   {arrow && (
                     <span className={`dash__arrow is-${arrow.kind}`} aria-label={arrow.order.action}>
                       <img src={orderIcon(arrow.order.icon)} alt="" draggable={false} />
+                      <em>{arrow.order.action}</em>
                     </span>
                   )}
-                  <img
-                    className="dash__chip-art"
-                    src={cover ? ART.citiesUnderground[city.id] : ART.cities[city.id]}
-                    alt=""
-                    draggable={false}
-                  />
-                  {city.hasShield && !city.isUnderground && !city.destroyed && (
-                    <i className="dash__chip-dome" aria-hidden />
-                  )}
-                  {(city.hasLaser || city.hasResearch) && !city.destroyed && (
-                    <span className="dash__chip-tags">
-                      {city.hasLaser && <img src={ART.laserIcon} alt="" draggable={false} />}
-                      {city.hasResearch && <img src={ART.researchIcon} alt="" draggable={false} />}
+                  <div className="dash__city-art">
+                    <img
+                      src={cover ? ART.citiesUnderground[city.id] : ART.cities[city.id]}
+                      alt=""
+                      draggable={false}
+                    />
+                    {dome && <i className="dash__chip-dome" aria-hidden />}
+                    {mark && (
+                      <img className="dash__city-mark" src={mark.src} alt="" title={mark.label} draggable={false} />
+                    )}
+                  </div>
+                  <b className="dash__city-name">{city.name}</b>
+                  {city.destroyed ? (
+                    <span className="dash__city-state is-bad">Rubble</span>
+                  ) : !seen ? (
+                    <span className="dash__city-state">Defences unseen</span>
+                  ) : assets.length === 0 ? (
+                    <span className="dash__city-state is-open">Open</span>
+                  ) : (
+                    <span className="dash__city-assets">
+                      {assets.map((a) => (
+                        <span key={a.key} className={`dash__asset is-${a.key}`}>
+                          <img src={a.icon} alt="" draggable={false} />
+                          {a.label}
+                        </span>
+                      ))}
                     </span>
+                  )}
+                  {row.isYou && city.status && city.status !== 'quiet' && (
+                    <small className={`brief__city-status is-${city.status}`}>
+                      {CITY_STATUS_LABEL[city.status]}
+                    </small>
                   )}
                 </li>
               );
@@ -1156,7 +1212,7 @@ function RoundBriefingOverlay({
   }, []);
 
   // The briefing is one page: shrink it to the window instead of ever scrolling.
-  const fitRef = useFitToWindow<HTMLDivElement>(980, 0.45, true, 1.5);
+  const fitRef = useFitToWindow<HTMLDivElement>(1400, 0.45, true, 1.5);
 
   const me = nationDef(briefing.nationId);
 
@@ -1256,9 +1312,9 @@ function RoundBriefingOverlay({
         </div>
 
         <div className="brief__grid">
-          <section className="brief__card brief__card--cities" aria-label="Your cities">
+          <section className="brief__card brief__card--advisor" aria-label="Advisor orders">
             <div className="brief__card-head">
-              <h3 className="brief__label">Your cities</h3>
+              <h3 className="brief__label">Advisor</h3>
               <ul className="round-brief__arsenal" aria-label="Arsenal">
                 <li title="Warheads">
                   <img src={ART.missile} alt="" draggable={false} />
@@ -1281,80 +1337,6 @@ function RoundBriefingOverlay({
                 )}
               </ul>
             </div>
-            <ul className="round-brief__cities">
-              {briefing.cities.map((city) => {
-                const mark = cityStatusMark(city.status);
-                return (
-                  <li
-                    key={city.id}
-                    className={`round-brief__city is-${city.status} ${city.destroyed ? 'is-rubble' : ''}`}
-                    title={CITY_STATUS_LABEL[city.status]}
-                  >
-                    <div className="dash__skyline">
-                      <img
-                        src={
-                          city.isUnderground && !city.destroyed
-                            ? ART.citiesUnderground[city.id]
-                            : ART.cities[city.id]
-                        }
-                        alt=""
-                        draggable={false}
-                      />
-                      {city.hasShield && !city.isUnderground && !city.destroyed && (
-                        <span className="dash__dome" title="Shield" aria-hidden />
-                      )}
-                      {city.destroyed && (
-                        <span className="city-smoke" aria-hidden>
-                          <i />
-                          <i />
-                          <i />
-                        </span>
-                      )}
-                      {mark && (
-                        <img
-                          className="dash__mark"
-                          src={mark.src}
-                          alt=""
-                          title={mark.label}
-                          draggable={false}
-                        />
-                      )}
-                      {city.attackers.length > 0 && (
-                        <div className="round-brief__city-raiders">
-                          {city.attackers.map((id) => (
-                            <img
-                              key={id}
-                              src={leaderArt(state, id)}
-                              alt={nationDef(id).name}
-                              title={nationDef(id).name}
-                              draggable={false}
-                            />
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    <strong>{city.name}</strong>
-                    <small className={`brief__city-status is-${city.status}`}>
-                      {CITY_STATUS_LABEL[city.status]}
-                    </small>
-                    {(city.hasResearch || city.hasLaser) && (
-                      <div className="round-brief__city-assets">
-                        {city.hasResearch && (
-                          <img src={ART.researchIcon} alt="" title="Research" draggable={false} />
-                        )}
-                        {city.hasLaser && (
-                          <img src={ART.laserIcon} alt="" title="Laser" draggable={false} />
-                        )}
-                      </div>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          </section>
-
-          <section className="brief__card brief__card--advisor" aria-label="Advisor orders">
-            <h3 className="brief__label">Advisor</h3>
             <div className="brief__advisor-row">
               <img
                 className="dash__advisor"
@@ -1374,6 +1356,9 @@ function RoundBriefingOverlay({
                     <span className="brief__order-where">No target is worth a warhead yet</span>
                   </li>
                 )}
+                {briefing.intelAdvice.map((advice) => (
+                  <DashIntelCard key={advice.kind} advice={advice} />
+                ))}
               </ul>
             </div>
           </section>
@@ -3094,14 +3079,10 @@ function GameBoard({
     : isHumanTurn
       ? [actorId]
       : state.turnOrder.filter((id) => state.nations[id].isHuman);
-  const enemyIds = state.turnOrder
-    .filter((id) => !allyIds.includes(id))
-    .slice()
-    .sort((a, b) => {
-      const scoreDelta = computeScore(state, b).total - computeScore(state, a).total;
-      if (scoreDelta !== 0) return scoreDelta;
-      return state.turnOrder.indexOf(a) - state.turnOrder.indexOf(b);
-    });
+  const enemyIds = rankNationIds(
+    state,
+    state.turnOrder.filter((id) => !allyIds.includes(id)),
+  );
   const enemyRank = new Map(enemyIds.map((id, i) => [id, i + 1]));
   // The Enemies panel is read by whoever is at the screen, not by whoever is
   // taking their turn: while the AI moves, `actorId` is the AI, and reading the
@@ -3542,13 +3523,10 @@ function RoundSummary({
     (id) => Boolean(state.nations[id as NationId]?.isHuman),
     myNationId,
   ) as NationId[];
-  const worldIds = (aftermathWorldIds(state.turnOrder, myCityIds) as NationId[])
-    .slice()
-    .sort((a, b) => {
-      const scoreDelta = computeScore(state, b).total - computeScore(state, a).total;
-      if (scoreDelta !== 0) return scoreDelta;
-      return state.turnOrder.indexOf(a) - state.turnOrder.indexOf(b);
-    });
+  const worldIds = rankNationIds(
+    state,
+    aftermathWorldIds(state.turnOrder, myCityIds) as NationId[],
+  );
   const worldRank = new Map(worldIds.map((id, i) => [id, i + 1]));
   const isYouNation = (id: NationId) =>
     myNationId ? id === myNationId : Boolean(state.nations[id].isHuman);

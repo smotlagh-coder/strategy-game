@@ -674,6 +674,11 @@ export function runOnlineAiPlanning(state: GameState): GameState {
 
 /** Queue AI strikes for fair end-of-round resolution, then end turn */
 export function runAiTurn(state: GameState): GameState {
+  // Once the last battle has resolved the standings are settled: the AI never
+  // buys or rebuilds after them.
+  if (state.phase === 'gameOver' || state.phase === 'roundSummary' || state.round > state.maxRounds) {
+    return state;
+  }
   let s = state;
   const id = currentNationId(s);
   if (!s.nations[id] || s.nations[id].eliminated || s.nations[id].isHuman) {

@@ -441,14 +441,32 @@ export function computeScore(state: GameState, id: NationId): RoundScore {
   };
 }
 
-export function allScores(state: GameState): RoundScore[] {
-  return state.turnOrder
+/**
+ * The one ordering every screen uses for standings, so the table read during
+ * the final battle and the SuperPower screen can never disagree: living nations
+ * above eliminated ones, then score, then the tie-break that crowns the winner.
+ */
+export function compareScores(a: RoundScore, b: RoundScore): number {
+  if (a.eliminated !== b.eliminated) return a.eliminated ? 1 : -1;
+  if (b.total !== a.total) return b.total - a.total;
+  if (b.citiesLeft !== a.citiesLeft) return b.citiesLeft - a.citiesLeft;
+  if (b.attackPoints !== a.attackPoints) return b.attackPoints - a.attackPoints;
+  if (b.citySurvivalPoints !== a.citySurvivalPoints) {
+    return b.citySurvivalPoints - a.citySurvivalPoints;
+  }
+  return a.nationId.localeCompare(b.nationId);
+}
+
+/** Nation ids in standings order (see `compareScores`). */
+export function rankNationIds(state: GameState, ids: NationId[]): NationId[] {
+  return ids
     .map((id) => computeScore(state, id))
-    .sort((a, b) => {
-      // Living nations always rank above eliminated — OUT cannot lead / win
-      if (a.eliminated !== b.eliminated) return a.eliminated ? 1 : -1;
-      return b.total - a.total;
-    });
+    .sort(compareScores)
+    .map((row) => row.nationId);
+}
+
+export function allScores(state: GameState): RoundScore[] {
+  return state.turnOrder.map((id) => computeScore(state, id)).sort(compareScores);
 }
 
 /** Remember each nation's best live score so wipeout can freeze it later */
@@ -700,7 +718,10 @@ export function tiedForTheLead(state: GameState): NationId[] {
   if (contenders.length < 2) return [];
   const top = contenders[0].total;
   const tied = contenders.filter((s) => s.total === top);
-  return tied.length > 1 ? tied.map((s) => s.nationId) : [];
+  // Listed in seating order, not tie-break order: this is a set of contenders
+  return tied.length > 1
+    ? state.turnOrder.filter((id) => tied.some((s) => s.nationId === id))
+    : [];
 }
 
 /**
@@ -720,19 +741,8 @@ function pickLivingSuperpower(state: GameState): NationId | null {
     // No living nations — the highest locked score still takes the title
     return scores[0]?.nationId ?? null;
   }
-  const top = contenders[0].total;
-  const tied = contenders.filter((s) => s.total === top);
-  if (tied.length === 1) return tied[0].nationId;
-  // Break ties: more cities, then attack points, then survival, then id
-  tied.sort((a, b) => {
-    if (b.citiesLeft !== a.citiesLeft) return b.citiesLeft - a.citiesLeft;
-    if (b.attackPoints !== a.attackPoints) return b.attackPoints - a.attackPoints;
-    if (b.citySurvivalPoints !== a.citySurvivalPoints) {
-      return b.citySurvivalPoints - a.citySurvivalPoints;
-    }
-    return a.nationId.localeCompare(b.nationId);
-  });
-  return tied[0].nationId;
+  // allScores already applies the tie-break, so the winner is always row one
+  return contenders[0].nationId;
 }
 
 function checkWinner(state: GameState): GameState {
@@ -2204,7 +2214,28 @@ export function nextRound(state: GameState): GameState {
   if (nextRoundNum > base.maxRounds) {
     // Nobody takes the title on a shared score: the war runs an extra round
     // and the leaders settle it between them.
-    if (!needsOvertime(base)) return checkWinner({ ...base, round: nextRoundNum });
+    if (!needsOvertime(base)) {
+      // The standings were settled when the last battle resolved and shown on
+      // the final board: the SuperPower screen crowns exactly that table and
+      // nothing that happens afterwards can reshuffle it.
+      const settled =
+        base.phase === 'roundSummary' &&
+        base.previousRoundNumber === base.round &&
+        base.roundScores.length > 0
+          ? base.roundScores
+          : null;
+      if (settled) {
+        const champion = settled.find((row) => !row.eliminated) ?? settled[0];
+        return {
+          ...base,
+          round: nextRoundNum,
+          phase: 'gameOver',
+          winner: champion?.nationId ?? null,
+          roundScores: settled,
+        };
+      }
+      return checkWinner({ ...base, round: nextRoundNum });
+    }
     const tied = tiedForTheLead(base).map((id) => nationDef(id).name);
     base = {
       ...base,

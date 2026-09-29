@@ -1,10 +1,22 @@
-import { COSTS, DRONE_DAMAGE, MAX_ROUNDS, MAX_SANCTIONS, RESEARCH_INCOME, nationDef } from '../data/nations';
+import {
+  COSTS,
+  DRONE_DAMAGE,
+  MAX_ROUNDS,
+  MAX_SANCTIONS,
+  RESEARCH_INCOME,
+  SANCTION_PENALTY,
+  nationDef,
+} from '../data/nations';
 import {
   allScores,
   assetLossFor,
   canBuyBombs,
   canBuyDrones,
   canBuyRebuild,
+  canBuyResearch,
+  canBuySpyNetwork,
+  researchCount,
+  sanctionsLeft,
   canBuyShield,
   canBuyUnderground,
   cityAsSeenBy,
@@ -13,6 +25,12 @@ import {
   totalWarheads,
   whoIsSanctioning,
 } from './engine';
+import {
+  maxBombsBundled,
+  maxDronesBundled,
+  maxHydrogenBundled,
+  maxMagneticBundled,
+} from './bundles';
 import type { City, GameState, NationId, PendingStrike, RoundScore, RoundWorldEvent } from '../types';
 
 /** What one of your cities lived through in the round just played. */
@@ -126,6 +144,19 @@ export interface BriefingOrder {
   icon: BriefingOrderIcon;
 }
 
+/** Finance and intelligence moves the advisor can recommend. */
+export type BriefingIntelKind = 'spy' | 'research' | 'sanction';
+
+export interface BriefingIntelAdvice {
+  kind: BriefingIntelKind;
+  /** Short verb shown above the detail */
+  action: string;
+  /** One plain sentence on why this is worth doing now */
+  reason: string;
+  /** The rival to sanction, when the advice is a sanction */
+  nationId?: NationId;
+}
+
 /** One city on the world table, as this commander is able to read it. */
 export interface BriefingWorldCity {
   id: string;
@@ -137,6 +168,8 @@ export interface BriefingWorldCity {
   isUnderground: boolean;
   hasResearch: boolean;
   hasLaser: boolean;
+  /** What last round did to the city — only known for the viewer's own cities */
+  status?: BriefingCityStatus;
 }
 
 /** One ranked nation on the world table. */
@@ -180,6 +213,8 @@ export interface RoundBriefing {
   defenceOrders: BriefingOrder[];
   /** Every rival city the advisor wants hit, best first — only what we can actually see */
   offenceOrders: BriefingOrder[];
+  /** Spy, research and sanction moves that make sense this round */
+  intelAdvice: BriefingIntelAdvice[];
   /** Ranked table of the whole world, defences hidden wherever we have no eyes */
   world: BriefingWorldRow[];
   /** Nobody laid a finger on us — the page is standings and treasury only */
@@ -273,8 +308,9 @@ function readAssets(state: GameState, myId: NationId): BriefingAssets {
     bombs: totalWarheads(n),
     drones: n.drones,
     spyNetwork: Boolean(n.hasSpyNetwork),
-    canArmNukes: canBuyBombs(state, myId),
-    canArmDrones: canBuyDrones(state, myId),
+    // Tech comes with the first purchase, so an untouched arsenal can still be armed
+    canArmNukes: canBuyBombs(state, myId) || !n.hasNuclearTech,
+    canArmDrones: canBuyDrones(state, myId) || !n.hasAerospaceTech,
     money: n.money,
   };
 }
@@ -413,10 +449,14 @@ function findWeakness(
       title: 'No warheads, no deterrent',
       detail: `You cannot take a city off anyone, and a nation that cannot hit back is the cheapest target at the table.`,
       advice:
-        money >= COSTS.ballisticMissileTech
-          ? `Ballistic Missile Tech is ${cash(COSTS.ballisticMissileTech)}, warheads ${cash(COSTS.bomb)} each after that — buy it this round.`
-          : `Ballistic Missile Tech is ${cash(COSTS.ballisticMissileTech)} and you are ${cash(
-              COSTS.ballisticMissileTech - money,
+        money >= COSTS.ballisticMissileTech + COSTS.bomb
+          ? `Your first warhead brings Ballistic Missile Tech with it: ${cash(
+              COSTS.ballisticMissileTech + COSTS.bomb,
+            )} in all, then ${cash(COSTS.bomb)} each — buy it this round.`
+          : `Your first warhead comes to ${cash(
+              COSTS.ballisticMissileTech + COSTS.bomb,
+            )} with Ballistic Missile Tech included, and you are ${cash(
+              COSTS.ballisticMissileTech + COSTS.bomb - money,
             )} short. Hold the cash until you can.`,
     };
   }
@@ -537,16 +577,16 @@ export function findDefenceOrders(state: GameState, myId: NationId): BriefingOrd
       (e) => e.nationId === myId && (e.kind === 'droneDamage' || e.kind === 'dronesIntercepted'),
     ) ||
     state.turnOrder.some((id) => id !== myId && !state.nations[id].eliminated && state.nations[id].drones > 0);
+  const laserPrice = COSTS.laser + (n.hasAerospaceTech ? 0 : COSTS.aerospaceTech);
   if (
     swarmThreat &&
-    n.hasAerospaceTech &&
     !alive.some((c) => c.hasLaser) &&
-    budget >= COSTS.laser &&
+    budget >= laserPrice &&
     alive.length > 0
   ) {
     const host = byValue.find((c) => !c.hasLaser) ?? byValue[0];
     orders.push(order(host, 'Laser', 'laser'));
-    budget -= COSTS.laser;
+    budget -= laserPrice;
   }
 
   // A second shield on the next most valuable open city
@@ -560,6 +600,102 @@ export function findDefenceOrders(state: GameState, myId: NationId): BriefingOrd
 
   const prize = byValue[0] ?? n.cities[0];
   return [order(prize, 'Hold', 'hold')];
+}
+
+const DEFENCE_PRICE: Record<BriefingOrderIcon, () => number> = {
+  rebuild: () => COSTS.rebuild,
+  bunker: () => COSTS.underground,
+  shield: () => COSTS.shield,
+  laser: () => COSTS.laser,
+  nuke: () => 0,
+  drone: () => 0,
+  hydrogen: () => 0,
+  magnetic: () => 0,
+  hold: () => 0,
+};
+
+/**
+ * Spy service, research centres and sanctions — the finance and intel side of
+ * the dashboard. Each is advised only when it pays: money the defence orders
+ * already claim is never double-booked, a spy service only when there is a
+ * warhead or swarm to aim with it, and nothing that would bear fruit after the
+ * last round.
+ */
+export function findIntelAdvice(
+  state: GameState,
+  myId: NationId,
+  defenceOrders: BriefingOrder[] = findDefenceOrders(state, myId),
+  offenceOrders: BriefingOrder[] = findOffenceOrders(state, myId),
+): BriefingIntelAdvice[] {
+  const me = state.nations[myId];
+  if (!me || me.eliminated) return [];
+  const advice: BriefingIntelAdvice[] = [];
+  const roundsLeft = Math.max(0, state.maxRounds - state.round);
+  const defenceSpend = defenceOrders.reduce((sum, o) => sum + DEFENCE_PRICE[o.icon](), 0);
+  const spare = me.money - defenceSpend;
+  const rivals = state.turnOrder.filter((id) => id !== myId && !state.nations[id].eliminated);
+  if (rivals.length === 0) return [];
+
+  // Eyes before warheads: blind, shields and bunkers eat the volley
+  const armed = totalWarheads(me) > 0 || me.drones > 0;
+  const aimCost = armed ? 0 : COSTS.bomb;
+  if (
+    !me.hasSpyNetwork &&
+    canBuySpyNetwork(state, myId) &&
+    offenceOrders.length > 0 &&
+    spare >= COSTS.spy + aimCost
+  ) {
+    advice.push({
+      kind: 'spy',
+      action: 'Spy service',
+      reason: `${cash(COSTS.spy)} once shows every rival shield, bunker and laser, so no warhead is wasted.`,
+    });
+  }
+
+  // A centre repays its price in a couple of rounds and adds score meanwhile
+  if (
+    roundsLeft >= 2 &&
+    researchCount(state, myId) < 2 &&
+    canBuyResearch(state, myId) &&
+    spare >= COSTS.research
+  ) {
+    advice.push({
+      kind: 'research',
+      action: 'Research',
+      reason: `${cash(COSTS.research)} for +${cash(RESEARCH_INCOME)} every round it stands, with ${roundsLeft} rounds to go.`,
+    });
+  }
+
+  // Sanctions cost nothing: squeeze the leader, or whoever has been raiding us
+  if (roundsLeft >= 1 && sanctionsLeft(state, myId) > 0) {
+    const scores = allScores(state);
+    const raiders = new Set(
+      (state.previousRoundEvents ?? [])
+        .filter((e) => e.nationId === myId && e.attackerId)
+        .map((e) => e.attackerId as NationId),
+    );
+    const candidates = rivals.filter((id) => !me.sanctions.includes(id));
+    const pick = candidates
+      .map((id) => ({
+        id,
+        rank: scores.findIndex((row) => row.nationId === id),
+        raider: raiders.has(id),
+      }))
+      .sort((a, b) => Number(b.raider) - Number(a.raider) || a.rank - b.rank)[0];
+    if (pick) {
+      const name = nationDef(pick.id).name;
+      advice.push({
+        kind: 'sanction',
+        action: 'Sanction',
+        nationId: pick.id,
+        reason: pick.raider
+          ? `${name} raided you. Free: −${Math.round(SANCTION_PENALTY * 100)}% of their income.`
+          : `${name} ${pick.rank === 0 ? 'leads the table' : 'is your strongest open rival'}. Free: −${Math.round(SANCTION_PENALTY * 100)}% of their income.`,
+      });
+    }
+  }
+
+  return advice;
 }
 
 /** Cover, bury, or rebuild the city most worth saving this round. */
@@ -587,12 +723,11 @@ export function findOffenceOrders(state: GameState, myId: NationId, limit = 3): 
     prior.filter((e) => e.nationId === myId && e.attackerId).map((e) => e.attackerId as NationId),
   );
 
-  const canNuke = totalWarheads(me) > 0 || (canBuyBombs(state, myId) && me.money >= COSTS.bomb);
-  const canHydrogen =
-    (me.hydrogenBombs ?? 0) > 0 || (canBuyBombs(state, myId) && me.money >= COSTS.bombHydrogen);
-  const canMagnetic =
-    (me.magneticBombs ?? 0) > 0 || (canBuyBombs(state, myId) && me.money >= COSTS.bombMagnetic);
-  const canSwarm = me.drones > 0 || (canBuyDrones(state, myId) && me.money >= COSTS.drone);
+  // What is in stock, or what the treasury can still buy (tech comes with the first purchase)
+  const canNuke = totalWarheads(me) > 0 || maxBombsBundled(state, myId) > 0;
+  const canHydrogen = (me.hydrogenBombs ?? 0) > 0 || maxHydrogenBundled(state, myId) > 0;
+  const canMagnetic = (me.magneticBombs ?? 0) > 0 || maxMagneticBundled(state, myId) > 0;
+  const canSwarm = me.drones > 0 || maxDronesBundled(state, myId) > 0;
   if (!canNuke && !canHydrogen && !canSwarm) return [];
 
   const nationRank = (id: NationId): number => {
@@ -677,7 +812,12 @@ export function findOffenceOrder(state: GameState, myId: NationId): BriefingOrde
 }
 
 /** Ranked world table with every defence the viewer has no eyes on hidden. */
-function buildWorld(state: GameState, myId: NationId, scores: RoundScore[]): BriefingWorldRow[] {
+function buildWorld(
+  state: GameState,
+  myId: NationId,
+  scores: RoundScore[],
+  ownStatus: Map<string, BriefingCityStatus>,
+): BriefingWorldRow[] {
   return scores.map((row, i) => {
     const nation = state.nations[row.nationId];
     return {
@@ -698,6 +838,7 @@ function buildWorld(state: GameState, myId: NationId, scores: RoundScore[]): Bri
           isUnderground: Boolean(city.isUnderground),
           hasResearch: Boolean(city.hasResearch),
           hasLaser: Boolean(city.hasLaser),
+          status: row.nationId === myId ? ownStatus.get(raw.id) : undefined,
         };
       }),
     };
@@ -775,6 +916,7 @@ export function buildRoundBriefing(
   const combat = combatLedger(state, [myId]);
   const defenceOrders = findDefenceOrders(state, myId);
   const offenceOrders = findOffenceOrders(state, myId);
+  const intelAdvice = findIntelAdvice(state, myId, defenceOrders, offenceOrders);
 
   return {
     round: state.round,
@@ -798,7 +940,8 @@ export function buildRoundBriefing(
     offence: offenceOrders[0] ?? null,
     defenceOrders,
     offenceOrders,
-    world: buildWorld(state, myId, scores),
+    intelAdvice,
+    world: buildWorld(state, myId, scores, new Map(cities.map((c) => [c.id, c.status]))),
     untouched: raiders.length === 0 && cities.every((c) => c.status === 'quiet'),
   };
 }
