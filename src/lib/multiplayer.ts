@@ -131,6 +131,18 @@ export function listenOutgoingInvites(
   );
 }
 
+/** One-off read of pending invites — backstop for a live listener that stalls. */
+export async function fetchInvitesFor(uid: string): Promise<{ id: string; data: InviteDoc }[]> {
+  const snap = await getDocs(
+    query(
+      collection(getDb(), 'invites'),
+      where('toUid', '==', uid),
+      where('status', '==', 'pending'),
+    ),
+  );
+  return snap.docs.map((d) => ({ id: d.id, data: d.data() as InviteDoc }));
+}
+
 export async function sendInvite(fromUid: string, fromName: string, toUid: string, lobbyId: string) {
   // Must filter fromUid (== auth.uid) so security rules allow the query.
   // Use fromUid+status (existing index); filter toUid/lobby client-side.

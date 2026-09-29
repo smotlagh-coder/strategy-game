@@ -2540,7 +2540,7 @@ img { max-width: 100%; display: block; }
   object-fit: cover;
 }
 
-.dash__chip.is-unseen .dash__chip-art { opacity: 0.7; filter: saturate(0.55); }
+.dash__chip.is-unseen .dash__chip-art { opacity: 1; filter: none; }
 
 .dash__chip.is-rubble .dash__chip-art { filter: grayscale(1) brightness(0.45); }
 
@@ -7801,7 +7801,7 @@ img { max-width: 100%; display: block; }
 }
 .dash__city-art { position: relative; width: 100%; aspect-ratio: 16 / 10; }
 .dash__city-art > img:first-child { display: block; width: 100%; height: 100%; border-radius: 7px; object-fit: cover; }
-.dash__city.is-unseen .dash__city-art > img:first-child { opacity: 0.7; filter: saturate(0.55); }
+.dash__city.is-unseen .dash__city-art > img:first-child { opacity: 1; filter: none; }
 .dash__city.is-rubble .dash__city-art > img:first-child { filter: grayscale(1) brightness(0.45); }
 .dash__city.is-rubble .dash__city-art::after {
   content: '✕';
@@ -8768,3 +8768,165 @@ button.cx-tile:not(.is-off):hover .cx-tile__orb { filter: brightness(1.25); }
 
 .dash__city .dash__arrow { padding: 0.15rem 0.5rem; }
 .dash__city .dash__arrow img { width: 26px; height: 26px; }
+
+/* Magazine bar beside a stocked weapon: filled = stocked, outlined = can add now, dim = limit allows but not affordable yet */
+.cx-mag {
+  position: absolute;
+  left: calc(100% + 1.3cqw);
+  bottom: 6%;
+  height: 88%;
+  width: 2.6cqw;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 0.5cqw;
+}
+
+.cx-mag i {
+  flex: 1 1 0;
+  min-height: 0;
+  border-radius: 0.7cqw;
+  border: 1.5px solid rgba(255, 255, 255, 0.28);
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.cx-mag i.is-have {
+  border-color: #03130a;
+  background: linear-gradient(180deg, #b6ffc7, var(--ops));
+  box-shadow: 0 0 6px rgba(109, 255, 140, 0.7);
+}
+
+.cx-mag i.is-buy {
+  border-color: rgba(109, 255, 140, 0.95);
+  border-style: dashed;
+  background: rgba(109, 255, 140, 0.14);
+  animation: cxMagBuy 1.4s ease-in-out infinite;
+}
+
+.cx-mag i.is-later { border-color: rgba(255, 156, 143, 0.55); border-style: dashed; background: none; }
+
+@keyframes cxMagBuy { 50% { background: rgba(109, 255, 140, 0.4); } }
+@media (prefers-reduced-motion: reduce) { .cx-mag i.is-buy { animation: none; } }
+
+/* The count badge moves to the other side so the bar stays clear */
+.cx-tile.has-mag .cx-tile__orb em { right: auto; left: -20%; }
+
+/* Magazine bar, modern take: a glass capsule holding glowing rounds (no dashes, no boxes) */
+.cx-mag {
+  left: calc(100% + 0.9cqw);
+  bottom: 3%;
+  height: 94%;
+  width: 3.4cqw;
+  padding: 0.55cqw;
+  gap: 0.45cqw;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.04));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16), 0 3px 8px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(3px);
+}
+
+.cx-mag i {
+  position: relative;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(150, 170, 190, 0.2);
+  box-shadow: none;
+  animation: none;
+}
+
+/* stocked: a lit round with a glossy highlight */
+.cx-mag i.is-have {
+  background: linear-gradient(90deg, #7dffa0 0%, #2fdc6a 55%, #14a84a 100%);
+  box-shadow: 0 0 8px rgba(109, 255, 140, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.cx-mag i.is-have::after {
+  content: '';
+  position: absolute;
+  top: 12%;
+  left: 22%;
+  width: 22%;
+  height: 40%;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.65);
+}
+
+/* can add now: a soft breathing glow with a plus on the next one to load */
+.cx-mag i.is-buy {
+  background: linear-gradient(90deg, rgba(109, 255, 140, 0.34), rgba(109, 255, 140, 0.18));
+  box-shadow: inset 0 0 0 1px rgba(109, 255, 140, 0.35), 0 0 6px rgba(109, 255, 140, 0.25);
+  animation: cxMagBreath 1.8s ease-in-out infinite;
+}
+
+.cx-mag i.is-buy::before {
+  content: '+';
+  position: absolute;
+  inset: 0;
+  display: none;
+  place-items: center;
+  font-style: normal;
+  font-weight: 900;
+  font-size: clamp(0.5rem, 2.4cqw, 0.85rem);
+  line-height: 1;
+  color: rgba(214, 255, 226, 0.95);
+}
+
+/* only the first empty slot above the stocked rounds shows the plus */
+.cx-mag i.is-have + i.is-buy::before,
+.cx-mag i.is-buy:first-child::before { display: grid; }
+
+/* limit allows it, cash does not: dark and quiet */
+.cx-mag i.is-later {
+  background: rgba(110, 125, 145, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+@keyframes cxMagBreath { 50% { opacity: 0.55; } }
+
+/* the advisor star sits on the other side so it never touches the bar */
+.cx-tile.has-mag .cx-tile__star { right: auto; left: 3cqw; }
+
+/* Each country's section wears its own flag */
+.nation-card {
+  position: relative;
+  isolation: isolate;
+}
+
+.nation-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background:
+    linear-gradient(90deg, rgba(3, 10, 22, 0.88), rgba(3, 10, 22, 0.8)),
+    var(--flag) center / cover no-repeat;
+  opacity: 0.95;
+  pointer-events: none;
+}
+
+.nation-card.is-turn::before {
+  box-shadow: inset 0 0 0 2px rgba(245, 197, 66, 0.7);
+}
+
+/* The final ranking table keeps its own look */
+.game-over-ranking .nation-card::before { display: none; }
+
+/* "Country is acting": portrait beside the words instead of centred on the page */
+.panel--ai {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 0.8rem;
+  row-gap: 0.25rem;
+  align-items: center;
+  text-align: left;
+}
+
+.panel--ai > img { grid-row: 1 / span 3; grid-column: 1; }
+.panel--ai > h2,
+.panel--ai > p,
+.panel--ai > .thinking-bar { grid-column: 2; }
+.panel--ai > .thinking-bar { width: 100%; }
+.panel--ai:not(:has(> img)) { grid-template-columns: minmax(0, 1fr); }
+.panel--ai:not(:has(> img)) > h2,
+.panel--ai:not(:has(> img)) > p,
+.panel--ai:not(:has(> img)) > .thinking-bar { grid-column: 1; }

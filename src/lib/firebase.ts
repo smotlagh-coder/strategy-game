@@ -1,6 +1,6 @@
 import { initializeApp, type FirebaseApp } from 'firebase/app';
 import { getAuth, type Auth } from 'firebase/auth';
-import { getFirestore, type Firestore } from 'firebase/firestore';
+import { initializeFirestore, type Firestore } from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY as string | undefined,
@@ -37,6 +37,15 @@ export function getFirebaseAuth(): Auth {
 }
 
 export function getDb(): Firestore {
-  if (!db) db = getFirestore(getFirebaseApp(), firestoreDatabaseId);
+  if (!db) {
+    // Streaming connections get buffered by some proxies, VPNs and Safari, which
+    // delays live updates (like invites) by many seconds. Auto-detect falls back
+    // to long polling on those networks and stays on streaming everywhere else.
+    db = initializeFirestore(
+      getFirebaseApp(),
+      { experimentalAutoDetectLongPolling: true },
+      firestoreDatabaseId,
+    );
+  }
   return db;
 }

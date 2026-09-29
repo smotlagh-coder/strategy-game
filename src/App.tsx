@@ -1,5 +1,5 @@
 import './App.css';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { ART, SFX } from './data/art';
 import {
   NATIONS,
@@ -1102,15 +1102,23 @@ function DashWorld({
           </span>
           <ul className="dash__nation-cities">
             {row.cities.map((city) => {
-              const arrow = arrows.get(`${row.nationId}:${city.id}`);
+              const rawArrow = arrows.get(`${row.nationId}:${city.id}`);
+              // Never advise a cover the city already has
+              const arrow =
+                rawArrow &&
+                rawArrow.kind === 'defence' &&
+                ((rawArrow.order.icon === 'shield' && city.hasShield) ||
+                  (rawArrow.order.icon === 'bunker' && city.isUnderground))
+                  ? undefined
+                  : rawArrow;
               const cover = city.isUnderground && !city.destroyed;
               const seen = city.known || row.isYou;
               const dome = city.hasShield && !city.isUnderground && !city.destroyed;
               const mark = row.isYou && city.status ? cityStatusMark(city.status) : null;
               const assets: { key: string; icon: string; label: string }[] = [];
               if (!city.destroyed) {
-                if (dome) assets.push({ key: 'shield', icon: ART.shield, label: 'Shield' });
-                if (cover) assets.push({ key: 'bunker', icon: ART.undergroundCity, label: 'Bunker' });
+                // Shield and bunker are already on the picture (dome, underground art),
+                // so a chip for them would only look like an advisor order.
                 if (city.hasLaser) assets.push({ key: 'laser', icon: ART.laserIcon, label: 'Laser' });
                 if (city.hasResearch) assets.push({ key: 'lab', icon: ART.researchIcon, label: 'Lab' });
               }
@@ -2090,6 +2098,7 @@ function NationPod({
     <div
       className={`nation-card nation-card--${variant} ${n.eliminated ? 'is-out' : ''} ${highlight ? 'is-turn' : ''}`}
       data-nation-id={id}
+      style={{ '--flag': `url(${ART.flags[id]})` } as CSSProperties}
     >
       <div className="nation-card__portrait" data-nation-portrait={id}>
         <span className="nation-card__shot">

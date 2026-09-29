@@ -5,6 +5,7 @@ import {
   claimLobbyNation,
   createLobby,
   fetchGame,
+  fetchInvitesFor,
   fetchLobby,
   isPlayerOnline,
   joinLobby,
@@ -92,7 +93,35 @@ export function LobbyScreen({
 
   useEffect(() => {
     const unsub = listenInvitesFor(uid, setInvites);
-    return unsub;
+    // Backstop: also re-read every few seconds and when the tab returns to view,
+    // so an invite shows up even if the live connection is slow or asleep.
+    let cancelled = false;
+    const pull = () => {
+      void fetchInvitesFor(uid)
+        .then((fresh) => {
+          if (cancelled) return;
+          setInvites((cur) => {
+            const same =
+              cur.length === fresh.length && cur.every((c) => fresh.some((f) => f.id === c.id));
+            return same ? cur : fresh;
+          });
+        })
+        .catch(() => undefined);
+    };
+    pull();
+    const poll = window.setInterval(pull, 3_000);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') pull();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', pull);
+    return () => {
+      cancelled = true;
+      unsub();
+      window.clearInterval(poll);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', pull);
+    };
   }, [uid]);
 
   useEffect(() => {

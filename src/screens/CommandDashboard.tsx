@@ -110,6 +110,32 @@ const PAGE_TAGLINE: Record<Section, string> = {
   finance: 'Grow income, see the map',
 };
 
+/** Magazine bar: filled = stocked, green outline = can add now, dim = the limit allows it but not yet affordable. */
+function Magazine({ mag }: { mag: { have: number; canBuy: number; later: number } }) {
+  const MAX_CELLS = 8;
+  const buy = Math.min(mag.canBuy, MAX_CELLS);
+  const later = Math.min(mag.later, MAX_CELLS - buy);
+  const have = Math.min(mag.have, MAX_CELLS - buy - later);
+  const cells: string[] = [
+    ...Array<string>(have).fill('is-have'),
+    ...Array<string>(buy).fill('is-buy'),
+    ...Array<string>(later).fill('is-later'),
+  ];
+  if (cells.length === 0) return null;
+  return (
+    <span
+      className="cx-mag"
+      role="img"
+      aria-label={`${mag.have} stocked, ${mag.canBuy} can be added now`}
+      title={`${mag.have} stocked · ${mag.canBuy} can be added now`}
+    >
+      {cells.map((c, i) => (
+        <i key={i} className={c} />
+      ))}
+    </span>
+  );
+}
+
 type PieIcon = {
   key: string;
   art: string;
@@ -124,6 +150,8 @@ type PieIcon = {
   price?: string;
   priceNote?: string;
   note?: string;
+  /** Magazine bar: how many are stocked, how many can be added now, how many more the limit allows. */
+  mag?: { have: number; canBuy: number; later: number };
   tone?: 'ready' | 'owned' | 'poor' | 'idle';
   advised?: boolean;
   /** Nothing to buy here right now. */
@@ -466,6 +494,7 @@ function CopPie({
                       ) : (
                         icon.lit && <em className="is-tick">✓</em>
                       )}
+                      {icon.mag && <Magazine mag={icon.mag} />}
                     </span>
                     {icon.advised && (
                       <i className="cx-tile__star" title="Your advisor recommends this">
@@ -483,7 +512,7 @@ function CopPie({
                     {icon.extra}
                   </>
                 );
-                const cls = `cx-tile cx-fade is-${icon.tone ?? 'idle'}${icon.lit ? ' is-lit' : ''}${
+                const cls = `cx-tile cx-fade is-${icon.tone ?? 'idle'}${icon.mag ? ' has-mag' : ''}${icon.lit ? ' is-lit' : ''}${
                   icon.advised ? ' is-advised' : ''
                 }${icon.selected ? ' is-selected' : ''}${icon.locked ? ' is-off' : ''}${
                   icon.extra ? ' cx-tile--wide' : ''
@@ -719,7 +748,13 @@ export function CommandDashboard({
 
   /** Stock purchases: tap once per unit. */
   const stockNote = (max: number, cost: number, left: number) =>
-    max > 0 ? `${left} left` : !canPay(cost) ? `Need ${cash(need(cost))}` : 'Limit reached';
+    max > 0 ? undefined : left > 0 && !canPay(cost) ? `Need ${cash(need(cost))}` : 'Limit reached';
+  /** The magazine bar beside a stocked item. */
+  const magazine = (have: number, canBuy: number, allowance: number) => ({
+    have,
+    canBuy,
+    later: Math.max(0, allowance - canBuy),
+  });
   const stockTone = (max: number, cost: number): PieIcon['tone'] =>
     max > 0 ? 'ready' : !canPay(cost) ? 'poor' : 'idle';
 
@@ -773,6 +808,7 @@ export function CommandDashboard({
           info: 'Shields absorb it; bunkers break it.',
           lit: me.bombs > 0,
           count: me.bombs,
+          mag: magazine(me.bombs, bombMax, MAX_BOMBS_PER_ROUND - me.bombsBoughtThisRound),
           price: cash(nukeCost),
           priceNote: withTech(ballisticExtra),
           note: stockNote(bombMax, nukeCost, MAX_BOMBS_PER_ROUND - me.bombsBoughtThisRound),
@@ -789,6 +825,7 @@ export function CommandDashboard({
           info: 'Disables laser networks.',
           lit: (me.magneticBombs ?? 0) > 0,
           count: me.magneticBombs ?? 0,
+          mag: magazine(me.magneticBombs ?? 0, magneticMax, MAX_MAGNETIC_PER_GAME - (me.magneticBought ?? 0)),
           price: cash(magneticCost),
           priceNote: withTech(ballisticExtra),
           note: stockNote(magneticMax, magneticCost, MAX_MAGNETIC_PER_GAME - (me.magneticBought ?? 0)),
@@ -805,6 +842,7 @@ export function CommandDashboard({
           info: 'Cracks bunkers, ignores shields.',
           lit: (me.hydrogenBombs ?? 0) > 0,
           count: me.hydrogenBombs ?? 0,
+          mag: magazine(me.hydrogenBombs ?? 0, hydrogenMax, MAX_HYDROGEN_PER_GAME - (me.hydrogenBought ?? 0)),
           price: cash(hydrogenCost),
           priceNote: withTech(ballisticExtra),
           note: stockNote(hydrogenMax, hydrogenCost, MAX_HYDROGEN_PER_GAME - (me.hydrogenBought ?? 0)),
@@ -821,6 +859,7 @@ export function CommandDashboard({
           info: `Each hit bills ${cash(DRONE_DAMAGE)}.`,
           lit: me.drones > 0,
           count: me.drones,
+          mag: magazine(me.drones, droneMax, MAX_DRONES_PER_ROUND - me.dronesBoughtThisRound),
           price: cash(droneCost),
           priceNote: withTech(aerospaceExtra),
           note: stockNote(droneMax, droneCost, MAX_DRONES_PER_ROUND - me.dronesBoughtThisRound),
