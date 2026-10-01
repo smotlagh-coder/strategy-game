@@ -31,8 +31,6 @@ const blankAlliance = (): AllianceState => ({
   with: null,
   proposalId: 0,
   declined: {},
-  shareBallistic: false,
-  shareAerospace: false,
   version: 0,
 });
 
@@ -45,6 +43,17 @@ const canAlly = (n: NationState | undefined): n is NationState => Boolean(n && !
 
 /** What a pact's money terms move each round, in $M. */
 export const ALLIANCE_TRIBUTE = 10;
+
+/**
+ * A payment never takes more than this share of what the payer earned this round,
+ * so a nation down to a city or two is not bled dry by a pact signed when it was big.
+ */
+export const PACT_INCOME_SHARE = 0.2;
+
+/** What actually changes hands: the agreed amount, held to the payer's share of income. */
+export function pactPayment(owed: number, payerRevenue: number): number {
+  return Math.max(0, Math.min(Math.abs(owed), Math.floor(payerRevenue * PACT_INCOME_SHARE)));
+}
 
 /** The three offers an invitation can carry: even, "I pay", or "you pay". */
 export type TributeTerms = -10 | 0 | 10;
@@ -158,8 +167,6 @@ export function proposeAlliance(
     (a) => ({
       with: to,
       proposalId: a.version + 1,
-      shareBallistic: false,
-      shareAerospace: false,
       tribute: terms,
       terms: null,
     }),
@@ -175,8 +182,6 @@ export function proposeAlliance(
 
 const clearedPointer = () => ({
   with: null,
-  shareBallistic: false,
-  shareAerospace: false,
   tribute: 0,
   terms: null,
 });
@@ -225,8 +230,6 @@ export function acceptAlliance(state: GameState, from: NationId, actor: NationId
       return {
         with: from,
         declined,
-        shareBallistic: false,
-        shareAerospace: false,
         // The terms the inviter offered are the terms of the pact
         terms: { proposer: from, tribute: allianceOf(state.nations[from]).tribute ?? 0 },
       };
@@ -257,31 +260,6 @@ export function declineAlliance(state: GameState, from: NationId, actor: NationI
 
 export type ShareKind = 'ballistic' | 'aerospace';
 
-/** Offer (or take back) Ballistic Missile Tech / Aerospace Tech for the ally. */
-export function setTechSharing(
-  state: GameState,
-  actor: NationId,
-  kind: ShareKind,
-  on: boolean,
-): GameState {
-  if (!allyOf(state, actor)) return state;
-  const n = state.nations[actor];
-  if (kind === 'ballistic' ? !n.hasNuclearTech : !n.hasAerospaceTech) return state;
-  const a = allianceOf(n);
-  const key = kind === 'ballistic' ? 'shareBallistic' : 'shareAerospace';
-  if (a[key] === on) return state;
-  const ally = allyOf(state, actor)!;
-  const label = kind === 'ballistic' ? 'Ballistic Missile Tech' : 'Aerospace Tech';
-  return withAlliance(
-    state,
-    actor,
-    () => ({ [key]: on }),
-    on
-      ? `${nationDef(actor).name} shared ${label} with ${nationDef(ally).name}.`
-      : `${nationDef(actor).name} stopped sharing ${label}.`,
-  );
-}
-
 /* ─────────── what an alliance gives, read off the pair ─────────── */
 
 const techReady = (n: NationState, kind: ShareKind, round: number): boolean => {
@@ -291,13 +269,12 @@ const techReady = (n: NationState, kind: ShareKind, round: number): boolean => {
     unlocked <= round;
 };
 
-/** The ally whose shared tech `id` is using, or null. */
+/** The ally whose tech `id` is using, or null. Allies share it automatically, with no switch to flip. */
 export function techLenderOf(state: GameState, id: NationId, kind: ShareKind): NationId | null {
   const ally = allyOf(state, id);
   if (!ally) return null;
   const lender = state.nations[ally];
-  const shared = kind === 'ballistic' ? allianceOf(lender).shareBallistic : allianceOf(lender).shareAerospace;
-  return shared && techReady(lender, kind, state.round) ? ally : null;
+  return techReady(lender, kind, state.round) ? ally : null;
 }
 
 /** Ballistic Missile Tech, owned or lent by an ally. */

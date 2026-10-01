@@ -3,6 +3,7 @@ import { ART } from '../data/art';
 import { nationDef } from '../data/nations';
 import {
   ALLIANCE_TRIBUTE,
+  PACT_INCOME_SHARE,
   TALK_MAX_MS,
   type AllianceTalk,
   acceptAlliance,
@@ -19,7 +20,6 @@ import {
   leaveAlliance,
   outgoingInvite,
   pactTerms,
-  setTechSharing,
   talksDone,
   tributeFrom,
 } from '../game/alliance';
@@ -114,7 +114,8 @@ function TermsLine({ toMe, partner }: { toMe: number; partner: string }) {
       <b>
         {toMe > 0 ? '+' : '−'}${Math.abs(toMe)}M
       </b>
-      {toMe > 0 ? ` every round · ${partner} pays you` : ` every round · you pay ${partner}`}
+      {toMe > 0 ? ` a round · ${partner} pays you` : ` a round · you pay ${partner}`}
+      <i className="ally-cap"> · never over {Math.round(PACT_INCOME_SHARE * 100)}% of the payer’s income</i>
     </p>
   );
 }
@@ -122,7 +123,7 @@ function TermsLine({ toMe, partner }: { toMe: number; partner: string }) {
 const PACT_TERMS = [
   'Allies never strike each other',
   'Laser cover for both nations',
-  'Spy service shared free',
+  'Ballistic tech, aerospace tech and the spy service are shared automatically',
   'One sanction each, enforced by both',
   'Pair drones with an ally’s bombs; the kill is shared',
   'Leave any round',
@@ -433,7 +434,6 @@ export function AllianceSheet({
             actorId={actorId}
             allyId={ally}
             leaderArt={leaderArt}
-            onOrder={onOrder}
             onLeave={() => {
               onOrder((s) => leaveAlliance(s, actorId));
             }}
@@ -551,56 +551,40 @@ function AllyPanel({
   actorId,
   allyId,
   leaderArt,
-  onOrder,
   onLeave,
 }: {
   state: GameState;
   actorId: NationId;
   allyId: NationId;
   leaderArt: (id: NationId) => string;
-  onOrder: (fn: (s: GameState) => GameState, label?: string) => void;
   onLeave: () => void;
 }) {
   const me = state.nations[actorId];
-  const mine = allianceOf(me);
-  const theirs = allianceOf(state.nations[allyId]);
   const ally = state.nations[allyId];
   const allyName = nationDef(allyId).name;
 
+  /** Tech and the spy service pass between allies on their own; this only shows who brings what. */
   const shareRow = (
-    kind: 'ballistic' | 'aerospace',
+    key: string,
     art: string,
     label: string,
-    owned: boolean,
-    on: boolean,
-    theyShare: boolean,
+    mine: boolean,
+    theirs: boolean,
   ) => (
-    <div className="ally-share" key={kind}>
+    <div className={`ally-share${mine || theirs ? ' is-live' : ''}`} key={key}>
       <img src={art} alt="" draggable={false} />
       <div>
         <b>{label}</b>
         <small>
-          {theyShare
-            ? `${allyName} shares it with you`
-            : owned
-              ? on
-                ? `You share it with ${allyName}`
-                : `Hand it to ${allyName}`
-              : 'Not unlocked yet'}
+          {mine && theirs
+            ? `You both have it`
+            : theirs
+              ? `${allyName} shares it with you`
+              : mine
+                ? `Shared with ${allyName}`
+                : 'Shared as soon as either of you unlocks it'}
         </small>
       </div>
-      {owned && (
-        <button
-          type="button"
-          className={`ally-switch${on ? ' is-on' : ''}`}
-          role="switch"
-          aria-checked={on}
-          aria-label={`Share ${label} with ${allyName}`}
-          onClick={() => onOrder((s) => setTechSharing(s, actorId, kind, !on))}
-        >
-          <i />
-        </button>
-      )}
     </div>
   );
 
@@ -624,22 +608,9 @@ function AllyPanel({
       />
 
       <div className="ally-shares">
-        {shareRow(
-          'ballistic',
-          ART.cop.ballisticTech,
-          'Ballistic tech',
-          me.hasNuclearTech,
-          mine.shareBallistic,
-          theirs.shareBallistic && ally.hasNuclearTech,
-        )}
-        {shareRow(
-          'aerospace',
-          ART.cop.aerospaceTech,
-          'Aerospace tech',
-          me.hasAerospaceTech,
-          mine.shareAerospace,
-          theirs.shareAerospace && ally.hasAerospaceTech,
-        )}
+        {shareRow('ballistic', ART.cop.ballisticTech, 'Ballistic tech', me.hasNuclearTech, ally.hasNuclearTech)}
+        {shareRow('aerospace', ART.cop.aerospaceTech, 'Aerospace tech', me.hasAerospaceTech, ally.hasAerospaceTech)}
+        {shareRow('spy', ART.cop.spy, 'Spy service', me.hasSpyNetwork, ally.hasSpyNetwork)}
       </div>
 
       <PactTerms />

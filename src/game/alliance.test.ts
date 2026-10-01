@@ -13,6 +13,8 @@ import {
   allianceTalks,
   incomingInvites,
   inviteBlockedReason,
+  pactPayment,
+  PACT_INCOME_SHARE,
   pactTerms,
   talksDone,
   TALK_MAX_MS,
@@ -21,7 +23,6 @@ import {
   leaveAlliance,
   outgoingInvite,
   proposeAlliance,
-  setTechSharing,
 } from './alliance';
 import {
   applyIncome,
@@ -42,6 +43,7 @@ import {
   whoIsSanctioning,
 } from './engine';
 import { answerAiInvites, proposeAllianceWithReply, runAiAlliances } from './allianceAi';
+import { allScores } from './engine';
 import { runAiNationTurn } from './ai';
 import { ballisticBundleCost, buyBombsBundled } from './bundles';
 import { mergeNationPlanning } from '../lib/onlineSync';
@@ -273,16 +275,23 @@ describe('shared tech', () => {
       },
     });
 
-  it('stays private until the owner offers it', () => {
+  it('passes to the ally the moment the pact is made, with nothing to switch on', () => {
     const s = allied(rich());
+    expect(hasBallisticTech(s, 'uk')).toBe(true);
+    expect(hasAerospaceAccess(s, 'uk')).toBe(true);
+    expect(ballisticBundleCost(s, 'uk')).toBe(0);
+  });
+
+  it('is not shared with someone who is only invited', () => {
+    const s = proposeAlliance(rich(), 'uk', 'us');
     expect(hasBallisticTech(s, 'uk')).toBe(false);
+    expect(hasAerospaceAccess(s, 'uk')).toBe(false);
     expect(ballisticBundleCost(s, 'uk')).toBe(COSTS.ballisticMissileTech);
   });
 
   it('lets the ally build and fire warheads without buying the tech', () => {
-    const s = setTechSharing(allied(rich()), 'us', 'ballistic', true);
+    const s = allied(rich());
     expect(hasBallisticTech(s, 'uk')).toBe(true);
-    expect(hasAerospaceAccess(s, 'uk')).toBe(false);
     expect(canBuyBombs(s, 'uk')).toBe(true);
     expect(ballisticBundleCost(s, 'uk')).toBe(0);
 
@@ -295,18 +304,31 @@ describe('shared tech', () => {
     expect(fired).not.toBe(bought);
   });
 
-  it('can be taken back, and ends with the pact', () => {
-    let s = setTechSharing(allied(rich()), 'us', 'aerospace', true);
-    expect(hasAerospaceAccess(s, 'uk')).toBe(true);
-    s = setTechSharing(s, 'us', 'aerospace', false);
-    expect(hasAerospaceAccess(s, 'uk')).toBe(false);
-    s = setTechSharing(s, 'us', 'aerospace', true);
-    expect(hasAerospaceAccess(leaveAlliance(s, 'uk'), 'uk')).toBe(false);
+  it('flows both ways and ends with the pact', () => {
+    const both = allied(
+      table({
+        us: { hasNuclearTech: true, nuclearTechUnlockedRound: 1 },
+        uk: { hasAerospaceTech: true, aerospaceTechUnlockedRound: 1 },
+      }),
+    );
+    expect(hasBallisticTech(both, 'uk')).toBe(true);
+    expect(hasAerospaceAccess(both, 'us')).toBe(true);
+    const left = leaveAlliance(both, 'uk');
+    expect(hasBallisticTech(left, 'uk')).toBe(false);
+    expect(hasAerospaceAccess(left, 'us')).toBe(false);
   });
 
-  it('only lends tech the owner has', () => {
-    const s = setTechSharing(allied(), 'us', 'ballistic', true);
-    expect(s.nations.us.alliance?.shareBallistic).toBe(false);
+  it('only lends tech the owner has unlocked', () => {
+    const s = allied();
+    expect(hasBallisticTech(s, 'uk')).toBe(false);
+    const locked = allied(table({ us: { hasNuclearTech: true, nuclearTechUnlockedRound: 4 } }));
+    expect(hasBallisticTech(locked, 'uk')).toBe(false);
+  });
+
+  it('brings the spy service the same way', () => {
+    const s = allied(table({ us: { hasSpyNetwork: true } }));
+    expect(hasSpyService(s, 'uk')).toBe(true);
+    expect(hasSpyService(leaveAlliance(s, 'uk'), 'uk')).toBe(false);
   });
 });
 
@@ -468,6 +490,95 @@ describe('pact money', () => {
   });
 });
 
+describe('pact payments stay in proportion', () => {
+  it('never take more than the income share of the payer’s round', () => {
+    expect(PACT_INCOME_SHARE).toBe(0.2);
+    expect(pactPayment(10, 100)).toBe(10);
+    expect(pactPayment(10, 50)).toBe(10);
+    expect(pactPayment(10, 36)).toBe(7);
+    expect(pactPayment(10, 18)).toBe(3);
+    expect(pactPayment(10, 0)).toBe(0);
+    expect(pactPayment(-10, 36)).toBe(7);
+  });
+
+  it('shrinks a payment from a nation that has lost its cities', () => {
+    const pact = acceptAlliance(proposeAlliance(table(), 'uk', 'us', 10), 'us', 'uk');
+    const cities = pact.nations.us.cities.map((c, i) => ({ ...c, destroyed: i > 0 }));
+    const small = { ...pact, round: 3, nations: { ...pact.nations, us: { ...pact.nations.us, cities } } };
+    const paid = applyIncome(small);
+    const us = paid.lastIncomeLedger.find((e) => e.nationId === 'us')!;
+    const uk = paid.lastIncomeLedger.find((e) => e.nationId === 'uk')!;
+    expect(us.revenue).toBe(18);
+    expect(us.pactTransfer).toBe(-3);
+    expect(uk.pactTransfer).toBe(3);
+  });
+
+  it('is the full amount for a healthy nation', () => {
+    const pact = acceptAlliance(proposeAlliance(table(), 'uk', 'us', 10), 'us', 'uk');
+    const paid = applyIncome({ ...pact, round: 3 });
+    expect(paid.lastIncomeLedger.find((e) => e.nationId === 'us')?.pactTransfer).toBe(-10);
+  });
+});
+
+describe('AI alliance fairness', () => {
+  const rich = { hasSpyNetwork: true, hasAerospaceTech: true, hasNuclearTech: true };
+  /** Leaves `keep` cities standing, so a nation slides down the table. */
+  const shrink = (state: GameState, id: NationId, keep: number): GameState => ({
+    ...state,
+    nations: {
+      ...state.nations,
+      [id]: {
+        ...state.nations[id],
+        cities: state.nations[id].cities.map((c, i) => ({ ...c, destroyed: i >= keep })),
+      },
+    },
+  });
+  const order = (s: GameState) => allScores(s).map((r) => r.nationId);
+
+  it('does not let the two front-runners lock the table', () => {
+    // france and russia lead; us and uk are far behind
+    let s = table({ france: rich, russia: { hasSpyNetwork: true, hasNuclearTech: true } });
+    s = shrink(shrink(s, 'us', 1), 'uk', 2);
+    expect(order(s).slice(0, 2).sort()).toEqual(['france', 'russia']);
+    const after = runAiAlliances(s, 'russia');
+    expect(allyOf(after, 'russia')).toBeNull();
+    expect(outgoingInvite(after, 'russia')?.to).not.toBe('france');
+    // and an invitation between them is turned down
+    const asked = proposeAllianceWithReply(s, 'france', 'russia', 0);
+    expect(allyOf(asked, 'russia')).toBeNull();
+  });
+
+  it('still pairs a front-runner with someone further back', () => {
+    let s = table({ uk: rich });
+    s = shrink(shrink(shrink(s, 'us', 1), 'russia', 3), 'uk', 1);
+    const asked = runAiAlliances(s, 'france');
+    // france goes for a partner outside the front pair; a human answers for themselves
+    const to = outgoingInvite(asked, 'france')?.to ?? allyOf(asked, 'france');
+    expect(to).toBeTruthy();
+    expect(order(s).slice(0, 2)).toContain('france');
+    expect(order(s).slice(0, 2)).not.toContain(to);
+  });
+
+  it('offers even terms to a neighbour in the standings', () => {
+    const base = table({ france: rich });
+    // france leads and russia is one place back
+    const mid = shrink(shrink(shrink(base, 'us', 1), 'uk', 1), 'russia', 3);
+    expect(order(mid)[1]).toBe('russia');
+    const sent = runAiAlliances(mid, 'france').nations.france.alliance;
+    expect(sent?.tribute ?? 0).toBe(0);
+  });
+
+  it('asks for money from a nation well behind it', () => {
+    const base = table({ uk: rich });
+    // france leads and uk is at the back, still worth asking
+    const s = shrink(shrink(shrink(base, 'us', 1), 'russia', 3), 'uk', 1);
+    expect(order(s)[0]).toBe('france');
+    const sent = runAiAlliances(s, 'france').nations.france.alliance;
+    expect(sent?.with).toBe('uk');
+    expect(sent?.tribute).toBe(-10);
+  });
+});
+
 describe('AI in alliances', () => {
   /** A strong, well-equipped France and a weak, bare Russia. */
   const aiTable = () =>
@@ -521,7 +632,18 @@ describe('AI in alliances', () => {
 
   it('may pair up two AI nations', () => {
     const rich = table({ france: { hasSpyNetwork: true, hasAerospaceTech: true, hasNuclearTech: true } });
-    const s = runAiAlliances(rich, 'russia');
+    // russia sits near the bottom, so the pairing is not two front-runners
+    const low = {
+      ...rich,
+      nations: {
+        ...rich.nations,
+        russia: {
+          ...rich.nations.russia,
+          cities: rich.nations.russia.cities.map((c, i) => ({ ...c, destroyed: i > 0 })),
+        },
+      },
+    };
+    const s = runAiAlliances(low, 'russia');
     expect(allyOf(s, 'russia') ?? outgoingInvite(s, 'russia')?.to).toBe('france');
   });
 

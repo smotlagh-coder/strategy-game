@@ -12,7 +12,6 @@ import {
   inviteBlockedReason,
   outgoingInvite,
   proposeAlliance,
-  setTechSharing,
   tributeFrom,
 } from './alliance';
 import { allScores, laserNetwork, totalWarheads } from './engine';
@@ -35,6 +34,16 @@ const SWITCH_MARGIN = 1.5;
 const POACH_EXTRA = 2;
 /** Humans are the table's real opponents; an AI weighs a human partner slightly higher. */
 const HUMAN_LIKING = 1;
+
+/** How far apart two standings must be (0 = same, 1 = top to bottom) before an AI puts money on the table. */
+const TERMS_GAP = 0.5;
+/** Two front-runners do not team up to lock the table: the rest would never catch them. */
+function lockout(state: GameState, a: NationId, b: NationId): boolean {
+  const rows = allScores(state).filter((r) => !r.eliminated);
+  if (rows.length < 4) return false;
+  const front = new Set(rows.slice(0, 2).map((r) => r.nationId));
+  return front.has(a) && front.has(b);
+}
 
 /** 0 = leading … 1 = last, among the nations still in the game. */
 function standing(state: GameState, id: NationId): number {
@@ -72,6 +81,7 @@ export function aiWouldAccept(
   from: NationId,
   tribute: number,
 ): boolean {
+  if (lockout(state, ai, from)) return false;
   const need = standing(state, ai) * 1.5;
   // Nobody joins hands with the leader while they are still chasing them
   const chasing = standing(state, from) === 0 && standing(state, ai) > 0 ? 1 : 0;
@@ -90,8 +100,9 @@ function partnerValue(state: GameState, ai: NationId, partner: NationId): number
 function aiTerms(state: GameState, ai: NationId, partner: NationId): number {
   const mine = standing(state, ai);
   const theirs = standing(state, partner);
-  if (mine >= 0.6 && theirs < mine) return ALLIANCE_TRIBUTE;
-  if (mine <= 0.34 && theirs > mine) return -ALLIANCE_TRIBUTE;
+  // Money only changes hands when the two are clearly apart: half the table or more
+  if (mine >= 0.6 && mine - theirs >= TERMS_GAP) return ALLIANCE_TRIBUTE;
+  if (mine <= 0.34 && theirs - mine >= TERMS_GAP) return -ALLIANCE_TRIBUTE;
   return 0;
 }
 
@@ -115,16 +126,7 @@ export function answerAiInvites(state: GameState, ai: NationId): GameState {
   }
   if (chosen) {
     s = acceptAlliance(s, chosen, ai);
-    s = shareTech(s, ai);
   }
-  return s;
-}
-
-/** An AI hands its tech to a partner freely — it costs the AI nothing. */
-function shareTech(state: GameState, ai: NationId): GameState {
-  let s = state;
-  s = setTechSharing(s, ai, 'ballistic', true);
-  s = setTechSharing(s, ai, 'aerospace', true);
   return s;
 }
 
@@ -141,9 +143,8 @@ export function proposeAllianceWithReply(
 }
 
 /**
- * One AI nation's diplomacy for the round: answer what is waiting, keep its
- * tech shared with an ally, and — when it has no partner — go and ask the
- * nation that would complete it best, human or AI.
+ * One AI nation's diplomacy for the round: answer what is waiting and — when
+ * it has no partner — go and ask the nation that would complete it best, human or AI.
  */
 export function runAiAlliances(state: GameState, ai: NationId): GameState {
   const me = state.nations[ai];
@@ -151,7 +152,7 @@ export function runAiAlliances(state: GameState, ai: NationId): GameState {
   if (!allianceWindowOpen(state)) return state;
 
   let s = answerAiInvites(state, ai);
-  if (allyOf(s, ai)) return shareTech(s, ai);
+  if (allyOf(s, ai)) return s;
 
   // Already waiting on an answer from a human: do not nag
   const out = outgoingInvite(s, ai);
@@ -161,6 +162,7 @@ export function runAiAlliances(state: GameState, ai: NationId): GameState {
     .filter((id) => id !== ai && !inviteBlockedReason(s, ai, id))
     // A nation that said no once is not asked again
     .filter((id) => allianceOf(s.nations[id]).declined[ai] === undefined)
+    .filter((id) => !lockout(s, ai, id))
     .map((id) => ({ id, score: allianceAppeal(s, ai, id) }))
     // Someone already in a pact has to be worth leaving it for
     .filter((c) => c.score >= ACCEPT_AT + (allyOf(s, c.id) ? POACH_EXTRA : 0))
@@ -169,5 +171,5 @@ export function runAiAlliances(state: GameState, ai: NationId): GameState {
   if (!pick) return s;
 
   s = proposeAllianceWithReply(s, pick.id, ai, aiTerms(s, ai, pick.id));
-  return allyOf(s, ai) ? shareTech(s, ai) : s;
+  return s;
 }

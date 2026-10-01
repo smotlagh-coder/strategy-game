@@ -71,10 +71,6 @@ export interface AllianceState {
   proposalId: number;
   /** Invitations this nation turned down: inviter → their proposalId */
   declined: Partial<Record<NationId, number>>;
-  /** Hand Ballistic Missile Tech to the ally */
-  shareBallistic: boolean;
-  /** Hand Aerospace Tech to the ally */
-  shareAerospace: boolean;
   /** Bumped on every change — the higher counter is the owner's newer choice */
   version: number;
   /**

@@ -9134,7 +9134,7 @@ button.cx-tile:not(.is-off):hover .cx-tile__orb { filter: brightness(1.25); }
 .ally-shares { display: flex; flex-direction: column; gap: 0.45rem; }
 .ally-share {
   display: grid;
-  grid-template-columns: 2.6rem minmax(0, 1fr) auto;
+  grid-template-columns: 2.6rem minmax(0, 1fr);
   gap: 0.7rem;
   align-items: center;
   padding: 0.4rem 0.6rem;
@@ -9144,28 +9144,7 @@ button.cx-tile:not(.is-off):hover .cx-tile__orb { filter: brightness(1.25); }
 .ally-share img { width: 2.6rem; height: 2.6rem; object-fit: contain; }
 .ally-share b { display: block; font-size: 0.9rem; }
 .ally-share small { color: #93a69a; font-size: 0.75rem; }
-.ally-switch {
-  position: relative;
-  width: 3.1rem;
-  height: 1.8rem;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  background: rgba(255, 255, 255, 0.1);
-  cursor: pointer;
-  transition: background 0.2s;
-}
-.ally-switch i {
-  position: absolute;
-  top: 0.18rem;
-  left: 0.2rem;
-  width: 1.3rem;
-  height: 1.3rem;
-  border-radius: 50%;
-  background: #eef5f0;
-  transition: transform 0.2s;
-}
-.ally-switch.is-on { background: #2f9a4b; border-color: #6dff8c; }
-.ally-switch.is-on i { transform: translateX(1.2rem); }
+.ally-share.is-live { background: rgba(80, 200, 120, 0.12); }
 
 .ally-toast {
   position: absolute;
@@ -9445,4 +9424,13 @@ button.cx-tile:not(.is-off):hover .cx-tile__orb { filter: brightness(1.25); }
   .cop-pie__icon.is-lit::after,
   .cx-mini.is-lit::before,
   .cx-mini.is-lit::after { animation: none; opacity: 0; }
+}
+
+/* Payment cap note under the money line */
+.ally-money .ally-cap {
+  display: block;
+  margin-top: 0.1rem;
+  font-style: normal;
+  font-size: 0.72rem;
+  opacity: 0.7;
 }

@@ -104,8 +104,18 @@ export class SimRoom {
 export function makeRoom(humans: number, gameId = 'alliance-room'): SimRoom {
   const uids = ['uid-a', 'uid-b', 'uid-c', 'uid-d'].slice(0, humans);
   const names = Object.fromEntries(uids.map((u, i) => [u, `Player ${i + 1}`]));
-  const state = buildOnlineGameState(assignNations(uids), names, gameId);
-  return new SimRoom(state, uids);
+  // The deal of nations and AI seats is random in the real game. Here it is fixed by the
+  // game id, so a failing test fails the same way every time.
+  const hash = [...gameId].reduce((h, ch) => (Math.imul(h, 31) + ch.charCodeAt(0)) >>> 0, 7);
+  const dice = rng(hash);
+  const realRandom = Math.random;
+  Math.random = dice;
+  try {
+    const state = buildOnlineGameState(assignNations(uids, {}, dice), names, gameId);
+    return new SimRoom(state, uids);
+  } finally {
+    Math.random = realRandom;
+  }
 }
 
 /** A room that has played round 1 and sits at the start of round 2. */

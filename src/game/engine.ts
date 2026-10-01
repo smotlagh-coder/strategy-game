@@ -31,6 +31,7 @@ import {
 } from '../data/nations';
 import {
   alliancePairs,
+  pactPayment,
   allyOf,
   areAllies,
   effectiveSanctions,
@@ -972,7 +973,8 @@ export function applyIncome(state: GameState): GameState {
     const owed = tributeFrom(state, a);
     if (owed === 0) continue;
     const [payer, payee] = owed > 0 ? [a, b] : [b, a];
-    const amount = Math.min(Math.abs(owed), Math.max(0, Math.floor(nations[payer].money)));
+    const payerRevenue = ledger.find((e) => e.nationId === payer)?.revenue ?? 0;
+    const amount = Math.min(pactPayment(owed, payerRevenue), Math.max(0, Math.floor(nations[payer].money)));
     if (amount <= 0) continue;
     nations[payer] = { ...nations[payer], money: +(nations[payer].money - amount).toFixed(2) };
     nations[payee] = { ...nations[payee], money: +(nations[payee].money + amount).toFixed(2) };

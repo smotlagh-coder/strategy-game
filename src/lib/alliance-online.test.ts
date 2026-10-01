@@ -221,15 +221,19 @@ describe('alliances online: AI nations', () => {
     expect(pacts).toBeGreaterThan(0);
   });
 
-  it('running the AI again changes nothing about its pacts', () => {
+  it('running the AI on a finished round changes nothing, and a forced rerun never breaks a pact', () => {
     for (let n = 0; n < 6; n += 1) {
       const room = roomAtRound2(2, `ai-idem-${n}`);
       const once = room.view(room.uids[0]);
+      // the real guard: a round whose AI planning is done is left alone
+      expect(runOnlineAiPlanning(once)).toBe(once);
+      // forced again, standings have moved on (the AI bought things), so it may reach new
+      // pacts — but the ones already made stand, and the table stays consistent
       const twice = runOnlineAiPlanning({ ...once, aiPlanningComplete: false });
-      expect(pactsOf(twice)).toBe(pactsOf(once));
-      for (const id of once.turnOrder) {
-        expect(twice.nations[id].alliance?.with ?? null, id).toBe(once.nations[id].alliance?.with ?? null);
+      for (const [a, b] of alliancePairs(once)) {
+        expect(areAllies(twice, a, b), `${a}+${b} in game ${n}`).toBe(true);
       }
+      expect(allianceProblems(twice)).toEqual([]);
     }
   });
 });
