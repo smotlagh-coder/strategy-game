@@ -19,6 +19,7 @@ import {
   maxHydrogenPurchasable,
   maxMagneticPurchasable,
 } from './engine';
+import { hasAerospaceAccess, hasBallisticTech } from './alliance';
 import type { GameState, NationId } from '../types';
 
 /**
@@ -32,28 +33,29 @@ const idOf = (state: GameState, nationId?: NationId) => nationId ?? currentNatio
 
 /** What the first warhead also costs: Ballistic Missile Tech, until owned. */
 export function ballisticBundleCost(state: GameState, nationId?: NationId): number {
-  const n = state.nations[idOf(state, nationId)];
-  return n.hasNuclearTech ? 0 : COSTS.ballisticMissileTech;
+  const id = idOf(state, nationId);
+  // Tech an ally lends is as good as one's own
+  return hasBallisticTech(state, id) ? 0 : COSTS.ballisticMissileTech;
 }
 
 /** What the first drone pack or laser also costs: Aerospace Tech, until owned. */
 export function aerospaceBundleCost(state: GameState, nationId?: NationId): number {
-  const n = state.nations[idOf(state, nationId)];
-  return n.hasAerospaceTech ? 0 : COSTS.aerospaceTech;
+  const id = idOf(state, nationId);
+  return hasAerospaceAccess(state, id) ? 0 : COSTS.aerospaceTech;
 }
 
 /** The state with Ballistic Missile Tech unlocked, or null when it cannot be paid for. */
 function withBallistic(state: GameState, id: NationId): GameState | null {
   const n = state.nations[id];
   if (n.eliminated) return null;
-  if (n.hasNuclearTech) return state;
+  if (hasBallisticTech(state, id)) return state;
   return n.money >= COSTS.ballisticMissileTech ? buyNuclearTech(state, id) : null;
 }
 
 function withAerospace(state: GameState, id: NationId): GameState | null {
   const n = state.nations[id];
   if (n.eliminated) return null;
-  if (n.hasAerospaceTech) return state;
+  if (hasAerospaceAccess(state, id)) return state;
   return n.money >= COSTS.aerospaceTech ? buyAerospaceTech(state, id) : null;
 }
 

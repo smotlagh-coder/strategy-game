@@ -59,8 +59,30 @@ export interface City {
   rebuiltRound?: number;
 }
 
+/**
+ * One nation's side of an alliance. Only the owning client writes it; two
+ * nations are allies exactly when each one points at the other, so every
+ * effect is read off the pair instead of being stored (see game/alliance.ts).
+ */
+export interface AllianceState {
+  /** The nation this one has invited, or is allied with once they point back */
+  with: NationId | null;
+  /** Identifies the current invitation, so a decline only covers that one */
+  proposalId: number;
+  /** Invitations this nation turned down: inviter → their proposalId */
+  declined: Partial<Record<NationId, number>>;
+  /** Hand Ballistic Missile Tech to the ally */
+  shareBallistic: boolean;
+  /** Hand Aerospace Tech to the ally */
+  shareAerospace: boolean;
+  /** Bumped on every change — the higher counter is the owner's newer choice */
+  version: number;
+}
+
 export interface NationState {
   id: NationId;
+  /** Alliance pact (absent until the nation first touches the alliance tools) */
+  alliance?: AllianceState;
   money: number;
   cities: City[];
   /** Ballistic Missile Tech — unlocks nuclear / hydrogen / magnetic warheads */
@@ -192,6 +214,8 @@ export interface RoundWorldEvent {
   cover?: 'shield' | 'bunker';
   /** A magnetic bomb had already darkened a laser network for this hit */
   laserDown?: boolean;
+  /** An ally's laser network covered the city (its own network was spent or absent) */
+  coveredBy?: NationId;
 }
 
 /** Income applied at round start (shown on aftermath) */

@@ -42,6 +42,7 @@ import {
   shieldsLeft,
   whoIsSanctioning,
 } from './game/engine';
+import { alliancePairs, allyOf, areAllies, hasSpyService, pactSlot } from './game/alliance';
 import { runAllAiUntilHumanOrSummary, runAiTurn, runOnlineAiPlanning } from './game/ai';
 import { buildRoundBriefing, combatLedger } from './game/briefing';
 import type {
@@ -121,7 +122,7 @@ type WizardStep = 'command' | 'strike';
  * Spy hoodies combine with those looks when both apply.
  */
 function leaderArt(state: GameState, id: NationId): string {
-  const spy = Boolean(state.nations[id]?.hasSpyNetwork);
+  const spy = hasSpyService(state, id);
   const angel = state.angelNationId === id;
   const evil = state.evilNationId === id;
   if (spy && angel) return ART.leadersSpyAngel[id];
@@ -130,6 +131,31 @@ function leaderArt(state: GameState, id: NationId): string {
   if (angel) return ART.leadersAngel[id];
   if (evil) return ART.leadersEvil[id];
   return ART.leaders[id];
+}
+
+/**
+ * Alliances are public — every commander sees who stands with whom, with or
+ * without a spy service. A pact wears one colour everywhere it shows up.
+ */
+const pactClass = (state: GameState, id: NationId): string => {
+  const slot = pactSlot(state, id);
+  return slot == null ? '' : `has-pact pact-${slot % 4}`;
+};
+
+/** "🤝 [ally face] UK": who this nation is allied with. Never sits over a portrait. */
+function PactTag({ state, id, full = false }: { state: GameState; id: NationId; full?: boolean }) {
+  const ally = allyOf(state, id);
+  if (!ally) return null;
+  return (
+    <span
+      className={`pact-tag ${pactClass(state, id)}`}
+      title={`${nationDef(id).name} is allied with ${nationDef(ally).name}`}
+    >
+      <span aria-hidden>🤝</span>
+      <img src={leaderArt(state, ally)} alt="" draggable={false} />
+      {full ? `Allied · ${nationDef(ally).shortName}` : nationDef(ally).shortName}
+    </span>
+  );
 }
 
 /**
@@ -1087,7 +1113,7 @@ function DashWorld({
           key={row.nationId}
           className={`dash__nation ${row.eliminated ? 'is-out' : ''} ${row.isYou ? 'is-you' : ''} ${
             row.rank === 1 && !row.eliminated ? 'is-lead' : ''
-          }`}
+          } ${pactClass(state, row.nationId)}`}
         >
           <span className="dash__rank">{row.eliminated ? '—' : row.rank}</span>
           <img
@@ -1102,6 +1128,7 @@ function DashWorld({
               {nationDef(row.nationId).shortName}
               {row.isYou && <i className="dash__you">You</i>}
             </b>
+            <PactTag state={state} id={row.nationId} />
             <em>{row.eliminated ? 'OUT' : `${row.total} pts`}</em>
           </span>
           <ul className="dash__nation-cities">
@@ -1387,10 +1414,32 @@ function RoundBriefingOverlay({
               <i className="is-offence" /> strike
             </span>
           </div>
+          <PactStrip state={state} />
           <DashWorld state={state} briefing={briefing} />
         </section>
       </div>
       </div>
+    </div>
+  );
+}
+
+/** Every alliance at the table, up front on the briefing. */
+function PactStrip({ state }: { state: GameState }) {
+  const pairs = alliancePairs(state);
+  if (pairs.length === 0) return null;
+  return (
+    <div className="pact-strip" aria-label="Alliances at the table">
+      <span className="pact-strip__label">Alliances</span>
+      {pairs.map(([a, b]) => (
+        <span key={`${a}-${b}`} className={`pact-strip__pair ${pactClass(state, a)}`}>
+          <img src={leaderArt(state, a)} alt="" title={nationDef(a).name} draggable={false} />
+          <b aria-hidden>🤝</b>
+          <img src={leaderArt(state, b)} alt="" title={nationDef(b).name} draggable={false} />
+          <em>
+            {nationDef(a).shortName} + {nationDef(b).shortName}
+          </em>
+        </span>
+      ))}
     </div>
   );
 }
@@ -2022,7 +2071,7 @@ function WizardNationHeader({
         className="modal__leader"
         src={leaderArt(state, nationId)}
         alt=""
-        title={state.nations[nationId].hasSpyNetwork ? 'Spy service' : undefined}
+        title={hasSpyService(state, nationId) ? 'Spy service' : undefined}
       />
       <div>
         <p className="wizard-nation-head__country">{def.name}</p>
@@ -2045,6 +2094,45 @@ function WizardNationHeader({
   );
 }
 
+/**
+ * Live countdown for the waiting screen: the latest the table holds the round
+ * for the commanders still ordering. It runs on the same rule the peers use to
+ * move on without someone (their last activity plus the selection window), and
+ * the round resolves the moment the last of them locks in, so it often ends sooner.
+ */
+function WaitingClock({ state, waiting }: { state: GameState; waiting: NationId[] }) {
+  const deadline = Math.max(
+    ...waiting.map(
+      (id) =>
+        (state.humanLastActive?.[id] ?? state.humanPlanningStartedAt ?? Date.now()) +
+        SELECTION_IDLE_MS,
+    ),
+  );
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    setNow(Date.now());
+    const t = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(t);
+  }, [deadline]);
+  const left = Math.min(SELECTION_IDLE_MS, Math.max(0, deadline - now));
+  const secs = Math.ceil(left / 1000);
+  return (
+    <div
+      className={`wait-clock${secs <= 10 ? ' is-urgent' : ''}`}
+      role="timer"
+      aria-label="Time before the round moves on"
+    >
+      <span className="wait-clock__label">
+        {secs > 0 ? 'Round moves on in at most' : 'Moving on…'}
+      </span>
+      <b>{secs > 0 ? `${secs}s` : ''}</b>
+      <i aria-hidden>
+        <em style={{ width: `${(left / SELECTION_IDLE_MS) * 100}%` }} />
+      </i>
+    </div>
+  );
+}
+
 function NationPod({
   id,
   variant,
@@ -2054,6 +2142,8 @@ function NationPod({
   blockedCityIds,
   pendingBombCityIds,
   pendingDroneCityIds,
+  allyBombCityIds,
+  allyDroneCityIds,
   selectionWeapon = 'nuke',
   /** Per-city warhead already assigned — keeps badges stable when the picker changes */
   cityWeapons,
@@ -2075,6 +2165,9 @@ function NationPod({
   pendingBombCityIds?: string[];
   /** Cities with locked drone swarms inbound */
   pendingDroneCityIds?: string[];
+  /** Cities an ally has already aimed bombs / drones at, to pair with */
+  allyBombCityIds?: string[];
+  allyDroneCityIds?: string[];
   /** Which weapon the open targeting step is spending */
   selectionWeapon?: WarheadKind | 'drone';
   cityWeapons?: Partial<Record<string, WarheadKind>>;
@@ -2094,13 +2187,16 @@ function NationPod({
   const blocked = new Set(blockedCityIds ?? []);
   const bombed = new Set(pendingBombCityIds ?? []);
   const swarmed = new Set(pendingDroneCityIds ?? []);
+  const allyBombs = new Set(allyBombCityIds ?? []);
+  const allyDrones = new Set(allyDroneCityIds ?? []);
+  const packedWith = allyOf(state, id);
   const pulsed = new Set(highlightCityIds ?? []);
   const interactive = Boolean(onSelectCity);
   const isAngel = state.angelNationId === id;
   const isEvil = state.evilNationId === id;
   return (
     <div
-      className={`nation-card nation-card--${variant} ${n.eliminated ? 'is-out' : ''} ${highlight ? 'is-turn' : ''}`}
+      className={`nation-card nation-card--${variant} ${n.eliminated ? 'is-out' : ''} ${highlight ? 'is-turn' : ''} ${pactClass(state, id)}`}
       data-nation-id={id}
       style={{ '--flag': `url(${ART.flags[id]})` } as CSSProperties}
     >
@@ -2109,12 +2205,13 @@ function NationPod({
           <img
             src={leaderArt(state, id)}
             alt={def.leader}
-            title={n.hasSpyNetwork ? "Spy service — reads every nation's city defences" : undefined}
+            title={hasSpyService(state, id) ? "Spy service — reads every nation's city defences" : undefined}
           />
         </span>
         <div className="nation-card__aside">
-          {(isAngel || isEvil) && (
+          {(isAngel || isEvil || packedWith) && (
             <span className="stance-badges">
+              {packedWith && <PactTag state={state} id={id} full />}
               {isAngel && (
                 <span className="stance-mark stance-mark--peace" title="Most peaceful this round">
                   <span aria-hidden>☮</span>
@@ -2156,6 +2253,7 @@ function NationPod({
           const selected = selectedCityIds?.includes(c.id);
           const hitThisRound = blocked.has(c.id);
           const bombLocked = bombed.has(c.id) && !c.destroyed;
+          const allyAimed = !c.destroyed && (allyBombs.has(c.id) || allyDrones.has(c.id));
           const droneLocked = swarmed.has(c.id) && !c.destroyed;
           const droneSelected = Boolean(selected && selectionWeapon === 'drone');
           const justHit = pulsed.has(c.id);
@@ -2174,7 +2272,7 @@ function NationPod({
           const canTarget = Boolean(
             targetable && !c.destroyed && !hitThisRound && (!bombProof || selected),
           );
-          const className = `city-tile ${c.destroyed ? 'is-destroyed' : ''} ${c.hasShield && !c.isUnderground ? 'has-shield' : ''} ${c.hasResearch ? 'has-research' : ''} ${selected ? 'is-selected' : ''} ${canTarget ? 'is-targetable' : ''} ${hitThisRound && !c.destroyed && !bombLocked ? 'is-hit-this-round' : ''} ${bombLocked ? 'is-bomb-locked' : ''} ${droneLocked || droneSelected ? 'is-drone-locked' : ''} ${c.isUnderground && !c.destroyed ? 'is-underground' : ''} ${c.hasLaser && !c.destroyed ? 'has-laser' : ''} ${c.rebuiltRound != null && !c.destroyed ? 'is-rebuilt' : ''} ${justHit ? 'is-just-hit' : ''}`;
+          const className = `city-tile ${c.destroyed ? 'is-destroyed' : ''} ${c.hasShield && !c.isUnderground ? 'has-shield' : ''} ${c.hasResearch ? 'has-research' : ''} ${selected ? 'is-selected' : ''} ${canTarget ? 'is-targetable' : ''} ${hitThisRound && !c.destroyed && !bombLocked ? 'is-hit-this-round' : ''} ${bombLocked ? 'is-bomb-locked' : ''} ${droneLocked || droneSelected ? 'is-drone-locked' : ''} ${c.isUnderground && !c.destroyed ? 'is-underground' : ''} ${c.hasLaser && !c.destroyed ? 'has-laser' : ''} ${c.rebuiltRound != null && !c.destroyed ? 'is-rebuilt' : ''} ${justHit ? 'is-just-hit' : ''} ${allyAimed ? 'is-ally-aimed' : ''}`;
           const unknown = !open && !c.destroyed;
           const weaponLabel =
             assignedWeapon === 'hydrogen'
@@ -2264,6 +2362,20 @@ function NationPod({
                   <i />
                   <i />
                   <i />
+                </span>
+              )}
+              {allyAimed && (
+                <span
+                  className="city-tile__pair"
+                  title={
+                    allyDrones.has(c.id) && allyBombs.has(c.id)
+                      ? 'Your ally already hits this city with drones and a bomb'
+                      : allyDrones.has(c.id)
+                        ? 'Ally drones inbound — a bomb here lands past the shield, and the kill is shared'
+                        : 'Ally bomb inbound — drones here tie up the shield for it, and the kill is shared'
+                  }
+                >
+                  🤝 {allyDrones.has(c.id) ? 'Drones' : 'Bomb'}
                 </span>
               )}
               <span className="city-tile__name">{c.name}</span>
@@ -3150,6 +3262,8 @@ function GameBoard({
   const onSelectCity = (nationId: NationId, cityId: string) => {
     if (!strikeSelectMode || busy) return;
     if (nationId === actorId) return;
+    // Allies never strike each other
+    if (areAllies(state, actorId, nationId)) return;
     if (droneSelectMode) {
       const limit = turn.drones;
       if (limit < 1) return;
@@ -3262,6 +3376,13 @@ function GameBoard({
   const pendingDroneCityIds = myStrikes
     .filter((s) => s.weapon === 'drone')
     .map((s) => s.cityId);
+  // An ally's locked orders are shared, so the pair can line a swarm up with a bomb
+  const packmate = allyOf(state, actorId);
+  const packStrikes = packmate
+    ? state.pendingStrikes.filter((s) => s.attackerId === packmate)
+    : [];
+  const allyBombCityIds = packStrikes.filter((s) => s.weapon !== 'drone').map((s) => s.cityId);
+  const allyDroneCityIds = packStrikes.filter((s) => s.weapon === 'drone').map((s) => s.cityId);
 
   const allyIds = isOnline
     ? [actorId]
@@ -3277,7 +3398,7 @@ function GameBoard({
   // taking their turn: while the AI moves, `actorId` is the AI, and reading the
   // board through its eyes would hide the defences the player paid to see.
   const enemyViewerId = allyIds[0] ?? actorId;
-  const enemiesRevealed = allyIds.some((id) => state.nations[id].hasSpyNetwork);
+  const enemiesRevealed = allyIds.some((id) => hasSpyService(state, id));
 
   return (
     <div className={`screen screen--board${strikeSelectMode ? ' is-striking' : ''}`}>
@@ -3442,7 +3563,7 @@ function GameBoard({
                     src={leaderArt(state, actorId)}
                     alt=""
                     title={
-                      turn.hasSpyNetwork
+                      hasSpyService(state, actorId)
                         ? 'Spy service — enemy city defences are visible to you'
                         : undefined
                     }
@@ -3476,12 +3597,15 @@ function GameBoard({
                 </div>
 
                 {isOnline && !isMyHumanTurn && waitingHumans.length > 0 && (
-                  <p className="upgrade-hint">
-                    Waiting for{' '}
-                    {waitingHumans.map((id) => playerDisplayName(state, id)).join(', ')}
-                    …
-                    {state.aiPlanningComplete ? ' AI orders are locked in.' : ''}
-                  </p>
+                  <>
+                    <p className="upgrade-hint">
+                      Waiting for{' '}
+                      {waitingHumans.map((id) => playerDisplayName(state, id)).join(', ')}
+                      …
+                      {state.aiPlanningComplete ? ' AI orders are locked in.' : ''}
+                    </p>
+                    <WaitingClock state={state} waiting={waitingHumans} />
+                  </>
                 )}
                 {isOnline && !isMyHumanTurn && waitingHumans.length === 0 && (
                   <p className="upgrade-hint">Resolving the round for everyone…</p>
@@ -3570,7 +3694,9 @@ function GameBoard({
                 viewerId={enemyViewerId}
                 revealed={enemiesRevealed}
                 selectedCityIds={selectedCityIds}
-                targetable={strikeSelectMode}
+                allyBombCityIds={allyBombCityIds}
+                allyDroneCityIds={allyDroneCityIds}
+                targetable={strikeSelectMode && !areAllies(state, actorId, id)}
                 blockedCityIds={
                   droneSelectMode ? turn.citiesDronedThisRound : turn.citiesStruckThisRound
                 }
@@ -3580,7 +3706,9 @@ function GameBoard({
                 cityWeapons={cityWeapons}
                 highlight={id === actorId}
                 rank={enemyRank.get(id)}
-                onSelectCity={strikeSelectMode ? onSelectCity : undefined}
+                onSelectCity={
+                  strikeSelectMode && !areAllies(state, actorId, id) ? onSelectCity : undefined
+                }
               />
             ))}
           </div>
@@ -3671,7 +3799,7 @@ function RoundSummary({
   const worldRank = new Map(worldIds.map((id, i) => [id, i + 1]));
   const isYouNation = (id: NationId) =>
     myNationId ? id === myNationId : Boolean(state.nations[id].isHuman);
-  const worldRevealed = myCityIds.some((id) => state.nations[id].hasSpyNetwork);
+  const worldRevealed = myCityIds.some((id) => hasSpyService(state, id));
   const myLedger = state.lastIncomeLedger.filter((e) => myCityIds.includes(e.nationId));
   const myCombat = combatLedger(state, myCityIds);
 
@@ -3726,10 +3854,11 @@ function RoundSummary({
                   const isYou = isYouNation(row.nationId);
                   const isLead =
                     !row.eliminated && state.roundScores.findIndex((s) => !s.eliminated) === i;
+                  const pact = allyOf(state, row.nationId);
                   return (
                     <div
                       key={row.nationId}
-                      className={`score-card ${row.eliminated ? 'is-out' : ''} ${isLead ? 'is-lead' : ''} ${isYou ? 'is-you' : ''}`}
+                      className={`score-card ${row.eliminated ? 'is-out' : ''} ${isLead ? 'is-lead' : ''} ${isYou ? 'is-you' : ''} ${pactClass(state, row.nationId)}`}
                     >
                       <img src={leaderArt(state, row.nationId)} alt="" />
                       <div>
@@ -3738,8 +3867,10 @@ function RoundSummary({
                           {isYou ? ' · You' : nation.isHuman ? ' · Player' : ''}
                         </strong>
                         {(state.angelNationId === row.nationId ||
-                          state.evilNationId === row.nationId) && (
+                          state.evilNationId === row.nationId ||
+                          pact) && (
                           <span className="stance-badges">
+                            {pact && <PactTag state={state} id={row.nationId} />}
                             {state.angelNationId === row.nationId && (
                               <span className="stance-mark stance-mark--peace" title="Most peaceful this round">
                                 <span aria-hidden>☮</span>

@@ -8948,3 +8948,302 @@ button.cx-tile:not(.is-off):hover .cx-tile__orb { filter: brightness(1.25); }
 
 .lobby-rejoin > span { display: flex; flex-direction: column; gap: 0.1rem; text-align: left; }
 .lobby-rejoin small { color: #bfe9cc; }
+
+/* ---------- Alliances: the desk, the offer pop-up, the pact toast ---------- */
+.ally-veil {
+  position: absolute;
+  inset: 0;
+  z-index: 9;
+  display: grid;
+  place-items: center;
+  padding: clamp(0.5rem, 2vh, 1.2rem);
+  background: rgba(2, 6, 4, 0.72);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+}
+
+.ally-card {
+  position: relative;
+  width: min(40rem, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding: 1rem 1.1rem 1.1rem;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 214, 107, 0.55);
+  background: linear-gradient(180deg, rgba(14, 24, 18, 0.97), rgba(5, 9, 7, 0.97));
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.75), inset 0 0 0 1px rgba(109, 255, 140, 0.08);
+  color: #eef5f0;
+}
+
+.ally-card__head { display: flex; align-items: center; gap: 0.8rem; }
+.ally-card__head h3 {
+  margin: 0;
+  font-family: var(--stencil);
+  font-size: clamp(1.05rem, 3.6vw, 1.45rem);
+  letter-spacing: 0.04em;
+  line-height: 1.15;
+}
+.ally-card__icon { width: 3.4rem; height: 3.4rem; object-fit: contain; filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.7)); }
+.ally-kicker { display: block; font-size: 0.7rem; letter-spacing: 0.16em; text-transform: uppercase; color: #ffd66b; }
+
+.ally-x {
+  position: absolute;
+  top: 0.55rem;
+  right: 0.6rem;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.06);
+  color: #eef5f0;
+  cursor: pointer;
+}
+
+.ally-sub { margin: 0; font-size: 0.78rem; letter-spacing: 0.12em; text-transform: uppercase; color: #93a69a; }
+.ally-empty { margin: 0; font-size: 0.9rem; color: #b8c9be; }
+
+.ally-portrait {
+  position: relative;
+  flex: none;
+  width: 4.6rem;
+  height: 4.6rem;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 2px solid #ffd66b;
+  background: #0a1410;
+  box-shadow: 0 0 16px rgba(255, 214, 107, 0.45);
+}
+.ally-portrait img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top center; }
+.ally-portrait--sm { width: 3.4rem; height: 3.4rem; border-width: 1.5px; }
+
+.ally-assets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ally-asset {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 4.9rem;
+  padding: 0.35rem 0.2rem 0.4rem;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.05);
+  text-align: center;
+}
+.ally-asset__art { position: relative; display: block; width: 2.9rem; height: 2.9rem; }
+.ally-asset__art img { width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.7)); }
+.ally-asset__art em {
+  position: absolute;
+  right: -0.35rem;
+  bottom: -0.2rem;
+  min-width: 1.25rem;
+  padding: 0 0.3rem;
+  border-radius: 999px;
+  background: #0b1510;
+  border: 1px solid rgba(109, 255, 140, 0.7);
+  font-style: normal;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.2rem;
+  color: #c4ffd2;
+}
+.ally-asset b { margin-top: 0.2rem; font-size: 0.7rem; line-height: 1.1; font-weight: 600; }
+.ally-asset__tag {
+  margin-top: 0.15rem;
+  padding: 0 0.4rem;
+  border-radius: 999px;
+  background: #ffd66b;
+  color: #261c00;
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.ally-asset__tag.is-dim { background: rgba(255, 255, 255, 0.14); color: #b8c9be; }
+.ally-asset.is-fresh {
+  border-color: rgba(255, 214, 107, 0.85);
+  background: rgba(255, 214, 107, 0.1);
+  box-shadow: 0 0 14px rgba(255, 214, 107, 0.35);
+}
+.ally-asset.is-have { opacity: 0.7; }
+
+.ally-terms {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.25rem 0.9rem;
+  margin: 0;
+  padding: 0.55rem 0.7rem;
+  list-style: none;
+  border-radius: 10px;
+  background: rgba(109, 255, 140, 0.06);
+  font-size: 0.78rem;
+  color: #c9d8ce;
+}
+.ally-terms li::before { content: '✓ '; color: #6dff8c; font-weight: 700; }
+
+.ally-actions { display: flex; gap: 0.6rem; }
+.ally-btn {
+  flex: 1;
+  min-height: 2.6rem;
+  padding: 0.45rem 1rem;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.08);
+  color: #eef5f0;
+  font-family: var(--stencil);
+  font-size: 0.95rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.ally-btn--yes { border-color: #6dff8c; background: linear-gradient(180deg, #2f9a4b, #1c6a31); }
+.ally-btn--no { border-color: rgba(255, 120, 100, 0.7); background: rgba(255, 106, 74, 0.14); }
+.ally-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.ally-later { align-self: center; }
+
+.ally-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.8rem;
+  align-items: center;
+  padding: 0.6rem;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+}
+.ally-row.is-invite { border-color: rgba(255, 214, 107, 0.7); background: rgba(255, 214, 107, 0.08); }
+.ally-row__body { display: flex; flex-direction: column; gap: 0.4rem; min-width: 0; }
+.ally-row__body > b { font-size: 0.95rem; }
+.ally-row__acts { display: flex; flex-direction: column; gap: 0.4rem; min-width: 6.5rem; }
+.ally-row__acts .ally-btn { min-height: 2.2rem; font-size: 0.8rem; }
+.ally-state { font-size: 0.75rem; text-align: center; color: #ffd66b; }
+.ally-state.is-no { color: #ff9a86; }
+
+.ally-pair { display: flex; align-items: center; justify-content: center; gap: 0.6rem; }
+.ally-pair__knot { width: 3.4rem; height: 3.4rem; object-fit: contain; }
+
+.ally-shares { display: flex; flex-direction: column; gap: 0.45rem; }
+.ally-share {
+  display: grid;
+  grid-template-columns: 2.6rem minmax(0, 1fr) auto;
+  gap: 0.7rem;
+  align-items: center;
+  padding: 0.4rem 0.6rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+}
+.ally-share img { width: 2.6rem; height: 2.6rem; object-fit: contain; }
+.ally-share b { display: block; font-size: 0.9rem; }
+.ally-share small { color: #93a69a; font-size: 0.75rem; }
+.ally-switch {
+  position: relative;
+  width: 3.1rem;
+  height: 1.8rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.ally-switch i {
+  position: absolute;
+  top: 0.18rem;
+  left: 0.2rem;
+  width: 1.3rem;
+  height: 1.3rem;
+  border-radius: 50%;
+  background: #eef5f0;
+  transition: transform 0.2s;
+}
+.ally-switch.is-on { background: #2f9a4b; border-color: #6dff8c; }
+.ally-switch.is-on i { transform: translateX(1.2rem); }
+
+.ally-toast {
+  position: absolute;
+  z-index: 10;
+  left: 50%;
+  top: clamp(0.6rem, 4vh, 2rem);
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 1.1rem 0.4rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 214, 107, 0.8);
+  background: rgba(0, 0, 0, 0.85);
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.6);
+  color: #ffd66b;
+  font-family: var(--stencil);
+  letter-spacing: 0.05em;
+  pointer-events: none;
+  animation: copLowIn 0.22s ease-out;
+}
+.ally-toast img { width: 2.2rem; height: 2.2rem; object-fit: contain; }
+
+/* A sanction the ally holds for both: ringed in gold, not the sanction red */
+.cx-face.is-pact { border-color: #ffd66b; box-shadow: 0 0 10px rgba(255, 214, 107, 0.75); opacity: 1; }
+.cx-face.is-pact:disabled { opacity: 1; cursor: default; }
+
+@media (max-width: 560px) {
+  .ally-row { grid-template-columns: auto minmax(0, 1fr); }
+  .ally-row__acts { grid-column: 1 / -1; flex-direction: row; }
+  .ally-asset { width: 4.3rem; }
+  .ally-portrait { width: 3.8rem; height: 3.8rem; }
+}
+
+/* Alliance marks on the nation cards and on cities an ally has already aimed at */
+.stance-mark--ally {
+  border-color: rgba(255, 214, 107, 0.85);
+  background: rgba(60, 46, 0, 0.8);
+  color: #ffe08a;
+}
+.city-tile.is-ally-aimed { outline: 2px solid rgba(255, 214, 107, 0.9); outline-offset: -2px; }
+.city-tile__pair {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  z-index: 3;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.82);
+  border: 1px solid rgba(255, 214, 107, 0.9);
+  color: #ffe08a;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+/* Waiting screen: how long the table can still hold the round */
+.wait-clock {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: 0.2rem 0.6rem;
+  margin-top: 0.5rem;
+  padding: 0.5rem 0.7rem 0.6rem;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 214, 107, 0.45);
+  background: rgba(0, 0, 0, 0.45);
+}
+.wait-clock__label { font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; color: #c9d8ce; }
+.wait-clock b {
+  font-family: var(--stencil);
+  font-size: 1.35rem;
+  font-variant-numeric: tabular-nums;
+  color: #ffd66b;
+}
+.wait-clock i { grid-column: 1 / -1; display: block; height: 4px; border-radius: 4px; overflow: hidden; background: rgba(255, 255, 255, 0.14); }
+.wait-clock em { display: block; height: 100%; background: #ffd66b; transition: width 0.25s linear; }
+.wait-clock.is-urgent b { color: #ff8a70; }
+.wait-clock.is-urgent em { background: #ff8a70; }

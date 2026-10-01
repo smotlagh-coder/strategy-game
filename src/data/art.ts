@@ -58,6 +58,7 @@ export const ART = {
     drone: '/art/cop-drone-pack.webp',
     spy: '/art/cop-spy.webp',
     sanction: '/art/cop-sanctions.webp',
+    alliance: '/art/cop-alliance.webp',
     shield: '/art/cop-shield.webp',
     bunker: '/art/cop-bunker.webp',
     laser: '/art/cop-laser.webp',

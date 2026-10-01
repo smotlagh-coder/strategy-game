@@ -130,6 +130,20 @@ function mergeSanctions(
   };
 }
 
+/**
+ * The pact pointer is edited only by its own nation's client, so the higher
+ * version is simply the newer choice; peers that have seen the same edit tie
+ * and agree anyway.
+ */
+function mergeAlliance(remote: NationState, local: NationState): Pick<NationState, 'alliance'> {
+  const r = remote.alliance;
+  const l = local.alliance;
+  if (!r && !l) return {};
+  if (!r) return { alliance: l };
+  if (!l) return { alliance: r };
+  return { alliance: r.version > l.version ? r : l };
+}
+
 /** Union city upgrades so a stale push cannot wipe research/shields. */
 export function mergeNationPlanning(
   remote: NationState | undefined,
@@ -263,6 +277,7 @@ export function mergeNationPlanning(
       new Set([...remote.citiesStruckThisRound, ...local.citiesStruckThisRound]),
     ),
     ...mergeSanctions(remote, local),
+    ...mergeAlliance(remote, local),
     eliminated,
     lockedScore: Math.max(remote.lockedScore ?? 0, local.lockedScore ?? 0),
     citySurvivalPoints: Math.max(

@@ -30,6 +30,19 @@ import {
   toggleSanction,
   totalWarheads,
 } from '../game/engine';
+import {
+  ALLIANCE_FIRST_ROUND,
+  acceptAlliance,
+  allianceWindowOpen,
+  allyOf,
+  declineAlliance,
+  effectiveSanctions,
+  hasSpyService,
+  incomingInvites,
+  outgoingInvite,
+  ownSanctionPicks,
+} from '../game/alliance';
+import { AllianceInvite, AllianceSheet } from './AllianceSheet';
 import { findDefenceOrders, findIntelAdvice, findOffenceOrders } from '../game/briefing';
 import {
   aerospaceBundleCost,
@@ -107,7 +120,7 @@ const PAGE_TITLE: Record<Section, string> = {
 const PAGE_TAGLINE: Record<Section, string> = {
   offence: 'Take cities off rivals',
   defence: 'Keep what you have',
-  finance: 'Grow income, see the map',
+  finance: 'Grow income, see the map, find allies',
 };
 
 /** Magazine bar: filled = stocked, green outline = can add now, dim = the limit allows it but not yet affordable. */
@@ -607,6 +620,7 @@ export function CommandDashboard({
   const [msLeft, setMsLeft] = useState(() => Math.max(0, deadline - Date.now()));
   const pickRef = useRef(pick);
   pickRef.current = pick;
+  const sheetRef = useRef(false);
   const proceedRef = useRef(onProceed);
   proceedRef.current = onProceed;
   // However it is triggered (timer, low treasury, the button) the turn moves on once
@@ -660,7 +674,8 @@ export function CommandDashboard({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (pickRef.current) setPick(null);
+        if (sheetRef.current) setSheetOpen(false);
+        else if (pickRef.current) setPick(null);
         else setActive(null);
       }
     };
@@ -699,6 +714,42 @@ export function CommandDashboard({
   const hasBunker = me.cities.some((c) => c.isUnderground && !c.destroyed);
   const hasLaserNet = me.cities.some((c) => c.hasLaser && !c.destroyed);
   const slotsLeft = sanctionsLeft(state, actorId);
+
+  // Alliances
+  const myAlly = allyOf(state, actorId);
+  const invites = incomingInvites(state, actorId);
+  const outgoing = outgoingInvite(state, actorId);
+  const windowOpen = allianceWindowOpen(state);
+  const humanPeers = state.turnOrder.filter(
+    (id) => id !== actorId && state.nations[id].isHuman && !state.nations[id].eliminated,
+  );
+  const [sheetOpen, setSheetOpen] = useState(false);
+  sheetRef.current = sheetOpen;
+  const [later, setLater] = useState<string[]>([]);
+  const [pactNotice, setPactNotice] = useState<string | null>(null);
+  const prevAlly = useRef<NationId | null>(myAlly);
+  useEffect(() => {
+    const before = prevAlly.current;
+    prevAlly.current = myAlly;
+    if (before === myAlly) return;
+    setPactNotice(
+      myAlly
+        ? `${nationDef(myAlly).name} is now your ally`
+        : before
+          ? `The alliance with ${nationDef(before).name} has ended`
+          : null,
+    );
+    const t = window.setTimeout(() => setPactNotice(null), 4500);
+    return () => window.clearTimeout(t);
+  }, [myAlly]);
+  const inviteKey = (from: NationId) => `${from}:${state.nations[from]?.alliance?.proposalId ?? 0}`;
+  const openInvite = invites.find((from) => !later.includes(inviteKey(from))) ?? null;
+  const allyHasLaser = Boolean(
+    myAlly && state.nations[myAlly].cities.some((c) => c.hasLaser && !c.destroyed),
+  );
+  const mySanctions = ownSanctionPicks(state, actorId);
+  const pactSanctions = effectiveSanctions(state, actorId);
+  const spyShared = !me.hasSpyNetwork && hasSpyService(state, actorId);
 
   const pickable: Record<CityPick, boolean> = {
     research: canBuyResearch(state, actorId),
@@ -772,19 +823,23 @@ export function CommandDashboard({
 
   const sanctionRoster = (
     <div className="cx-faces">
-      {rivals.map((id) => {
+      {rivals.filter((id) => id !== myAlly).map((id) => {
         const alive = !state.nations[id].eliminated;
-        const on = me.sanctions.includes(id);
+        const on = mySanctions.includes(id);
+        // The ally's pick is enforced for both, but only the ally can lift it
+        const byAlly = !on && pactSanctions.includes(id);
         const full = !on && slotsLeft < 1;
         return (
           <button
             key={id}
             type="button"
-            className={`cx-face${on ? ' is-on' : ''}${id === advisedSanction ? ' is-advised' : ''}`}
-            disabled={!alive || full}
-            title={`${nationDef(id).name}${on ? ' — sanctioned' : ''}`}
+            className={`cx-face${on || byAlly ? ' is-on' : ''}${byAlly ? ' is-pact' : ''}${
+              id === advisedSanction ? ' is-advised' : ''
+            }`}
+            disabled={!alive || full || byAlly}
+            title={`${nationDef(id).name}${on ? ' — sanctioned' : byAlly ? ' — sanctioned by your ally' : ''}`}
             aria-label={`${on ? 'Lift sanctions on' : 'Sanction'} ${nationDef(id).name}`}
-            aria-pressed={on}
+            aria-pressed={on || byAlly}
             onClick={() => onOrder((s) => toggleSanction(s, id, actorId))}
           >
             <img src={rivalArt(id)} alt="" draggable={false} />
@@ -906,7 +961,9 @@ export function CommandDashboard({
           art: ART.cop.laser,
           short: 'Laser',
           label: 'Laser network',
-          info: `Covers every city · stops ${LASER_INTERCEPTS_PER_ROUND} swarms a round.`,
+          info: `Covers every city · stops ${LASER_INTERCEPTS_PER_ROUND} swarms a round${
+            allyHasLaser ? ' · your ally’s network covers you too' : ''
+          }.`,
           lit: hasLaserNet,
           price: cash(pickCost('laser')),
           priceNote: withTech(aerospaceExtra),
@@ -953,11 +1010,15 @@ export function CommandDashboard({
           art: ART.cop.sanction,
           short: 'Sanctions',
           label: 'Sanctions',
-          info: `−10% of their income each · up to ${MAX_SANCTIONS} rivals · ${slotsLeft} slot${
-            slotsLeft === 1 ? '' : 's'
-          } left.`,
-          lit: me.sanctions.length > 0,
-          count: me.sanctions.length,
+          info: myAlly
+            ? `−10% of their income each · one pick each, enforced by you both · ${slotsLeft} slot${
+                slotsLeft === 1 ? '' : 's'
+              } left.`
+            : `−10% of their income each · up to ${MAX_SANCTIONS} rivals · ${slotsLeft} slot${
+                slotsLeft === 1 ? '' : 's'
+              } left.`,
+          lit: pactSanctions.length > 0,
+          count: pactSanctions.length,
           price: 'Free',
           note: `${slotsLeft} slot${slotsLeft === 1 ? '' : 's'} left`,
           tone: 'ready',
@@ -969,20 +1030,56 @@ export function CommandDashboard({
           art: ART.cop.spy,
           short: 'Spy',
           label: 'Spy service',
-          info: me.hasSpyNetwork
-            ? 'Active · every enemy defence on your map.'
-            : 'See every enemy shield, bunker, lab and laser.',
-          lit: me.hasSpyNetwork,
-          price: cash(COSTS.spy),
-          note: me.hasSpyNetwork
-            ? '✓ Active'
-            : canPay(COSTS.spy)
-              ? 'Tap to buy'
-              : `Need ${cash(need(COSTS.spy))}`,
-          tone: me.hasSpyNetwork ? 'owned' : canPay(COSTS.spy) ? 'ready' : 'poor',
+          info: spyShared
+            ? 'Shared by your ally · every enemy defence on your map.'
+            : me.hasSpyNetwork
+              ? 'Active · every enemy defence on your map.'
+              : 'See every enemy shield, bunker, lab and laser.',
+          lit: me.hasSpyNetwork || spyShared,
+          price: spyShared ? 'Free' : cash(COSTS.spy),
+          note: spyShared
+            ? '✓ From your ally'
+            : me.hasSpyNetwork
+              ? '✓ Active'
+              : canPay(COSTS.spy)
+                ? 'Tap to buy'
+                : `Need ${cash(need(COSTS.spy))}`,
+          tone: me.hasSpyNetwork || spyShared ? 'owned' : canPay(COSTS.spy) ? 'ready' : 'poor',
           advised: advisedIntel.has('spy'),
           locked: !canBuySpyNetwork(state, actorId),
           onPress: () => onOrder((s) => buySpyNetwork(s, actorId), 'Spy service opened'),
+        },
+        {
+          key: 'alliance',
+          art: ART.cop.alliance,
+          short: 'Alliance',
+          label: 'Alliance',
+          info: myAlly
+            ? `Allied with ${nationDef(myAlly).name} · lasers, spies and sanctions work for you both.`
+            : windowOpen
+              ? 'Team up with another player: lasers, spies, tech and sanctions shared.'
+              : state.round < ALLIANCE_FIRST_ROUND
+                ? 'Alliances open after round 1.'
+                : 'Alliances close for the final round.',
+          lit: myAlly != null,
+          price: 'Free',
+          note: myAlly
+            ? `✓ ${nationDef(myAlly).shortName}`
+            : invites.length > 0
+              ? `${invites.length} offer${invites.length === 1 ? '' : 's'}`
+              : outgoing && !outgoing.declined
+                ? 'Invite sent'
+                : !windowOpen
+                  ? state.round < ALLIANCE_FIRST_ROUND
+                    ? 'Opens round 2'
+                    : 'Closed'
+                  : humanPeers.length === 0
+                    ? 'Needs a player'
+                    : 'Tap to open',
+          tone: myAlly ? 'owned' : invites.length > 0 || (windowOpen && humanPeers.length > 0) ? 'ready' : 'idle',
+          advised: invites.length > 0,
+          locked: !windowOpen || (humanPeers.length === 0 && !myAlly),
+          onPress: () => setSheetOpen(true),
         },
       ],
     },
@@ -1192,6 +1289,38 @@ export function CommandDashboard({
           </button>
         </footer>
       </div>
+
+      {sheetOpen && (
+        <AllianceSheet
+          state={state}
+          actorId={actorId}
+          leaderArt={rivalArt}
+          onOrder={onOrder}
+          onClose={() => setSheetOpen(false)}
+        />
+      )}
+
+      {!sheetOpen && openInvite && (
+        <AllianceInvite
+          state={state}
+          actorId={actorId}
+          fromId={openInvite}
+          leaderArt={rivalArt}
+          moreCount={invites.length - 1}
+          onAccept={() =>
+            onOrder((s) => acceptAlliance(s, openInvite, actorId), 'Alliance formed')
+          }
+          onDecline={() => onOrder((s) => declineAlliance(s, openInvite, actorId))}
+          onLater={() => setLater((l) => [...l, inviteKey(openInvite)])}
+        />
+      )}
+
+      {pactNotice && (
+        <div className="ally-toast" role="status" aria-live="polite" key={pactNotice}>
+          <img src={ART.cop.alliance} alt="" draggable={false} />
+          <b>{pactNotice}</b>
+        </div>
+      )}
 
       {lowUntil != null && (
         <div className="cop-low" role="status" aria-live="polite" key={lowUntil}>

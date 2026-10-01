@@ -29,6 +29,18 @@ import {
   initialNation,
   nationDef,
 } from '../data/nations';
+import {
+  allyOf,
+  areAllies,
+  effectiveSanctions,
+  hasAerospaceAccess,
+  hasBallisticTech,
+  hasSpyService,
+  ownSanctionPicks,
+  techLenderOf,
+  sanctionSlots,
+  scoutedByAlliance,
+} from './alliance';
 import { displayNameOnly } from '../lib/session';
 import {
   AFTERMATH_THINK_MS,
@@ -892,7 +904,8 @@ export function applyIncome(state: GameState): GameState {
       n.cities.filter((c) => !c.destroyed && c.hasResearch).length * RESEARCH_INCOME;
     const gross = cityIncome + researchIncome;
     const sanctioners = state.turnOrder.filter(
-      (other) => other !== id && !nations[other].eliminated && nations[other].sanctions.includes(id),
+      (other) =>
+        other !== id && !nations[other].eliminated && effectiveSanctions(state, other).includes(id),
     );
     const sanctionPenalty = Math.min(MAX_SANCTION_CUT, sanctioners.length * SANCTION_PENALTY);
     // Whole units only: no decimals ever reach the treasury
@@ -970,7 +983,7 @@ export function whoIsSanctioning(state: GameState, targetId: NationId): NationId
     (id) =>
       id !== targetId &&
       !state.nations[id].eliminated &&
-      state.nations[id].sanctions.includes(targetId),
+      effectiveSanctions(state, id).includes(targetId),
   );
 }
 
@@ -979,9 +992,11 @@ export function canBuyBombs(state: GameState, nationId?: NationId): boolean {
   const n = state.nations[id];
   return (
     !n.eliminated &&
-    n.hasNuclearTech &&
-    n.nuclearTechUnlockedRound != null &&
-    n.nuclearTechUnlockedRound <= state.round
+    ((n.hasNuclearTech &&
+      n.nuclearTechUnlockedRound != null &&
+      n.nuclearTechUnlockedRound <= state.round) ||
+      // An ally's Ballistic Missile Tech works the same as one's own
+      techLenderOf(state, id, 'ballistic') != null)
   );
 }
 
@@ -1052,9 +1067,10 @@ export function canBuyDrones(state: GameState, nationId?: NationId): boolean {
   const n = state.nations[id];
   return (
     !n.eliminated &&
-    n.hasAerospaceTech &&
-    n.aerospaceTechUnlockedRound != null &&
-    n.aerospaceTechUnlockedRound <= state.round
+    ((n.hasAerospaceTech &&
+      n.aerospaceTechUnlockedRound != null &&
+      n.aerospaceTechUnlockedRound <= state.round) ||
+      techLenderOf(state, id, 'aerospace') != null)
   );
 }
 
@@ -1070,7 +1086,8 @@ export function maxDronesPurchasable(state: GameState, nationId?: NationId): num
 export function canBuySpyNetwork(state: GameState, nationId?: NationId): boolean {
   const id = nationId ?? currentNationId(state);
   const n = state.nations[id];
-  return !n.eliminated && !n.hasSpyNetwork && n.money >= COSTS.spy;
+  // An ally's spy service already covers this nation: nothing to buy
+  return !n.eliminated && !hasSpyService(state, id) && n.money >= COSTS.spy;
 }
 
 export function buySpyNetwork(state: GameState, nationId?: NationId): GameState {
@@ -1099,7 +1116,7 @@ export function buySpyNetwork(state: GameState, nationId?: NationId): GameState 
  */
 export function seesDefences(state: GameState, viewerId: NationId, targetId: NationId): boolean {
   if (viewerId === targetId) return true;
-  return Boolean(state.nations[viewerId]?.hasSpyNetwork);
+  return hasSpyService(state, viewerId);
 }
 
 /**
@@ -1114,7 +1131,7 @@ export function seesCity(
   cityId: string,
 ): boolean {
   if (seesDefences(state, viewerId, targetId)) return true;
-  return Boolean(state.nations[viewerId]?.scoutedCities?.includes(cityId));
+  return scoutedByAlliance(state, viewerId, cityId);
 }
 
 /**
@@ -1473,7 +1490,7 @@ export function canBuyLaser(state: GameState, nationId?: NationId): boolean {
   const n = state.nations[id];
   return (
     !n.eliminated &&
-    n.hasAerospaceTech &&
+    hasAerospaceAccess(state, id) &&
     n.money >= COSTS.laser &&
     // One network is enough: a second battery defends cities the first
     // already covers
@@ -1571,12 +1588,14 @@ export function queueStrike(
     attacker.eliminated ||
     defender.eliminated ||
     attackerId === targetNation ||
+    // Allies never strike each other
+    areAllies(state, attackerId, targetNation) ||
     (drone
       ? attacker.drones < 1 ||
-        !attacker.hasAerospaceTech ||
+        !hasAerospaceAccess(state, attackerId) ||
         attacker.citiesDronedThisRound.includes(cityId)
       : warheadStock(attacker, warhead!) < 1 ||
-        !attacker.hasNuclearTech ||
+        !hasBallisticTech(state, attackerId) ||
         attacker.citiesStruckThisRound.includes(cityId))
   ) {
     return state;
@@ -1706,11 +1725,26 @@ export function laserShotsKnownTo(
   viewerId: NationId,
   targetId: NationId,
 ): number {
-  const battery = state.nations[targetId]?.cities.find((c) => !c.destroyed && c.hasLaser);
-  // A beam gives away the city that fired it, so a swarm shot down counts as
-  // having found the network the hard way.
-  if (!battery || !seesCity(state, viewerId, targetId, battery.id)) return 0;
-  return laserInterceptsLeft(state, targetId);
+  const known = (owner: NationId) => {
+    const battery = state.nations[owner]?.cities.find((c) => !c.destroyed && c.hasLaser);
+    // A beam gives away the city that fired it, so a swarm shot down counts as
+    // having found the network the hard way.
+    if (!battery || !seesCity(state, viewerId, owner, battery.id)) return 0;
+    return laserInterceptsLeft(state, owner);
+  };
+  // An ally's network defends this nation too
+  const ally = allyOf(state, targetId);
+  return known(targetId) + (ally ? known(ally) : 0);
+}
+
+/**
+ * Whose laser network covers `targetId` right now: its own while it has shots
+ * left, then its ally's — allies defend each other's cities with their lasers.
+ */
+export function laserCoverFor(state: GameState, targetId: NationId): NationId | null {
+  if (laserInterceptsLeft(state, targetId) > 0) return targetId;
+  const ally = allyOf(state, targetId);
+  return ally && laserInterceptsLeft(state, ally) > 0 ? ally : null;
 }
 
 export function shieldIsBusy(
@@ -1740,22 +1774,27 @@ function applyDroneStrike(
   city: City,
 ): GameState {
   const defender = state.nations[strike.targetNationId];
-  if (laserInterceptsLeft(state, strike.targetNationId) > 0) {
-    const fired = defender.dronesInterceptedThisRound + 1;
+  const coverId = laserCoverFor(state, strike.targetNationId);
+  if (coverId) {
+    const guard = state.nations[coverId];
+    const defending = coverId !== strike.targetNationId;
+    const fired = guard.dronesInterceptedThisRound + 1;
     const left = LASER_INTERCEPTS_PER_ROUND - fired;
     // The swarm dies, but the beam shows the attacker where the battery sits
-    const battery = defender.cities.find((c) => !c.destroyed && c.hasLaser);
+    const battery = guard.cities.find((c) => !c.destroyed && c.hasLaser);
     const seen = battery ? scoutCity(state, strike.attackerId, battery.id) : state;
     return {
       ...seen,
       nations: {
         ...seen.nations,
-        [strike.targetNationId]: { ...defender, dronesInterceptedThisRound: fired },
+        [coverId]: { ...guard, dronesInterceptedThisRound: fired },
       },
       log: [
         ...state.log,
         log(
-          `${nationDef(strike.targetNationId).name}'s laser network shot down ${nationDef(strike.attackerId).name}'s drone swarm over ${city.name} — no damage${
+          `${nationDef(coverId).name}'s laser network${
+            defending ? ` covered ${nationDef(strike.targetNationId).name} and` : ''
+          } shot down ${nationDef(strike.attackerId).name}'s drone swarm over ${city.name} — no damage${
             left > 0 ? '' : ' (the network is out of shots this round)'
           }.`,
           'attack',
@@ -1769,6 +1808,7 @@ function applyDroneStrike(
           cityId: city.id,
           cityName: city.name,
           attackerId: strike.attackerId,
+          coveredBy: defending ? coverId : undefined,
         }),
       ],
     };
@@ -1842,6 +1882,18 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
   const attacker = state.nations[strike.attackerId];
   const defender = state.nations[strike.targetNationId];
   if (attacker.eliminated || defender.eliminated) return state;
+  // A pact struck after the order was given still holds the fire
+  if (areAllies(state, strike.attackerId, strike.targetNationId)) {
+    return {
+      ...state,
+      log: [
+        ...state.log,
+        log(
+          `${nationDef(strike.attackerId).name} held fire — ${nationDef(strike.targetNationId).name} is an ally.`,
+        ),
+      ],
+    };
+  }
 
   // Normalize legacy / stripped payloads so specialty warheads cannot fall back
   // to a plain nuke (which would bounce off bunkers).
@@ -2154,19 +2206,23 @@ export function markPromptDone(
 /** Sanctions a nation may run at once — lifting one frees the slot again. */
 export function sanctionsLeft(state: GameState, nationId?: NationId): number {
   const id = nationId ?? currentNationId(state);
-  const live = state.nations[id].sanctions.filter((s) => !state.nations[s].eliminated);
-  return Math.max(0, MAX_SANCTIONS - live.length);
+  const live = ownSanctionPicks(state, id).filter((s) => !state.nations[s].eliminated);
+  return Math.max(0, sanctionSlots(state, id, MAX_SANCTIONS) - live.length);
 }
 
 export function toggleSanction(state: GameState, target: NationId, nationId?: NationId): GameState {
   const id = nationId ?? currentNationId(state);
   const n = state.nations[id];
   if (n.eliminated || target === id || state.nations[target].eliminated) return state;
+  // A pact partner is never squeezed
+  if (areAllies(state, id, target)) return state;
 
-  const has = n.sanctions.includes(target);
-  // Only two rivals at a time, so a sanction is a choice about who to squeeze
+  // Allied nations keep one pick each; any older extras are dropped on the next change
+  const picks = ownSanctionPicks(state, id);
+  const has = picks.includes(target);
+  // Only two rivals at a time (one each when allied), so a sanction is a choice about who to squeeze
   if (!has && sanctionsLeft(state, id) < 1) return state;
-  const sanctions = has ? n.sanctions.filter((s) => s !== target) : [...n.sanctions, target];
+  const sanctions = has ? picks.filter((s) => s !== target) : [...picks, target];
   return {
     ...state,
     nations: {

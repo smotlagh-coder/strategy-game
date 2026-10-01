@@ -20,6 +20,7 @@ import {
   canBuyShield,
   canBuyUnderground,
   cityAsSeenBy,
+  laserNetwork,
   seesCity,
   formatMoney,
   totalWarheads,
@@ -31,6 +32,14 @@ import {
   maxHydrogenBundled,
   maxMagneticBundled,
 } from './bundles';
+import {
+  allyOf,
+  areAllies,
+  hasAerospaceAccess,
+  hasBallisticTech,
+  hasSpyService,
+  ownSanctionPicks,
+} from './alliance';
 import type { City, GameState, NationId, PendingStrike, RoundScore, RoundWorldEvent } from '../types';
 
 /** What one of your cities lived through in the round just played. */
@@ -307,10 +316,10 @@ function readAssets(state: GameState, myId: NationId): BriefingAssets {
     lasers: alive.filter((c) => c.hasLaser).length,
     bombs: totalWarheads(n),
     drones: n.drones,
-    spyNetwork: Boolean(n.hasSpyNetwork),
+    spyNetwork: hasSpyService(state, myId),
     // Tech comes with the first purchase, so an untouched arsenal can still be armed
-    canArmNukes: canBuyBombs(state, myId) || !n.hasNuclearTech,
-    canArmDrones: canBuyDrones(state, myId) || !n.hasAerospaceTech,
+    canArmNukes: canBuyBombs(state, myId) || !hasBallisticTech(state, myId),
+    canArmDrones: canBuyDrones(state, myId) || !hasAerospaceAccess(state, myId),
     money: n.money,
   };
 }
@@ -442,7 +451,7 @@ function findWeakness(
     };
   }
 
-  if (!n.hasNuclearTech) {
+  if (!hasBallisticTech(state, myId)) {
     return {
       id: 'noWarheads',
       severity: roundsLeft <= 1 ? 'critical' : 'high',
@@ -577,10 +586,12 @@ export function findDefenceOrders(state: GameState, myId: NationId): BriefingOrd
       (e) => e.nationId === myId && (e.kind === 'droneDamage' || e.kind === 'dronesIntercepted'),
     ) ||
     state.turnOrder.some((id) => id !== myId && !state.nations[id].eliminated && state.nations[id].drones > 0);
-  const laserPrice = COSTS.laser + (n.hasAerospaceTech ? 0 : COSTS.aerospaceTech);
+  const laserPrice = COSTS.laser + (hasAerospaceAccess(state, myId) ? 0 : COSTS.aerospaceTech);
   if (
     swarmThreat &&
     !alive.some((c) => c.hasLaser) &&
+    // An ally's laser network already covers this nation
+    !(allyOf(state, myId) && laserNetwork(state, allyOf(state, myId)!)) &&
     budget >= laserPrice &&
     alive.length > 0
   ) {
@@ -640,7 +651,7 @@ export function findIntelAdvice(
   const armed = totalWarheads(me) > 0 || me.drones > 0;
   const aimCost = armed ? 0 : COSTS.bomb;
   if (
-    !me.hasSpyNetwork &&
+    !hasSpyService(state, myId) &&
     canBuySpyNetwork(state, myId) &&
     offenceOrders.length > 0 &&
     spare >= COSTS.spy + aimCost
@@ -674,7 +685,9 @@ export function findIntelAdvice(
         .filter((e) => e.nationId === myId && e.attackerId)
         .map((e) => e.attackerId as NationId),
     );
-    const candidates = rivals.filter((id) => !me.sanctions.includes(id));
+    const candidates = rivals.filter(
+      (id) => !ownSanctionPicks(state, myId).includes(id) && !areAllies(state, myId, id),
+    );
     const pick = candidates
       .map((id) => ({
         id,
@@ -712,7 +725,10 @@ export function findDefenceOrder(state: GameState, myId: NationId): BriefingOrde
 export function findOffenceOrders(state: GameState, myId: NationId, limit = 3): BriefingOrder[] {
   const me = state.nations[myId];
   const scores = allScores(state);
-  const rivals = state.turnOrder.filter((id) => id !== myId && !state.nations[id].eliminated);
+  // Allies are never targets
+  const rivals = state.turnOrder.filter(
+    (id) => id !== myId && !state.nations[id].eliminated && !areAllies(state, myId, id),
+  );
   if (rivals.length === 0) return [];
 
   const mine = scores.find((s) => s.nationId === myId);
