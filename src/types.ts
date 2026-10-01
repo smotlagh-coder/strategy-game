@@ -77,6 +77,13 @@ export interface AllianceState {
   shareAerospace: boolean;
   /** Bumped on every change — the higher counter is the owner's newer choice */
   version: number;
+  /**
+   * Money terms this nation attached to its current invitation, per round:
+   * positive = the inviter pays the partner, negative = the inviter asks the partner to pay.
+   */
+  tribute?: number;
+  /** Terms of the pact this nation accepted, copied from the inviter's offer */
+  terms?: { proposer: NationId; tribute: number } | null;
 }
 
 export interface NationState {
@@ -226,6 +233,8 @@ export interface IncomeLedgerEntry {
   balanceAfterIncome: number;
   sanctionPenalty: number;
   sanctioners: NationId[];
+  /** Pact money moved this round: positive = received from the ally, negative = paid to them */
+  pactTransfer?: number;
   /** Repair bill for drone damage taken last round */
   droneDamage?: number;
 }

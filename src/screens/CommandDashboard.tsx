@@ -33,7 +33,15 @@ import {
 import {
   ALLIANCE_FIRST_ROUND,
   acceptAlliance,
+  allianceCandidates,
+  alliancePairs,
+  allianceTalks,
   allianceWindowOpen,
+  leaveAlliance,
+  pactSlot,
+  tributeFrom,
+  TALK_MAX_MS,
+  TALK_MIN_MS,
   allyOf,
   declineAlliance,
   effectiveSanctions,
@@ -42,7 +50,7 @@ import {
   outgoingInvite,
   ownSanctionPicks,
 } from '../game/alliance';
-import { AllianceInvite, AllianceSheet } from './AllianceSheet';
+import { AllianceSheet, AllianceTalks } from './AllianceSheet';
 import { findDefenceOrders, findIntelAdvice, findOffenceOrders } from '../game/briefing';
 import {
   aerospaceBundleCost,
@@ -582,6 +590,10 @@ function CopPie({
  * circle below. Opening a segment grows it to 300° and shows what it sells;
  * the other two fold into small status strips, so nothing is a separate page.
  */
+/** Invitations this browser has already shown in a talks window (reset every new game). */
+const talksSeen = new Set<string>();
+let talksPrimed = false;
+
 export function CommandDashboard({
   state,
   actorId,
@@ -720,30 +732,91 @@ export function CommandDashboard({
   const invites = incomingInvites(state, actorId);
   const outgoing = outgoingInvite(state, actorId);
   const windowOpen = allianceWindowOpen(state);
-  const humanPeers = state.turnOrder.filter(
-    (id) => id !== actorId && state.nations[id].isHuman && !state.nations[id].eliminated,
-  );
+  const humanPeers = allianceCandidates(state, actorId);
   const [sheetOpen, setSheetOpen] = useState(false);
   sheetRef.current = sheetOpen;
-  const [later, setLater] = useState<string[]>([]);
+  // Alliance talks: every new invitation anywhere at the table opens a short window
+  const talksNow = allianceTalks(state);
+  const talksKey = talksNow.map((t) => t.key).join(',');
+  const [talkSession, setTalkSession] = useState<{
+    keys: string[];
+    since: number;
+    deadline: number;
+  } | null>(null);
+  useEffect(() => {
+    if (state.round <= 1) {
+      talksSeen.clear();
+      talksPrimed = false;
+    }
+    const keys = talksNow.map((t) => t.key);
+    if (!talksPrimed) {
+      // Whatever was already on record when this table opened is old news
+      talksPrimed = true;
+      keys.forEach((k) => talksSeen.add(k));
+      return;
+    }
+    const fresh = talksNow.filter((t) => !talksSeen.has(t.key));
+    if (fresh.length === 0) return;
+    fresh.forEach((t) => talksSeen.add(t.key));
+    const now = Date.now();
+    const mineNew = fresh.some((t) => t.from === actorId || t.to === actorId);
+    setTalkSession((cur) => ({
+      keys: [...(cur?.keys ?? []), ...fresh.map((t) => t.key)],
+      since: now,
+      // Offers to you and from you get the full ten seconds; news about others
+      // keeps whatever clock is already running
+      deadline: cur && !mineNew ? Math.max(cur.deadline, now + TALK_MIN_MS) : now + TALK_MAX_MS,
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [talksKey, state.round]);
   const [pactNotice, setPactNotice] = useState<string | null>(null);
   const prevAlly = useRef<NationId | null>(myAlly);
+  // What the pact was paying, remembered so its end can say that the money stopped
+  const pactMoney = useRef(0);
+  const moneyNow = tributeFrom(state, actorId);
   useEffect(() => {
     const before = prevAlly.current;
     prevAlly.current = myAlly;
     if (before === myAlly) return;
+    const stopped = before && pactMoney.current !== 0 ? ' Its payments have stopped.' : '';
     setPactNotice(
       myAlly
-        ? `${nationDef(myAlly).name} is now your ally`
+        ? before
+          ? `${nationDef(before).name} is no longer your ally — you are now allied with ${nationDef(myAlly).name}.${stopped}`
+          : `${nationDef(myAlly).name} is now your ally`
         : before
-          ? `The alliance with ${nationDef(before).name} has ended`
+          ? `Your alliance with ${nationDef(before).name} is over and no longer in effect.${stopped}`
           : null,
     );
-    const t = window.setTimeout(() => setPactNotice(null), 4500);
+    const t = window.setTimeout(() => setPactNotice(null), 7000);
     return () => window.clearTimeout(t);
   }, [myAlly]);
-  const inviteKey = (from: NationId) => `${from}:${state.nations[from]?.alliance?.proposalId ?? 0}`;
-  const openInvite = invites.find((from) => !later.includes(inviteKey(from))) ?? null;
+  useEffect(() => {
+    // Declared after the notice so a pact that just ended is still remembered there
+    if (myAlly) pactMoney.current = moneyNow;
+  }, [myAlly, moneyNow]);
+  // Pacts are public: tell the table when two *other* nations team up or part
+  const worldPacts = alliancePairs(state).filter(([a, b]) => a !== actorId && b !== actorId);
+  const pactsKey = worldPacts.map((p) => p.join('+')).join(',');
+  const prevPacts = useRef<string[] | null>(null);
+  const [worldNotice, setWorldNotice] = useState<string | null>(null);
+  useEffect(() => {
+    const now = pactsKey ? pactsKey.split(',') : [];
+    const before = prevPacts.current;
+    prevPacts.current = now;
+    if (before == null) return;
+    const name = (pair: string) =>
+      pair
+        .split('+')
+        .map((id) => nationDef(id as NationId).shortName)
+        .join(' + ');
+    const formed = now.find((p) => !before.includes(p));
+    const ended = before.find((p) => !now.includes(p));
+    if (!formed && !ended) return;
+    setWorldNotice(formed ? `${name(formed)} are now allies` : `${name(ended!)} are no longer allied`);
+    const t = window.setTimeout(() => setWorldNotice(null), 4500);
+    return () => window.clearTimeout(t);
+  }, [pactsKey]);
   const allyHasLaser = Boolean(
     myAlly && state.nations[myAlly].cities.some((c) => c.hasLaser && !c.destroyed),
   );
@@ -1074,7 +1147,7 @@ export function CommandDashboard({
                     ? 'Opens round 2'
                     : 'Closed'
                   : humanPeers.length === 0
-                    ? 'Needs a player'
+                    ? 'No one left'
                     : 'Tap to open',
           tone: myAlly ? 'owned' : invites.length > 0 || (windowOpen && humanPeers.length > 0) ? 'ready' : 'idle',
           advised: invites.length > 0,
@@ -1215,6 +1288,16 @@ export function CommandDashboard({
             <div className="cx-top__id">
               <img src={leaderSrc} alt="" draggable={false} />
               <b>{nationDef(actorId).shortName}</b>
+              {myAlly && (
+                <span
+                  className={`pact-tag has-pact pact-${(pactSlot(state, actorId) ?? 0) % 4}`}
+                  title={`Allied with ${nationDef(myAlly).name}`}
+                >
+                  <span aria-hidden>🤝</span>
+                  <img src={rivalArt(myAlly)} alt="" draggable={false} />
+                  {nationDef(myAlly).shortName}
+                </span>
+              )}
             </div>
             {treasury}
             {clock}
@@ -1300,19 +1383,38 @@ export function CommandDashboard({
         />
       )}
 
-      {!sheetOpen && openInvite && (
-        <AllianceInvite
+      {talkSession && (
+        <AllianceTalks
           state={state}
           actorId={actorId}
-          fromId={openInvite}
+          keys={talkSession.keys}
+          since={talkSession.since}
+          deadline={talkSession.deadline}
           leaderArt={rivalArt}
-          moreCount={invites.length - 1}
-          onAccept={() =>
-            onOrder((s) => acceptAlliance(s, openInvite, actorId), 'Alliance formed')
+          onAccept={(from) =>
+            onOrder((s) => acceptAlliance(s, from, actorId), 'Alliance formed')
           }
-          onDecline={() => onOrder((s) => declineAlliance(s, openInvite, actorId))}
-          onLater={() => setLater((l) => [...l, inviteKey(openInvite)])}
+          onDecline={(from) => onOrder((s) => declineAlliance(s, from, actorId))}
+          onExpire={() =>
+            // No answer in time: offers to you are declined, and yours is withdrawn
+            onOrder((s) => {
+              let next = s;
+              for (const from of incomingInvites(next, actorId)) {
+                next = declineAlliance(next, from, actorId);
+              }
+              const out = outgoingInvite(next, actorId);
+              return out && !out.declined ? leaveAlliance(next, actorId) : next;
+            })
+          }
+          onClose={() => setTalkSession(null)}
         />
+      )}
+
+      {!talkSession && !pactNotice && worldNotice && (
+        <div className="ally-toast" role="status" aria-live="polite" key={worldNotice}>
+          <img src={ART.cop.alliance} alt="" draggable={false} />
+          <b>{worldNotice}</b>
+        </div>
       )}
 
       {pactNotice && (

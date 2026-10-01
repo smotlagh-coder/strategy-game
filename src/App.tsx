@@ -1285,6 +1285,11 @@ function RoundBriefingOverlay({
               {briefing.droneRepairs > 0 && (
                 <b className="is-down">−${formatMoney(briefing.droneRepairs)} repairs</b>
               )}
+              {briefing.pactTransfer !== 0 && (
+                <b className={briefing.pactTransfer > 0 ? 'is-up' : 'is-down'}>
+                  {briefing.pactTransfer > 0 ? '+' : '−'}${formatMoney(Math.abs(briefing.pactTransfer))} pact
+                </b>
+              )}
             </small>
           </div>
           <button type="button" className="dash__skip" onClick={onDone}>

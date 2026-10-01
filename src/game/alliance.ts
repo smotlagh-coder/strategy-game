@@ -40,9 +40,14 @@ export function allianceOf(nation: NationState | undefined): AllianceState {
   return nation?.alliance ?? blankAlliance();
 }
 
-/** Only live human commanders can make a pact. */
-const canAlly = (n: NationState | undefined): n is NationState =>
-  Boolean(n && n.isHuman && !n.eliminated);
+/** Any live commander can make a pact — human or AI. */
+const canAlly = (n: NationState | undefined): n is NationState => Boolean(n && !n.eliminated);
+
+/** What a pact's money terms move each round, in $M. */
+export const ALLIANCE_TRIBUTE = 10;
+
+/** The three offers an invitation can carry: even, "I pay", or "you pay". */
+export type TributeTerms = -10 | 0 | 10;
 
 let allySeq = 0;
 const note = (text: string): LogEntry => ({ id: `log-ally-${Date.now()}-${++allySeq}`, text, tone: 'neutral' });
@@ -67,10 +72,12 @@ export function areAllies(state: GameState, a: NationId, b: NationId): boolean {
 export function incomingInvites(state: GameState, id: NationId): NationId[] {
   if (!allianceWindowOpen(state)) return [];
   const me = state.nations[id];
-  if (!canAlly(me) || allyOf(state, id)) return [];
+  if (!canAlly(me)) return [];
   const mine = allianceOf(me);
+  // An ally's own invitation is the pact itself, not an offer; anyone else may still ask
+  const current = allyOf(state, id);
   return state.turnOrder.filter((from) => {
-    if (from === id) return false;
+    if (from === id || from === current) return false;
     const n = state.nations[from];
     if (!canAlly(n)) return false;
     const a = allianceOf(n);
@@ -108,7 +115,6 @@ export function inviteBlockedReason(
   const b = state.nations[to];
   if (!canAlly(a) || !canAlly(b) || from === to) return 'Only live players can ally';
   if (allyOf(state, from)) return 'You already have an ally';
-  if (allyOf(state, to)) return 'Already allied';
   // A declined invitation can be sent again; a pending one is already out
   if (allianceOf(a).with === to && !outgoingInvite(state, from)?.declined) return 'Invitation sent';
   return null;
@@ -135,47 +141,106 @@ function withAlliance(
   };
 }
 
-export function proposeAlliance(state: GameState, to: NationId, actor: NationId): GameState {
+export function proposeAlliance(
+  state: GameState,
+  to: NationId,
+  actor: NationId,
+  tribute: number = 0,
+): GameState {
   if (inviteBlockedReason(state, actor, to)) return state;
+  const terms = tribute > 0 ? ALLIANCE_TRIBUTE : tribute < 0 ? -ALLIANCE_TRIBUTE : 0;
   // Inviting someone who already invited you is the same as saying yes
   if (incomingInvites(state, actor).includes(to)) return acceptAlliance(state, to, actor);
   // Whatever was offered before is withdrawn; the new offer is a fresh proposal
   return withAlliance(
     state,
     actor,
-    (a) => ({ with: to, proposalId: a.version + 1, shareBallistic: false, shareAerospace: false }),
-    `${nationDef(actor).name} invited ${nationDef(to).name} to an alliance.`,
+    (a) => ({
+      with: to,
+      proposalId: a.version + 1,
+      shareBallistic: false,
+      shareAerospace: false,
+      tribute: terms,
+      terms: null,
+    }),
+    `${nationDef(actor).name} invited ${nationDef(to).name} to an alliance${
+      terms > 0
+        ? `, offering $${ALLIANCE_TRIBUTE}M a round`
+        : terms < 0
+          ? `, asking $${ALLIANCE_TRIBUTE}M a round`
+          : ''
+    }.`,
   );
 }
 
-/** Take back an invitation, or walk away from an alliance — allowed in any round. */
+const clearedPointer = () => ({
+  with: null,
+  shareBallistic: false,
+  shareAerospace: false,
+  tribute: 0,
+  terms: null,
+});
+
+/**
+ * Take back an invitation, or walk away from an alliance — allowed in any round.
+ * Leaving ends the pact for both sides at once (so the partner is not left with
+ * a dangling invitation), and with it the per-round money.
+ */
 export function leaveAlliance(state: GameState, actor: NationId): GameState {
   const a = allianceOf(state.nations[actor]);
   if (!a.with) return state;
   const ally = allyOf(state, actor);
-  const text = ally
-    ? `${nationDef(actor).name} left the alliance with ${nationDef(ally).name}.`
-    : `${nationDef(actor).name} withdrew the alliance invitation to ${nationDef(a.with).name}.`;
-  return withAlliance(
+  if (!ally) {
+    return withAlliance(
+      state,
+      actor,
+      clearedPointer,
+      `${nationDef(actor).name} withdrew the alliance invitation to ${nationDef(a.with).name}.`,
+    );
+  }
+  const left = withAlliance(
     state,
     actor,
-    () => ({ with: null, shareBallistic: false, shareAerospace: false }),
-    text,
+    clearedPointer,
+    `${nationDef(actor).name} left the alliance with ${nationDef(ally).name}. The alliance is over and its payments have stopped.`,
   );
+  return withAlliance(left, ally, clearedPointer);
 }
 
 export function acceptAlliance(state: GameState, from: NationId, actor: NationId): GameState {
-  if (!incomingInvites(state, actor).includes(from)) return state;
-  const next = withAlliance(
+  const waiting = incomingInvites(state, actor);
+  if (!waiting.includes(from)) return state;
+  // Saying yes while allied means leaving that alliance
+  const previous = allyOf(state, actor);
+  let next = withAlliance(
     state,
     actor,
     (a) => {
+      // The other offers on the table are answered by this one
       const declined = { ...a.declined };
+      for (const other of waiting) {
+        if (other !== from) declined[other] = allianceOf(state.nations[other]).proposalId;
+      }
       delete declined[from];
-      return { with: from, declined, shareBallistic: false, shareAerospace: false };
+      return {
+        with: from,
+        declined,
+        shareBallistic: false,
+        shareAerospace: false,
+        // The terms the inviter offered are the terms of the pact
+        terms: { proposer: from, tribute: allianceOf(state.nations[from]).tribute ?? 0 },
+      };
     },
     `${nationDef(actor).name} and ${nationDef(from).name} are now allies.`,
   );
+  if (previous && previous !== from) {
+    next = withAlliance(
+      next,
+      previous,
+      clearedPointer,
+      `${nationDef(actor).name} left the alliance with ${nationDef(previous).name} for one with ${nationDef(from).name}. The old alliance is over and its payments have stopped.`,
+    );
+  }
   return next;
 }
 
@@ -301,4 +366,83 @@ export function alliancePairs(state: GameState): [NationId, NationId][] {
 export function pactSlot(state: GameState, id: NationId): number | null {
   const i = alliancePairs(state).findIndex((pair) => pair.includes(id));
   return i < 0 ? null : i;
+}
+
+/* ─────────── the money terms ─────────── */
+
+/** The terms of the live pact between two allies, or null when they have none. */
+export function pactTerms(
+  state: GameState,
+  a: NationId,
+  b: NationId,
+): { proposer: NationId; tribute: number } | null {
+  if (!areAllies(state, a, b)) return null;
+  const mine = allianceOf(state.nations[a]);
+  const theirs = allianceOf(state.nations[b]);
+  const pick = [mine, theirs]
+    .filter((x) => x.terms && (x.terms.proposer === a || x.terms.proposer === b))
+    .sort((x, y) => y.version - x.version)[0];
+  return pick?.terms ?? null;
+}
+
+/** What `id` pays its ally each round, in $M; negative means the ally pays `id`. */
+export function tributeFrom(state: GameState, id: NationId): number {
+  const ally = allyOf(state, id);
+  if (!ally) return 0;
+  const terms = pactTerms(state, id, ally);
+  if (!terms || terms.tribute === 0) return 0;
+  // Positive tribute is paid by the proposer
+  return terms.proposer === id ? terms.tribute : -terms.tribute;
+}
+
+/** An invitation gets this long to be answered. */
+export const TALK_MAX_MS = 10_000;
+/** The talks window stays up at least this long, even when everything settles at once. */
+export const TALK_MIN_MS = 3_000;
+
+export interface AllianceTalk {
+  /** Stable for one invitation: who sent it, and which of their proposals it was. */
+  key: string;
+  from: NationId;
+  to: NationId;
+  status: 'pending' | 'allied' | 'declined';
+}
+
+/** Every invitation on record between live nations, with where it stands. */
+export function allianceTalks(state: GameState): AllianceTalk[] {
+  if (!allianceWindowOpen(state)) return [];
+  const out: AllianceTalk[] = [];
+  const paired = new Set<string>();
+  for (const from of state.turnOrder) {
+    const a = allianceOf(state.nations[from]);
+    const to = a.with;
+    if (!to || to === from || a.proposalId <= 0) continue;
+    const target = state.nations[to];
+    if (!canAlly(state.nations[from]) || !canAlly(target)) continue;
+    let status: AllianceTalk['status'];
+    if (allyOf(state, from) === to) {
+      // Both sides of a finished pact may carry an invitation; it is one story
+      const pair = [from, to].sort().join('+');
+      if (paired.has(pair)) continue;
+      paired.add(pair);
+      status = 'allied';
+    } else if (allianceOf(target).declined[from] === a.proposalId) status = 'declined';
+    else status = 'pending';
+    out.push({ key: `${from}:${a.proposalId}`, from, to, status });
+  }
+  return out;
+}
+
+/**
+ * Does the talks window close now? It ends when the clock runs out, or once
+ * every invitation in it is settled and the minimum time has been shown.
+ */
+export function talksDone(
+  now: number,
+  since: number,
+  deadline: number,
+  anyPending: boolean,
+): boolean {
+  if (now >= deadline) return true;
+  return !anyPending && now - since >= TALK_MIN_MS;
 }

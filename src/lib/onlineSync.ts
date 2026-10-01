@@ -301,6 +301,26 @@ export function mergeNationPlanning(
   };
 }
 
+/**
+ * AI nations are not anyone's to edit, but a human's invitation is answered for
+ * them on the spot. Keep their newer pact pointer when a remote snapshot would
+ * otherwise overwrite it.
+ */
+function keepAiPacts(
+  nations: GameState['nations'],
+  local: GameState['nations'],
+): GameState['nations'] {
+  let out = nations;
+  for (const id of Object.keys(nations) as NationId[]) {
+    const r = nations[id];
+    const l = local[id];
+    if (!r || !l || r.isHuman || l.isHuman || (!r.alliance && !l.alliance)) continue;
+    if (out === nations) out = { ...nations };
+    out[id] = { ...r, ...mergeAlliance(r, l) };
+  }
+  return out;
+}
+
 function mergeNationMaps(base: GameState, other: GameState): GameState['nations'] {
   const nations = { ...base.nations };
   for (const id of base.turnOrder) {
@@ -397,10 +417,13 @@ export function applyRemoteGameSnapshot(
     const otherStrikes = remote.pendingStrikes.filter((s) => s.attackerId !== myNationId);
     let next: GameState = {
       ...remote,
-      nations: {
-        ...remote.nations,
-        [myNationId]: mergeNationPlanning(remote.nations[myNationId], prev.nations[myNationId]),
-      },
+      nations: keepAiPacts(
+        {
+          ...remote.nations,
+          [myNationId]: mergeNationPlanning(remote.nations[myNationId], prev.nations[myNationId]),
+        },
+        prev.nations,
+      ),
       pendingStrikes: [...otherStrikes, ...myStrikes],
       humanReady: ready,
       humanLastActive: {
@@ -426,7 +449,7 @@ export function applyRemoteGameSnapshot(
   }
   let next: GameState = {
     ...remote,
-    nations,
+    nations: keepAiPacts(nations, prev.nations),
     humanReady: ready,
     aiPlanningComplete: Boolean(remote.aiPlanningComplete || prev.aiPlanningComplete),
   };
@@ -510,6 +533,13 @@ export function mergeHumanPlanningWrite(
     if (!preferred.nations[id] || !remote.nations[id] || !local.nations[id]) continue;
     if (preferred.nations[id].isHuman || remote.nations[id].isHuman || local.nations[id].isHuman) {
       mergedNations[id] = mergeNationPlanning(remote.nations[id], local.nations[id]);
+    } else if (remote.nations[id].alliance || local.nations[id].alliance) {
+      // An AI answers a human's invitation inside that human's own update, so
+      // its side of the pact has to survive the merge too (the newer version wins).
+      mergedNations[id] = {
+        ...preferred.nations[id],
+        ...mergeAlliance(remote.nations[id], local.nations[id]),
+      };
     }
   }
   mergedNations[nationId] = mergeNationPlanning(preferred.nations[nationId], local.nations[nationId]);

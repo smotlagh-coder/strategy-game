@@ -9200,12 +9200,7 @@ button.cx-tile:not(.is-off):hover .cx-tile__orb { filter: brightness(1.25); }
   .ally-portrait { width: 3.8rem; height: 3.8rem; }
 }
 
-/* Alliance marks on the nation cards and on cities an ally has already aimed at */
-.stance-mark--ally {
-  border-color: rgba(255, 214, 107, 0.85);
-  background: rgba(60, 46, 0, 0.8);
-  color: #ffe08a;
-}
+/* Cities an ally has already aimed at */
 .city-tile.is-ally-aimed { outline: 2px solid rgba(255, 214, 107, 0.9); outline-offset: -2px; }
 .city-tile__pair {
   position: absolute;
@@ -9247,3 +9242,207 @@ button.cx-tile:not(.is-off):hover .cx-tile__orb { filter: brightness(1.25); }
 .wait-clock em { display: block; height: 100%; background: #ffd66b; transition: width 0.25s linear; }
 .wait-clock.is-urgent b { color: #ff8a70; }
 .wait-clock.is-urgent em { background: #ff8a70; }
+
+/* ---------- Public alliances: one colour per pact, on every screen that lists nations ---------- */
+.pact-0 { --pact: #ffd66b; }
+.pact-1 { --pact: #5fe3ff; }
+.pact-2 { --pact: #ff7ad9; }
+.pact-3 { --pact: #b6ff6a; }
+
+.pact-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.22rem;
+  max-width: 100%;
+  padding: 0.08rem 0.4rem 0.08rem 0.25rem;
+  border-radius: 999px;
+  border: 1.5px solid var(--pact, #ffd66b);
+  background: rgba(0, 0, 0, 0.78);
+  color: var(--pact, #ffd66b);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1;
+  white-space: nowrap;
+  box-shadow: 0 0 8px color-mix(in srgb, var(--pact, #ffd66b) 45%, transparent);
+}
+.pact-tag img {
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 50%;
+  object-fit: cover;
+  object-position: top center;
+  border: 1px solid var(--pact, #ffd66b);
+}
+
+/* A pact colours the whole nation card so you can see who stands together */
+.nation-card.has-pact::before { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--pact) 80%, transparent); }
+.nation-card.has-pact .nation-card__shot img { box-shadow: 0 0 0 2px var(--pact), 0 0 14px color-mix(in srgb, var(--pact) 70%, transparent); }
+.nation-card.has-pact.is-turn::before { box-shadow: inset 0 0 0 2px var(--pact), inset 0 0 0 4px rgba(245, 197, 66, 0.6); }
+
+.dash__nation.has-pact { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--pact) 75%, transparent); background: color-mix(in srgb, var(--pact) 8%, transparent); }
+.dash__nation.has-pact .dash__nation-face { border-color: var(--pact); box-shadow: 0 0 10px color-mix(in srgb, var(--pact) 70%, transparent); }
+.dash__nation-copy .pact-tag { align-self: flex-start; margin-top: 0.15rem; }
+
+.score-card.has-pact { box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--pact) 75%, transparent); }
+.score-card.has-pact > img { box-shadow: 0 0 0 2px var(--pact); }
+
+.cx-top__id .pact-tag { margin-top: 0.15rem; }
+
+.pact-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.8rem;
+  margin: 0 0 0.6rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+.pact-strip__label { font-size: 0.7rem; letter-spacing: 0.16em; text-transform: uppercase; color: #93a69a; }
+.pact-strip__pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.15rem 0.6rem 0.15rem 0.2rem;
+  border-radius: 999px;
+  border: 1.5px solid var(--pact);
+  background: color-mix(in srgb, var(--pact) 12%, rgba(0, 0, 0, 0.5));
+}
+.pact-strip__pair img {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  object-fit: cover;
+  object-position: top center;
+  border: 2px solid var(--pact);
+}
+.pact-strip__pair b { font-size: 1rem; }
+.pact-strip__pair em { font-style: normal; font-size: 0.78rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: var(--pact); }
+
+/* Alliance money terms + AI partners */
+.ally-ai {
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-style: normal;
+  letter-spacing: 0.14em;
+  vertical-align: middle;
+  color: #b8c9be;
+  border: 1px solid rgba(184, 201, 190, 0.45);
+}
+.ally-money {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #b8c9be;
+}
+.ally-money b { font-size: 1rem; margin-right: 0.15rem; }
+.ally-money.is-in { color: #8fe3a4; }
+.ally-money.is-out { color: #ffb36b; }
+.ally-terms-pick { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.ally-chip {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.05rem;
+  min-height: 2rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 0.74rem;
+  color: #d4e0d8;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+}
+.ally-chip small { font-size: 0.58rem; letter-spacing: 0.1em; text-transform: uppercase; color: #ffd66b; }
+.ally-chip.is-suggested { border-color: rgba(255, 214, 107, 0.7); }
+.ally-chip.is-on { background: rgba(143, 227, 164, 0.18); border-color: #8fe3a4; color: #fff; }
+
+/* Alliance talks window: ten seconds, shared by everyone at the table */
+.ally-card--talks { gap: 0.8rem; }
+.talk-clock { display: flex; align-items: center; gap: 0.7rem; }
+.talk-clock b { min-width: 2.4rem; text-align: right; font-size: 1.05rem; color: #ffd66b; font-variant-numeric: tabular-nums; }
+.talk-clock__bar { flex: 1; height: 0.35rem; border-radius: 999px; background: rgba(255, 255, 255, 0.12); overflow: hidden; }
+.talk-clock__bar i { display: block; height: 100%; background: linear-gradient(90deg, #ffd66b, #8fe3a4); transition: width 0.2s linear; }
+.talk-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+.talk-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.7rem;
+  font-size: 0.88rem;
+  color: #d4e0d8;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+.talk-row.is-allied { border-color: #8fe3a4; color: #fff; }
+.talk-row.is-declined, .talk-row.is-lapsed { opacity: 0.7; }
+.talk-faces { display: inline-flex; }
+.talk-faces img { width: 1.9rem; height: 1.9rem; border-radius: 50%; object-fit: cover; border: 2px solid #0d1712; }
+.talk-faces img + img { margin-left: -0.5rem; }
+.ally-more { margin: 0; text-align: center; font-size: 0.8rem; color: #93a69a; }
+
+/* ---------- Owned icons: glow + shine that older Safari (iPad) draws as a circle ----------
+   Old WebKit paints an animated box-shadow, or a sliding gradient clipped by border-radius,
+   as a square. So nothing here animates a shadow or relies on clipping: the halo and the
+   highlight are circles of their own, and only opacity changes. */
+.cop-pie__icon.is-lit,
+.cx-mini.is-lit {
+  animation: none;
+  isolation: isolate;
+  border-color: var(--ops);
+  box-shadow: 0 0 0 2px rgba(109, 255, 140, 0.3), 0 0 14px rgba(109, 255, 140, 0.7);
+}
+
+.cop-pie__icon.is-lit::before,
+.cx-mini.is-lit::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  box-shadow: 0 0 0 3px rgba(109, 255, 140, 0.55), 0 0 22px rgba(109, 255, 140, 1);
+  opacity: 0;
+  animation: ownedHalo 2.4s ease-in-out infinite;
+}
+
+.cop-pie__icon.is-lit::after,
+.cx-mini.is-lit::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: 50%;
+  pointer-events: none;
+  transform: none;
+  -webkit-clip-path: none;
+  clip-path: none;
+  -webkit-mask-image: none;
+  mask-image: none;
+  background: radial-gradient(circle at 30% 24%, rgba(235, 255, 240, 0.85) 0%, rgba(235, 255, 240, 0.25) 22%, transparent 42%);
+  background-size: auto;
+  opacity: 0;
+  animation: ownedTwinkle 3.2s ease-in-out infinite;
+}
+
+@keyframes ownedHalo {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 1; }
+}
+
+@keyframes ownedTwinkle {
+  0%, 45%, 100% { opacity: 0; }
+  70% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cop-pie__icon.is-lit::before,
+  .cop-pie__icon.is-lit::after,
+  .cx-mini.is-lit::before,
+  .cx-mini.is-lit::after { animation: none; opacity: 0; }
+}

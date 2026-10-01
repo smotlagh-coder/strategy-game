@@ -203,6 +203,8 @@ export interface RoundBriefing {
   previousBalance: number;
   income: number;
   droneRepairs: number;
+  /** Pact money this round: positive received, negative paid, 0 when none */
+  pactTransfer: number;
   /** Cities + shields wiped last round, at replacement cost */
   assetLoss: number;
   /** Asset loss plus drone repair bills — what the round took from us */
@@ -945,6 +947,7 @@ export function buildRoundBriefing(
     previousBalance: ledger?.previousBalance ?? money,
     income,
     droneRepairs: +droneRepairs.toFixed(2),
+    pactTransfer: ledger?.pactTransfer ?? 0,
     assetLoss: assetLossFor(priorEvents, myId),
     damageReceived: combat.received,
     warfareSpent: combat.spent,

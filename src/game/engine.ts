@@ -30,6 +30,7 @@ import {
   nationDef,
 } from '../data/nations';
 import {
+  alliancePairs,
   allyOf,
   areAllies,
   effectiveSanctions,
@@ -40,6 +41,7 @@ import {
   techLenderOf,
   sanctionSlots,
   scoutedByAlliance,
+  tributeFrom,
 } from './alliance';
 import { displayNameOnly } from '../lib/session';
 import {
@@ -956,6 +958,36 @@ export function applyIncome(state: GameState): GameState {
     logEntries.push(
       log(
         `${nationDef(id).name} receives $${revenue}M (${standing} cit${standing === 1 ? 'y' : 'ies'} $${cityIncome}M + research $${researchIncome}M${sanctionNote}${droneNote}).`,
+        'money',
+      ),
+    );
+  }
+
+  // Pact money: an ally who offered (or was asked for) a payment settles up now,
+  // out of what is in their treasury after income. Only when both sides were paid
+  // in this call, so a repeat call never moves the money twice.
+  const paidNow = new Set(unpaid);
+  for (const [a, b] of alliancePairs(state)) {
+    if (!paidNow.has(a) || !paidNow.has(b)) continue;
+    const owed = tributeFrom(state, a);
+    if (owed === 0) continue;
+    const [payer, payee] = owed > 0 ? [a, b] : [b, a];
+    const amount = Math.min(Math.abs(owed), Math.max(0, Math.floor(nations[payer].money)));
+    if (amount <= 0) continue;
+    nations[payer] = { ...nations[payer], money: +(nations[payer].money - amount).toFixed(2) };
+    nations[payee] = { ...nations[payee], money: +(nations[payee].money + amount).toFixed(2) };
+    for (const entry of ledger) {
+      if (entry.nationId === payer) {
+        entry.pactTransfer = -amount;
+        entry.balanceAfterIncome = nations[payer].money;
+      } else if (entry.nationId === payee) {
+        entry.pactTransfer = amount;
+        entry.balanceAfterIncome = nations[payee].money;
+      }
+    }
+    logEntries.push(
+      log(
+        `${nationDef(payer).name} paid $${amount}M to ${nationDef(payee).name} under the alliance.`,
         'money',
       ),
     );

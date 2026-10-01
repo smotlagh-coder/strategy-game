@@ -1,8 +1,13 @@
+import { useEffect, useState } from 'react';
 import { ART } from '../data/art';
 import { nationDef } from '../data/nations';
 import {
+  ALLIANCE_TRIBUTE,
+  TALK_MAX_MS,
+  type AllianceTalk,
   acceptAlliance,
   allianceCandidates,
+  allianceTalks,
   allianceOf,
   allyOf,
   declineAlliance,
@@ -13,10 +18,13 @@ import {
   inviteBlockedReason,
   leaveAlliance,
   outgoingInvite,
-  proposeAlliance,
+  pactTerms,
   setTechSharing,
+  talksDone,
+  tributeFrom,
 } from '../game/alliance';
-import { laserNetwork, totalWarheads } from '../game/engine';
+import { proposeAllianceWithReply } from '../game/allianceAi';
+import { allScores, laserNetwork, totalWarheads } from '../game/engine';
 import type { GameState, NationId } from '../types';
 
 /** One thing a nation puts on the table. */
@@ -98,6 +106,19 @@ function AssetRow({ assets }: { assets: Asset[] }) {
   );
 }
 
+/** The money side of an invitation or pact. `toMe` is $M a round flowing to the viewer. */
+function TermsLine({ toMe, partner }: { toMe: number; partner: string }) {
+  if (toMe === 0) return <p className="ally-money is-even">Even pact · no payments</p>;
+  return (
+    <p className={`ally-money ${toMe > 0 ? 'is-in' : 'is-out'}`}>
+      <b>
+        {toMe > 0 ? '+' : '−'}${Math.abs(toMe)}M
+      </b>
+      {toMe > 0 ? ` every round · ${partner} pays you` : ` every round · you pay ${partner}`}
+    </p>
+  );
+}
+
 const PACT_TERMS = [
   'Allies never strike each other',
   'Laser cover for both nations',
@@ -117,8 +138,8 @@ function PactTerms() {
   );
 }
 
-/** The pop-up shown when another nation asks to become your ally. */
-export function AllianceInvite({
+/** One offer on the table: what they bring, what it costs, and the two answers. */
+function OfferBody({
   state,
   actorId,
   fromId,
@@ -126,7 +147,6 @@ export function AllianceInvite({
   moreCount,
   onAccept,
   onDecline,
-  onLater,
 }: {
   state: GameState;
   actorId: NationId;
@@ -135,41 +155,184 @@ export function AllianceInvite({
   moreCount: number;
   onAccept: () => void;
   onDecline: () => void;
-  onLater: () => void;
 }) {
   const from = nationDef(fromId);
   const assets = allianceAssets(state, fromId, actorId);
+  // The inviter's offer: positive means they pay the invitee
+  const tributeOffered = allianceOf(state.nations[fromId]).tribute ?? 0;
+  const current = allyOf(state, actorId);
   return (
-    <div className="ally-veil" role="dialog" aria-modal="true" aria-label={`${from.name} proposes an alliance`}>
-      <div className="ally-card ally-card--invite enter-pop">
-        <div className="ally-card__head">
-          <span className="ally-portrait">
-            <img src={leaderArt(fromId)} alt="" draggable={false} />
-          </span>
-          <div>
-            <small className="ally-kicker">Alliance offer</small>
-            <h3>
-              {from.name} wants to become your ally
-            </h3>
-          </div>
+    <>
+      <div className="ally-card__head">
+        <span className="ally-portrait">
+          <img src={leaderArt(fromId)} alt="" draggable={false} />
+        </span>
+        <div>
+          <small className="ally-kicker">Alliance offer</small>
+          <h3>{from.name} wants to become your ally</h3>
         </div>
+      </div>
 
-        <p className="ally-sub">They bring</p>
-        <AssetRow assets={assets} />
+      <p className="ally-sub">They bring</p>
+      <AssetRow assets={assets} />
 
-        <PactTerms />
+      <TermsLine toMe={tributeOffered} partner={from.shortName} />
 
-        <div className="ally-actions">
-          <button type="button" className="ally-btn ally-btn--yes" onClick={onAccept}>
-            Accept
-          </button>
-          <button type="button" className="ally-btn ally-btn--no" onClick={onDecline}>
-            Decline
-          </button>
-        </div>
-        <button type="button" className="cop-link ally-later" onClick={onLater}>
-          Decide later{moreCount > 0 ? ` · ${moreCount} more offer${moreCount === 1 ? '' : 's'}` : ''}
+      {current && (
+        <p className="ally-money is-out">
+          Accepting ends your alliance with {nationDef(current).name}
+          {pactTerms(state, actorId, current)?.tribute ? ' and its payments' : ''}
+        </p>
+      )}
+
+      <PactTerms />
+
+      <div className="ally-actions">
+        <button type="button" className="ally-btn ally-btn--yes" onClick={onAccept}>
+          Accept
         </button>
+        <button type="button" className="ally-btn ally-btn--no" onClick={onDecline}>
+          Decline
+        </button>
+      </div>
+      {moreCount > 0 && (
+        <p className="ally-more">
+          {moreCount} more offer{moreCount === 1 ? '' : 's'} waiting
+        </p>
+      )}
+    </>
+  );
+}
+
+const TALK_WORDS: Record<AllianceTalk['status'], string> = {
+  pending: 'negotiating…',
+  allied: 'now allies',
+  declined: 'declined',
+};
+
+/**
+ * The talks window: every invitation gets ten seconds. Offers to you come first;
+ * when none of the talks are yours, it shows the rest of the table making pacts.
+ * Closes early once everything is settled, but never before three seconds.
+ */
+export function AllianceTalks({
+  state,
+  actorId,
+  keys,
+  since,
+  deadline,
+  leaderArt,
+  onAccept,
+  onDecline,
+  onClose,
+  onExpire,
+}: {
+  state: GameState;
+  actorId: NationId;
+  /** The invitations that opened this window. */
+  keys: string[];
+  since: number;
+  deadline: number;
+  leaderArt: (id: NationId) => string;
+  onAccept: (from: NationId) => void;
+  onDecline: (from: NationId) => void;
+  onClose: () => void;
+  /** The clock ran out with something still open. */
+  onExpire: () => void;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 200);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const talks = allianceTalks(state).filter((t) => keys.includes(t.key));
+  const mine = talks.filter((t) => t.from === actorId || t.to === actorId);
+  const waiting = incomingInvites(state, actorId);
+  const anyPending = waiting.length > 0 || talks.some((t) => t.status === 'pending');
+  const offer = waiting[0] ?? null;
+
+  const done = talksDone(now, since, deadline, anyPending);
+  useEffect(() => {
+    if (!done) return;
+    if (anyPending) onExpire();
+    onClose();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [done]);
+
+  const left = Math.max(0, deadline - now);
+  const share = Math.min(1, left / TALK_MAX_MS);
+  const seconds = Math.ceil(left / 1000);
+  const shown = (mine.length > 0 ? mine : talks).filter((t) => t.from !== offer || t.to !== actorId);
+  const word = (t: AllianceTalk) => {
+    if (t.to === actorId) {
+      return t.status === 'allied'
+        ? `You and ${nationDef(t.from).shortName} are allies`
+        : t.status === 'declined'
+          ? `You declined ${nationDef(t.from).shortName}`
+          : `${nationDef(t.from).shortName} awaits your answer`;
+    }
+    if (t.from === actorId) {
+      const them = nationDef(t.to).shortName;
+      return t.status === 'allied'
+        ? `${them} accepted — you are allies`
+        : t.status === 'declined'
+          ? `${them} declined`
+          : `Waiting for ${them}…`;
+    }
+    return `${nationDef(t.from).shortName} + ${nationDef(t.to).shortName} · ${TALK_WORDS[t.status]}`;
+  };
+
+  return (
+    <div className="ally-veil" role="dialog" aria-modal="true" aria-label="Alliance talks">
+      <div className="ally-card ally-card--talks enter-pop">
+        <div className="talk-clock" aria-label={`${seconds} seconds left`}>
+          <span className="talk-clock__bar">
+            <i style={{ width: `${share * 100}%` }} />
+          </span>
+          <b>{seconds}s</b>
+        </div>
+
+        {offer ? (
+          <OfferBody
+            state={state}
+            actorId={actorId}
+            fromId={offer}
+            leaderArt={leaderArt}
+            moreCount={waiting.length - 1}
+            onAccept={() => onAccept(offer)}
+            onDecline={() => onDecline(offer)}
+          />
+        ) : (
+          <div className="ally-card__head">
+            <img className="ally-card__icon" src={ART.cop.alliance} alt="" draggable={false} />
+            <div>
+              <small className="ally-kicker">Alliance talks</small>
+              <h3>
+                {mine.length > 0
+                  ? 'Your alliance talks'
+                  : 'Other nations are making alliances'}
+              </h3>
+            </div>
+          </div>
+        )}
+
+        {shown.length > 0 && (
+          <ul className="talk-list">
+            {shown.map((t) => (
+              <li key={t.key} className={`talk-row is-${t.status}`}>
+                <span className="talk-faces">
+                  <img src={leaderArt(t.from)} alt="" draggable={false} />
+                  <img src={leaderArt(t.to)} alt="" draggable={false} />
+                </span>
+                <span>{word(t)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {mine.length === 0 && (
+          <p className="ally-sub">Pacts are public — know who stands together</p>
+        )}
       </div>
     </div>
   );
@@ -194,45 +357,22 @@ export function AllianceSheet({
   const invites = incomingInvites(state, actorId);
   const out = outgoingInvite(state, actorId);
   const candidates = allianceCandidates(state, actorId);
+  const [terms, setTerms] = useState<Record<string, number>>({});
+  // Weak, offer to pay for the help; strong, ask to be paid for yours
+  const rows = allScores(state).filter((r) => !r.eliminated);
+  const place = rows.findIndex((r) => r.nationId === actorId);
+  const suggested =
+    rows.length < 2 || place < 0
+      ? 0
+      : place / (rows.length - 1) >= 0.6
+        ? ALLIANCE_TRIBUTE
+        : place / (rows.length - 1) <= 0.34
+          ? -ALLIANCE_TRIBUTE
+          : 0;
 
-  return (
-    <div className="ally-veil" role="dialog" aria-modal="true" aria-label="Alliance">
-      <div className="ally-card ally-card--sheet enter-pop">
-        <button type="button" className="ally-x" onClick={onClose} aria-label="Close">
-          ✕
-        </button>
-        <div className="ally-card__head">
-          <img className="ally-card__icon" src={ART.cop.alliance} alt="" draggable={false} />
-          <div>
-            <small className="ally-kicker">Finance &amp; Intel</small>
-            <h3>{ally ? `Allied with ${nationDef(ally).name}` : 'Alliance'}</h3>
-          </div>
-        </div>
-
-        {ally ? (
-          <AllyPanel
-            state={state}
-            actorId={actorId}
-            allyId={ally}
-            leaderArt={leaderArt}
-            onOrder={onOrder}
-            onLeave={() => {
-              onOrder((s) => leaveAlliance(s, actorId));
-            }}
-          />
-        ) : (
-          <>
-            {!state.nations[actorId] || candidates.length === 0 ? (
-              <p className="ally-empty">
-                Alliances are made between players — invite a friend into a match to team up.
-              </p>
-            ) : (
-              <p className="ally-sub">
-                Pick the partner who completes you — their assets, at a glance
-              </p>
-            )}
-
-            {invites.map((from) => (
+  const inviteRows = (
+    <>
+      {invites.map((from) => (
               <article key={`in-${from}`} className="ally-row is-invite">
                 <span className="ally-portrait ally-portrait--sm">
                   <img src={leaderArt(from)} alt="" draggable={false} />
@@ -240,6 +380,10 @@ export function AllianceSheet({
                 <div className="ally-row__body">
                   <b>{nationDef(from).name} invited you</b>
                   <AssetRow assets={allianceAssets(state, from, actorId)} />
+                  <TermsLine
+                    toMe={allianceOf(state.nations[from]).tribute ?? 0}
+                    partner={nationDef(from).shortName}
+                  />
                 </div>
                 <div className="ally-row__acts">
                   <button
@@ -259,6 +403,53 @@ export function AllianceSheet({
                 </div>
               </article>
             ))}
+    </>
+  );
+
+  return (
+    <div className="ally-veil" role="dialog" aria-modal="true" aria-label="Alliance">
+      <div className="ally-card ally-card--sheet enter-pop">
+        <button type="button" className="ally-x" onClick={onClose} aria-label="Close">
+          ✕
+        </button>
+        <div className="ally-card__head">
+          <img className="ally-card__icon" src={ART.cop.alliance} alt="" draggable={false} />
+          <div>
+            <small className="ally-kicker">Finance &amp; Intel</small>
+            <h3>{ally ? `Allied with ${nationDef(ally).name}` : 'Alliance'}</h3>
+          </div>
+        </div>
+
+        {ally && invites.length > 0 && (
+          <>
+            <p className="ally-sub">Offers to switch</p>
+            {inviteRows}
+          </>
+        )}
+
+        {ally ? (
+          <AllyPanel
+            state={state}
+            actorId={actorId}
+            allyId={ally}
+            leaderArt={leaderArt}
+            onOrder={onOrder}
+            onLeave={() => {
+              onOrder((s) => leaveAlliance(s, actorId));
+            }}
+          />
+        ) : (
+          <>
+            {candidates.length === 0 ? (
+              <p className="ally-empty">Nobody else is left standing to ally with.</p>
+            ) : (
+              <p className="ally-sub">
+                Pick the partner who completes you — players and AI nations alike
+              </p>
+            )}
+
+            {inviteRows}
+
 
             {candidates
               .filter((id) => !invites.includes(id))
@@ -266,14 +457,50 @@ export function AllianceSheet({
                 const blocked = inviteBlockedReason(state, actorId, id);
                 const mine = out?.to === id ? out : null;
                 const pending = mine && !mine.declined;
+                const chosen = terms[id] ?? 0;
+                const taken = allyOf(state, id);
+                const takenName = taken ? nationDef(taken).shortName : null;
                 return (
                   <article key={id} className="ally-row">
                     <span className="ally-portrait ally-portrait--sm">
                       <img src={leaderArt(id)} alt="" draggable={false} />
                     </span>
                     <div className="ally-row__body">
-                      <b>{nationDef(id).name}</b>
+                      <b>
+                        {nationDef(id).name}
+                        {!state.nations[id].isHuman && <i className="ally-ai">AI</i>}
+                      </b>
                       <AssetRow assets={allianceAssets(state, id, actorId)} />
+                      {takenName && (
+                        <p className="ally-money is-even">
+                          Allied with {takenName} · saying yes ends that alliance
+                        </p>
+                      )}
+                      {!pending && (
+                        <div className="ally-terms-pick" role="radiogroup" aria-label="Money terms">
+                          {(
+                            [
+                              [0, 'Even'],
+                              [ALLIANCE_TRIBUTE, `I pay $${ALLIANCE_TRIBUTE}M a round`],
+                              [-ALLIANCE_TRIBUTE, `I ask $${ALLIANCE_TRIBUTE}M a round`],
+                            ] as const
+                          ).map(([value, label]) => (
+                            <button
+                              key={value}
+                              type="button"
+                              role="radio"
+                              aria-checked={chosen === value}
+                              className={`ally-chip${chosen === value ? ' is-on' : ''}${
+                                suggested === value && value !== 0 ? ' is-suggested' : ''
+                              }`}
+                              onClick={() => setTerms((t) => ({ ...t, [id]: value }))}
+                            >
+                              {label}
+                              {suggested === value && value !== 0 && <small>suggested</small>}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     <div className="ally-row__acts">
                       {pending ? (
@@ -296,7 +523,10 @@ export function AllianceSheet({
                             disabled={Boolean(blocked)}
                             title={blocked ?? undefined}
                             onClick={() =>
-                              onOrder((s) => proposeAlliance(s, id, actorId), 'Alliance invitation sent')
+                              onOrder(
+                                (s) => proposeAllianceWithReply(s, id, actorId, chosen),
+                                'Alliance invitation sent',
+                              )
                             }
                           >
                             {mine?.declined ? 'Invite again' : 'Invite'}
@@ -388,6 +618,10 @@ function AllyPanel({
 
       <p className="ally-sub">{allyName} brings</p>
       <AssetRow assets={allianceAssets(state, allyId, actorId)} />
+      <TermsLine
+        toMe={pactTerms(state, actorId, allyId) ? -tributeFrom(state, actorId) : 0}
+        partner={nationDef(allyId).shortName}
+      />
 
       <div className="ally-shares">
         {shareRow(

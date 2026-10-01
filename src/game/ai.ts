@@ -50,6 +50,15 @@ import {
   totalWarheads,
   warheadStock,
 } from './engine';
+import {
+  areAllies,
+  effectiveSanctions,
+  hasAerospaceAccess,
+  hasBallisticTech,
+  hasSpyService,
+  ownSanctionPicks,
+} from './alliance';
+import { runAiAlliances } from './allianceAi';
 import type { City, GameState, NationId, WarheadKind } from '../types';
 
 /** Seeded city pick — spreads assets so blind rivals cannot lean on cities[0]. */
@@ -142,7 +151,8 @@ function weighRivals(
   attackerId: NationId,
 ): { id: NationId; weight: number }[] {
   return aliveNations(state)
-    .filter((id) => id !== attackerId && citiesLeft(state, id) > 0)
+    // An ally is never a target: the pact forbids it
+    .filter((id) => id !== attackerId && citiesLeft(state, id) > 0 && !areAllies(state, attackerId, id))
     .map((id) => {
       // Taking a rival's last city puts them out of the running entirely,
       // unless their treasury can pay for the automatic rebuild.
@@ -152,7 +162,7 @@ function weighRivals(
           : 0;
       // Sanctions are a declaration: a rival squeezing our income has already
       // picked a fight, and answering it is cheaper than bleeding all match.
-      const grudge = state.nations[id].sanctions.includes(attackerId) ? GRUDGE : 0;
+      const grudge = effectiveSanctions(state, id).includes(attackerId) ? GRUDGE : 0;
       return { id, weight: threatScore(state, id) + finishable + grudge };
     })
     .sort((a, b) => b.weight - a.weight);
@@ -284,7 +294,7 @@ export function pickDroneTarget(
 function openTargets(state: GameState, id: NationId): City[] {
   const swarms = state.nations[id].drones;
   return aliveNations(state)
-    .filter((nid) => nid !== id)
+    .filter((nid) => nid !== id && !areAllies(state, id, nid))
     .flatMap((nid) => {
       // A shield only falls to a swarm, and a swarm only lands if it can
       // outlast the defender's laser network
@@ -329,7 +339,7 @@ export function runAiBuyPhase(state: GameState): GameState {
   // exception — research and a shield bought in round 1 pay for the whole
   // match, and simulation says arming instead of building costs the AI wins.
   const strikeCost = () =>
-    (me().hasNuclearTech ? 0 : COSTS.ballisticMissileTech) + COSTS.bomb;
+    (hasBallisticTech(s, id) ? 0 : COSTS.ballisticMissileTech) + COSTS.bomb;
   const worthArming = () => s.round > 1 && openTargets(s, id).length > 0;
   const budget = () => Math.max(0, spare() - (worthArming() ? strikeCost() : 0));
 
@@ -339,7 +349,7 @@ export function runAiBuyPhase(state: GameState): GameState {
     if (rubble) s = buyRebuild(s, rubble.id, id);
   }
 
-  if (!me().hasNuclearTech && spare() >= strikeCost() && worthArming()) {
+  if (!hasBallisticTech(s, id) && spare() >= strikeCost() && worthArming()) {
     s = buyNuclearTech(s, id);
   }
 
@@ -365,7 +375,7 @@ export function runAiBuyPhase(state: GameState): GameState {
 
   // Aerospace pays for itself the same round: swarms suppress shields for the
   // warheads already in the plan, and they bill the cities they cannot kill.
-  if (!me().hasAerospaceTech && budget() >= COSTS.aerospaceTech + COSTS.drone) {
+  if (!hasAerospaceAccess(s, id) && budget() >= COSTS.aerospaceTech + COSTS.drone) {
     s = buyAerospaceTech(s, id);
   }
 
@@ -408,19 +418,19 @@ export function runAiBuyPhase(state: GameState): GameState {
   // the scoreboard. Escorts are only worth buying when the odds of hitting a
   // shield are real: simulation puts break-even at one shield per two standing
   // enemy cities, below which the money belongs in warheads.
-  const rivals = aliveNations(s).filter((nid) => nid !== id);
+  const rivals = aliveNations(s).filter((nid) => nid !== id && !areAllies(s, id, nid));
   const knownShields = rivals.reduce((total, nid) => total + computeScore(s, nid).shields, 0);
   const rivalCities = rivals.reduce(
     (total, nid) => total + s.nations[nid].cities.filter((c) => !c.destroyed).length,
     0,
   );
   const worthEscorting = rivalCities > 0 && knownShields * 2 >= rivalCities;
-  const shielded = me().hasSpyNetwork
+  const shielded = hasSpyService(s, id)
     ? targets.length - undefended
     : worthEscorting
       ? Math.min(targets.length, knownShields)
       : 0;
-  const escortable = me().hasAerospaceTech || me().drones > 0 ? shielded : 0;
+  const escortable = hasAerospaceAccess(s, id) || me().drones > 0 ? shielded : 0;
 
   // Specialty warheads first: nukes are cheap fillers, and buying three of them
   // first used to leave $0 for the magnetic / hydrogen that actually unlocks
@@ -446,7 +456,7 @@ export function runAiBuyPhase(state: GameState): GameState {
   let warheads = Math.min(MAX_BOMBS_PER_ROUND, undefended + escortable);
   while (warheads > 0 && maxBombsPurchasable(s, id) > 0) {
     const needsEscort = me().bombs + 1 > undefended;
-    const escort = needsEscort && me().hasAerospaceTech ? COSTS.drone : 0;
+    const escort = needsEscort && hasAerospaceAccess(s, id) ? COSTS.drone : 0;
     if (spare() < COSTS.bomb + escort) break;
     s = buyBomb(s, id);
     warheads -= 1;
@@ -471,14 +481,14 @@ export function runAiBuyPhase(state: GameState): GameState {
   // the table for the rest of the war. Worth one pack out of spare cash while
   // there is still a round left to use what it brings back.
   const blindOnSomething = aliveNations(s)
-    .filter((nid) => nid !== id)
+    .filter((nid) => nid !== id && !areAllies(s, id, nid))
     .some((nid) =>
       s.nations[nid].cities.some((c) => !c.destroyed && !seesCity(s, id, nid, c.id)),
     );
   if (
     blindOnSomething &&
     // Intel is only worth buying for a nation that can act on it
-    me().hasNuclearTech &&
+    hasBallisticTech(s, id) &&
     s.round < s.maxRounds &&
     maxDronesPurchasable(s, id) > 0 &&
     spare() >= COSTS.drone + COSTS.bomb
@@ -517,9 +527,9 @@ export function runAiDiplomacy(state: GameState): GameState {
   if (!s.nations[id] || s.nations[id].eliminated) return s;
 
   const weights = new Map(weighRivals(s, id).map((r) => [r.id, r.weight]));
-  const held = () => s.nations[id].sanctions.filter((nid) => !s.nations[nid].eliminated);
+  const held = () => ownSanctionPicks(s, id).filter((nid) => !s.nations[nid].eliminated);
   const unsanctioned = () =>
-    [...weights.keys()].filter((nid) => !s.nations[id].sanctions.includes(nid));
+    [...weights.keys()].filter((nid) => !ownSanctionPicks(s, id).includes(nid));
 
   // Free slots go to the biggest threats
   while (sanctionsLeft(s, id) > 0) {
@@ -550,6 +560,8 @@ export function runAiNationTurn(state: GameState, nationId: NationId): GameState
   if (idx < 0) return state;
 
   let s: GameState = { ...state, currentTurnIndex: idx, phase: 'buy' };
+  // Pacts first: an ally's spies and tech change what is worth buying
+  s = runAiAlliances(s, nationId);
   s = runAiBuyPhase(s);
   s = runAiDiplomacy(s);
 

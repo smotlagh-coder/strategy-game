@@ -10,8 +10,14 @@ import {
   hasAerospaceAccess,
   hasBallisticTech,
   hasSpyService,
+  allianceTalks,
   incomingInvites,
   inviteBlockedReason,
+  pactTerms,
+  talksDone,
+  TALK_MAX_MS,
+  TALK_MIN_MS,
+  tributeFrom,
   leaveAlliance,
   outgoingInvite,
   proposeAlliance,
@@ -35,6 +41,8 @@ import {
   toggleSanction,
   whoIsSanctioning,
 } from './engine';
+import { answerAiInvites, proposeAllianceWithReply, runAiAlliances } from './allianceAi';
+import { runAiNationTurn } from './ai';
 import { ballisticBundleCost, buyBombsBundled } from './bundles';
 import { mergeNationPlanning } from '../lib/onlineSync';
 import type { GameState, NationId, NationState } from '../types';
@@ -122,20 +130,21 @@ describe('invitations', () => {
     expect(outgoingInvite(s, 'us')?.declined).toBe(false);
   });
 
-  it('never involves AI nations', () => {
+  it('welcomes AI nations as partners', () => {
     const s = proposeAlliance(table(), 'russia', 'us');
-    expect(outgoingInvite(s, 'us')).toBeNull();
-    expect(inviteBlockedReason(table(), 'russia', 'us')).not.toBeNull();
+    expect(outgoingInvite(s, 'us')?.to).toBe('russia');
+    expect(inviteBlockedReason(table(), 'us', 'russia')).toBeNull();
+    expect(incomingInvites(s, 'russia')).toEqual(['us']);
   });
 
-  it('holds at most two players: a taken nation cannot be invited', () => {
+  it('holds at most two players: you cannot invite while allied yourself', () => {
     const base = table();
     const three = {
       ...base,
       nations: { ...base.nations, france: { ...base.nations.france, isHuman: true } },
     };
     const s = allied(three);
-    expect(inviteBlockedReason(s, 'france', 'us')).toBe('Already allied');
+    expect(inviteBlockedReason(s, 'france', 'us')).toBeNull();
     expect(inviteBlockedReason(s, 'us', 'france')).toBe('You already have an ally');
   });
 
@@ -155,7 +164,7 @@ describe('invitations', () => {
 
   it('dissolves when a partner drops out of the game', () => {
     const s = allied();
-    const dropped = { ...s, nations: { ...s.nations, uk: { ...s.nations.uk, isHuman: false } } };
+    const dropped = { ...s, nations: { ...s.nations, uk: { ...s.nations.uk, eliminated: true } } };
     expect(allyOf(dropped, 'us')).toBeNull();
   });
 });
@@ -401,5 +410,231 @@ describe('online merge', () => {
     const merged = mergeNationPlanning(pact.nations.us, left.nations.us);
     expect(merged.alliance?.with).toBeNull();
     expect(areAllies(left, 'us', 'uk')).toBe(false);
+  });
+});
+
+describe('pact money', () => {
+  const withTerms = (tribute: number, over: Partial<Record<NationId, Partial<NationState>>> = {}) =>
+    acceptAlliance(proposeAlliance(table(over), 'uk', 'us', tribute), 'us', 'uk');
+
+  it('records who proposed and what they offered', () => {
+    const s = withTerms(10);
+    expect(pactTerms(s, 'us', 'uk')?.tribute).toBe(10);
+    expect(tributeFrom(s, 'uk')).toBe(0 + (pactTerms(s, 'us', 'uk')?.proposer === 'us' ? -10 : 10));
+  });
+
+  it('moves $10M a round from the payer to the payee', () => {
+    // us proposed offering to pay
+    const s = acceptAlliance(proposeAlliance(table(), 'uk', 'us', 10), 'us', 'uk');
+    expect(tributeFrom(s, 'us')).toBe(10);
+    expect(tributeFrom(s, 'uk')).toBe(-10);
+    const plain = applyIncome({ ...s, round: 3, nations: { ...s.nations, us: { ...s.nations.us, alliance: undefined } } });
+    const paid = applyIncome({ ...s, round: 3 });
+    expect(paid.nations.us.money).toBeCloseTo(plain.nations.us.money - 10, 5);
+    const ledger = paid.lastIncomeLedger.find((e) => e.nationId === 'us');
+    expect(ledger?.pactTransfer).toBe(-10);
+    expect(paid.lastIncomeLedger.find((e) => e.nationId === 'uk')?.pactTransfer).toBe(10);
+  });
+
+  it('asking works the other way round', () => {
+    const s = acceptAlliance(proposeAlliance(table(), 'uk', 'us', -10), 'us', 'uk');
+    expect(tributeFrom(s, 'us')).toBe(-10);
+    expect(tributeFrom(s, 'uk')).toBe(10);
+  });
+
+  it('is paid once per round, and only from what the payer holds', () => {
+    const s = acceptAlliance(proposeAlliance(table({ us: { money: 0 } }), 'uk', 'us', 10), 'us', 'uk');
+    const once = applyIncome({ ...s, round: 3 });
+    const twice = applyIncome(once);
+    expect(twice.nations.us.money).toBe(once.nations.us.money);
+    expect(twice.nations.uk.money).toBe(once.nations.uk.money);
+    expect(once.nations.us.money).toBeGreaterThanOrEqual(0);
+  });
+
+  it('never moves money when only one side of the pair is being paid in this pass', () => {
+    const s = acceptAlliance(proposeAlliance(table(), 'uk', 'us', 10), 'us', 'uk');
+    // us was already paid for round 3 (say, by another client); uk is not
+    const half = { ...s, round: 3, nations: { ...s.nations, us: { ...s.nations.us, incomeRound: 3 } } };
+    const paid = applyIncome(half);
+    expect(paid.lastIncomeLedger.every((e) => !e.pactTransfer)).toBe(true);
+    expect(paid.nations.us.money).toBe(half.nations.us.money);
+  });
+
+  it('stops when the pact is left', () => {
+    const s = acceptAlliance(proposeAlliance(table(), 'uk', 'us', 10), 'us', 'uk');
+    const left = leaveAlliance(s, 'uk');
+    expect(tributeFrom(left, 'us')).toBe(0);
+    expect(applyIncome({ ...left, round: 3 }).lastIncomeLedger.every((e) => !e.pactTransfer)).toBe(true);
+  });
+});
+
+describe('AI in alliances', () => {
+  /** A strong, well-equipped France and a weak, bare Russia. */
+  const aiTable = () =>
+    table({
+      france: { hasSpyNetwork: true, hasAerospaceTech: true, hasNuclearTech: true },
+      russia: { hasSpyNetwork: false },
+    });
+
+  it('answers a human invitation at once', () => {
+    const s = proposeAllianceWithReply(aiTable(), 'france', 'us', 0);
+    const replied = allyOf(s, 'us') === 'france' || outgoingInvite(s, 'us')?.declined === true;
+    expect(replied).toBe(true);
+  });
+
+  it('does the same thing every time it is asked', () => {
+    const a = proposeAllianceWithReply(aiTable(), 'france', 'us', 10);
+    const b = proposeAllianceWithReply(aiTable(), 'france', 'us', 10);
+    expect(allyOf(a, 'us')).toBe(allyOf(b, 'us'));
+  });
+
+  it('pays attention to the money terms', () => {
+    // a payment can tip an AI that would otherwise hesitate, and a demand can cost the pact
+    const outcomes = [-10, 0, 10].map((t) => allyOf(proposeAllianceWithReply(aiTable(), 'france', 'us', t), 'us'));
+    const yes = outcomes.map((o) => o === 'france');
+    // being paid is never worse than paying
+    expect(Number(yes[2])).toBeGreaterThanOrEqual(Number(yes[1]));
+    expect(Number(yes[1])).toBeGreaterThanOrEqual(Number(yes[0]));
+  });
+
+  it('declines everyone but the best of several invitations', () => {
+    let s = aiTable();
+    s = proposeAlliance(s, 'france', 'us', 10);
+    s = proposeAlliance(s, 'france', 'uk', 10);
+    s = answerAiInvites(s, 'france');
+    expect(incomingInvites(s, 'france')).toEqual([]);
+    const allies = ['us', 'uk'].filter((id) => allyOf(s, id as NationId) === 'france');
+    expect(allies.length).toBeLessThanOrEqual(1);
+  });
+
+  it('goes and asks the partner that completes it — a human included', () => {
+    const rich = table({
+      uk: { hasSpyNetwork: true, hasAerospaceTech: true, hasNuclearTech: true },
+    });
+    const s = runAiAlliances(rich, 'russia');
+    const out = outgoingInvite(s, 'russia');
+    expect(allyOf(s, 'russia') ?? out?.to).toBe('uk');
+    // a human has to answer for themselves
+    expect(allyOf(s, 'russia')).toBeNull();
+    expect(incomingInvites(s, 'uk')).toEqual(['russia']);
+  });
+
+  it('may pair up two AI nations', () => {
+    const rich = table({ france: { hasSpyNetwork: true, hasAerospaceTech: true, hasNuclearTech: true } });
+    const s = runAiAlliances(rich, 'russia');
+    expect(allyOf(s, 'russia') ?? outgoingInvite(s, 'russia')?.to).toBe('france');
+  });
+
+  it('never runs outside the window or for humans', () => {
+    const early = { ...aiTable(), round: 1 };
+    expect(runAiAlliances(early, 'france')).toBe(early);
+    const s = aiTable();
+    expect(runAiAlliances(s, 'us')).toBe(s);
+  });
+
+  it('never attacks its ally', () => {
+    let s = aiTable();
+    s = proposeAlliance(s, 'france', 'russia', 0);
+    s = answerAiInvites(s, 'france');
+    // force the pact in case the AI declined
+    s = allyOf(s, 'france') ? s : acceptAlliance(proposeAlliance(s, 'russia', 'france', 0), 'russia', 'france');
+    s = { ...s, nations: { ...s.nations, france: { ...s.nations.france, money: 900 } } };
+    const after = runAiNationTurn(s, 'france');
+    const hitAlly = after.pendingStrikes.filter((x) => x.attackerId === 'france' && x.targetNationId === 'russia');
+    expect(hitAlly).toEqual([]);
+  });
+});
+
+describe('alliance talks window', () => {
+  it('lists an invitation as pending, then allied or declined', () => {
+    const sent = proposeAlliance(table(), 'uk', 'us');
+    expect(allianceTalks(sent).map((t) => [t.from, t.to, t.status])).toEqual([['us', 'uk', 'pending']]);
+    expect(allianceTalks(acceptAlliance(sent, 'us', 'uk'))[0].status).toBe('allied');
+    expect(allianceTalks(declineAlliance(sent, 'us', 'uk'))[0].status).toBe('declined');
+  });
+
+  it('gives each proposal its own key', () => {
+    const first = allianceTalks(proposeAlliance(table(), 'uk', 'us'))[0].key;
+    const again = allianceTalks(proposeAlliance(leaveAlliance(proposeAlliance(table(), 'uk', 'us'), 'us'), 'uk', 'us'))[0].key;
+    expect(again).not.toBe(first);
+  });
+
+  it('is empty outside the alliance window', () => {
+    expect(allianceTalks(proposeAlliance(table({}, 1), 'uk', 'us'))).toEqual([]);
+  });
+
+  it('closes at ten seconds, or early once settled — but never before three', () => {
+    expect(TALK_MAX_MS).toBe(10_000);
+    expect(TALK_MIN_MS).toBe(3_000);
+    expect(talksDone(2_000, 0, 10_000, false)).toBe(false); // settled, minimum not shown yet
+    expect(talksDone(3_000, 0, 10_000, false)).toBe(true); // settled early
+    expect(talksDone(9_000, 0, 10_000, true)).toBe(false); // still waiting on someone
+    expect(talksDone(10_000, 0, 10_000, true)).toBe(true); // clock ran out
+  });
+});
+
+describe('switching and ending alliances', () => {
+  const threeHumans = (over: Partial<Record<NationId, Partial<NationState>>> = {}) =>
+    table({ france: { isHuman: true }, ...over });
+
+  it('lets a nation that is already allied be invited, and accepting ends the old pact', () => {
+    let s = allied(threeHumans());
+    expect(inviteBlockedReason(s, 'france', 'us')).toBeNull();
+    s = proposeAlliance(s, 'us', 'france');
+    expect(incomingInvites(s, 'us')).toEqual(['france']);
+    // still allied until they answer
+    expect(allyOf(s, 'us')).toBe('uk');
+    s = acceptAlliance(s, 'france', 'us');
+    expect(allyOf(s, 'us')).toBe('france');
+    expect(allyOf(s, 'uk')).toBeNull();
+    // uk is left free, with no dangling invitation to us in either direction
+    expect(outgoingInvite(s, 'uk')).toBeNull();
+    expect(incomingInvites(s, 'us')).toEqual([]);
+    expect(incomingInvites(s, 'uk')).toEqual([]);
+  });
+
+  it('answers the other offers on the table when one is accepted', () => {
+    let s = table({ france: { isHuman: true }, russia: { isHuman: true } });
+    s = proposeAlliance(s, 'us', 'france');
+    s = proposeAlliance(s, 'us', 'russia');
+    expect(incomingInvites(s, 'us').sort()).toEqual(['france', 'russia']);
+    s = acceptAlliance(s, 'france', 'us');
+    expect(incomingInvites(s, 'us')).toEqual([]);
+    expect(allianceTalks(s).find((t) => t.from === 'russia')?.status).toBe('declined');
+  });
+
+  it('stops the per-round payments when the old pact is replaced', () => {
+    let s = acceptAlliance(proposeAlliance(threeHumans(), 'uk', 'us', 10), 'us', 'uk');
+    expect(tributeFrom(s, 'us')).toBe(10);
+    s = acceptAlliance(proposeAlliance(s, 'us', 'france', 0), 'france', 'us');
+    expect(tributeFrom(s, 'us')).toBe(0);
+    expect(tributeFrom(s, 'uk')).toBe(0);
+    const paid = applyIncome({ ...s, round: 3 });
+    expect(paid.lastIncomeLedger.every((e) => !e.pactTransfer)).toBe(true);
+  });
+
+  it('ends the pact for both sides when one leaves, so the partner is not left hanging', () => {
+    const pact = acceptAlliance(proposeAlliance(table(), 'uk', 'us', 10), 'us', 'uk');
+    const left = leaveAlliance(pact, 'us');
+    expect(allyOf(left, 'us')).toBeNull();
+    expect(allyOf(left, 'uk')).toBeNull();
+    expect(left.nations.uk.alliance?.with).toBeNull();
+    // no leftover invitation either way
+    expect(incomingInvites(left, 'us')).toEqual([]);
+    expect(incomingInvites(left, 'uk')).toEqual([]);
+    expect(outgoingInvite(left, 'uk')).toBeNull();
+    // and the money stops
+    expect(tributeFrom(left, 'us')).toBe(0);
+    expect(applyIncome({ ...left, round: 3 }).lastIncomeLedger.every((e) => !e.pactTransfer)).toBe(true);
+  });
+
+  it('keeps an AI loyal to its ally unless the newcomer is clearly better', () => {
+    // france (AI) allied with russia (AI); us (human) bids with nothing to offer
+    let s = table({ russia: { hasSpyNetwork: true, hasAerospaceTech: true, hasNuclearTech: true } });
+    s = acceptAlliance(proposeAlliance(s, 'france', 'russia'), 'russia', 'france');
+    expect(allyOf(s, 'france')).toBe('russia');
+    const weak = proposeAllianceWithReply(s, 'france', 'us', 0);
+    expect(allyOf(weak, 'france')).toBe('russia');
+    expect(outgoingInvite(weak, 'us')?.declined).toBe(true);
   });
 });
