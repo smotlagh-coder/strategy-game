@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { COSTS, MAX_SANCTIONS } from '../data/nations';
 import {
   acceptAlliance,
+  allianceDeskOpen,
   allianceWindowOpen,
   allyOf,
   areAllies,
@@ -42,9 +43,15 @@ import {
   toggleSanction,
   whoIsSanctioning,
 } from './engine';
-import { answerAiInvites, proposeAllianceWithReply, runAiAlliances } from './allianceAi';
+import {
+  allianceAppeal,
+  answerAiInvites,
+  proposeAllianceWithReply,
+  runAiAlliances,
+  runAllAiAlliances,
+} from './allianceAi';
 import { allScores } from './engine';
-import { runAiNationTurn } from './ai';
+import { rankedRivals, runAiNationTurn } from './ai';
 import { ballisticBundleCost, buyBombsBundled } from './bundles';
 import { mergeNationPlanning } from '../lib/onlineSync';
 import type { GameState, NationId, NationState } from '../types';
@@ -576,6 +583,86 @@ describe('AI alliance fairness', () => {
     const sent = runAiAlliances(s, 'france').nations.france.alliance;
     expect(sent?.with).toBe('uk');
     expect(sent?.tribute).toBe(-10);
+  });
+});
+
+describe('the alliance desk after the briefing', () => {
+  it('opens in rounds 2 to 5 of a six-round game, and only then', () => {
+    expect(allianceDeskOpen(table({}, 1), 'us')).toBe(false);
+    for (const round of [2, 3, 4, 5]) expect(allianceDeskOpen(table({}, round), 'us'), `round ${round}`).toBe(true);
+    expect(allianceDeskOpen(table({}, 6), 'us')).toBe(false);
+  });
+
+  it('stays shut for a fallen nation or when nobody is left to talk to', () => {
+    expect(allianceDeskOpen(table({ us: { eliminated: true } }), 'us')).toBe(false);
+    const alone = table({ uk: { eliminated: true }, russia: { eliminated: true }, france: { eliminated: true } });
+    expect(allianceDeskOpen(alone, 'us')).toBe(false);
+  });
+
+  it('is open to an allied nation too, so a pact can be ended or swapped', () => {
+    expect(allianceDeskOpen(allied(), 'us')).toBe(true);
+  });
+
+  it('seats every AI nation at the desk before the player orders', () => {
+    const rich = { hasSpyNetwork: true, hasAerospaceTech: true, hasNuclearTech: true };
+    // two well-stocked humans and two bare AI nations: the AI have something to ask for
+    const s = table({ uk: rich, us: rich });
+    const after = runAllAiAlliances(s);
+    // each AI either has an ally or has reached out to someone
+    for (const id of ['russia', 'france'] as NationId[]) {
+      expect(allyOf(after, id) ?? outgoingInvite(after, id)?.to ?? null, id).not.toBeNull();
+    }
+    // running the desk again changes nothing it already settled
+    const again = runAllAiAlliances(after);
+    for (const id of ['russia', 'france'] as NationId[]) expect(allyOf(again, id)).toBe(allyOf(after, id));
+  });
+});
+
+describe('AI bands together against the leader', () => {
+  const rich = { hasSpyNetwork: true, hasAerospaceTech: true, hasNuclearTech: true };
+  const shrink = (state: GameState, id: NationId, keep: number): GameState => ({
+    ...state,
+    nations: {
+      ...state.nations,
+      [id]: {
+        ...state.nations[id],
+        cities: state.nations[id].cities.map((c, i) => ({ ...c, destroyed: i >= keep })),
+      },
+    },
+  });
+  /** Everyone level, or us out in front with the rest on two cities. */
+  const tied = () => table({ us: rich, uk: rich });
+  const runaway = () => shrink(shrink(shrink(tied(), 'uk', 2), 'russia', 2), 'france', 2);
+
+  it('makes two nations behind a runaway leader want each other more', () => {
+    expect(allianceAppeal(runaway(), 'russia', 'uk')).toBeGreaterThan(allianceAppeal(tied(), 'russia', 'uk'));
+  });
+
+  it('cools towards the leader itself', () => {
+    const s = runaway();
+    // same kit, but one of them is the runaway: the chaser prefers the other
+    expect(allianceAppeal(s, 'russia', 'us')).toBeLessThan(allianceAppeal(s, 'russia', 'uk'));
+    // and the cold shoulder only appears once the lead is real
+    expect(allianceAppeal(tied(), 'russia', 'us')).toBeGreaterThanOrEqual(allianceAppeal(tied(), 'russia', 'uk') - 0.5);
+  });
+
+  it('points an allied pair at the front-runner outside the pact', () => {
+    // uk is armed, so alone france would shoot uk first; us leads the table by a little
+    const base = table({ uk: { hasNuclearTech: true, bombs: 1 } });
+    const lead = {
+      ...base,
+      nations: {
+        ...base.nations,
+        us: {
+          ...base.nations.us,
+          cities: base.nations.us.cities.map((c, i) => (i === 0 ? { ...c, hasResearch: true } : c)),
+        },
+      },
+    };
+    expect(rankedRivals(lead, 'france')[0]).toBe('uk');
+    const pact = acceptAlliance(proposeAlliance(lead, 'russia', 'france'), 'france', 'russia');
+    expect(rankedRivals(pact, 'france')[0]).toBe('us');
+    expect(rankedRivals(pact, 'france')).not.toContain('russia');
   });
 });
 

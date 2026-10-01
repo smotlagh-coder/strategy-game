@@ -51,6 +51,7 @@ import {
   warheadStock,
 } from './engine';
 import {
+  allyOf,
   areAllies,
   effectiveSanctions,
   hasAerospaceAccess,
@@ -69,6 +70,8 @@ function pickCity(cities: City[], seed: string): City | null {
 
 /** Extra threat weight carried by a rival that is sanctioning us. */
 const GRUDGE = 30;
+/** Allies pick the same victim: the front-runner outside the pact draws the pair's fire. */
+const PACT_FOCUS = 40;
 /** How far a rival must overtake a sanctioned one before the AI switches. */
 const SWAP_MARGIN = 20;
 
@@ -150,9 +153,15 @@ function weighRivals(
   state: GameState,
   attackerId: NationId,
 ): { id: NationId; weight: number }[] {
-  return aliveNations(state)
+  const rivals = aliveNations(state).filter(
     // An ally is never a target: the pact forbids it
-    .filter((id) => id !== attackerId && citiesLeft(state, id) > 0 && !areAllies(state, attackerId, id))
+    (id) => id !== attackerId && citiesLeft(state, id) > 0 && !areAllies(state, attackerId, id),
+  );
+  // A pair fights as one: both aim at whoever leads outside the pact
+  const pactTarget = allyOf(state, attackerId)
+    ? [...rivals].sort((a, b) => computeScore(state, b).total - computeScore(state, a).total)[0]
+    : undefined;
+  return rivals
     .map((id) => {
       // Taking a rival's last city puts them out of the running entirely,
       // unless their treasury can pay for the automatic rebuild.
@@ -163,7 +172,8 @@ function weighRivals(
       // Sanctions are a declaration: a rival squeezing our income has already
       // picked a fight, and answering it is cheaper than bleeding all match.
       const grudge = effectiveSanctions(state, id).includes(attackerId) ? GRUDGE : 0;
-      return { id, weight: threatScore(state, id) + finishable + grudge };
+      const focus = id === pactTarget ? PACT_FOCUS : 0;
+      return { id, weight: threatScore(state, id) + finishable + grudge + focus };
     })
     .sort((a, b) => b.weight - a.weight);
 }

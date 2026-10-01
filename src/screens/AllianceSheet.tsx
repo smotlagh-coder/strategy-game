@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ART } from '../data/art';
 import { nationDef } from '../data/nations';
 import {
@@ -7,6 +7,7 @@ import {
   TALK_MAX_MS,
   type AllianceTalk,
   acceptAlliance,
+  alliancePairs,
   allianceCandidates,
   allianceTalks,
   allianceOf,
@@ -24,6 +25,7 @@ import {
   tributeFrom,
 } from '../game/alliance';
 import { proposeAllianceWithReply } from '../game/allianceAi';
+import { ALLIANCE_PHASE_MS } from '../lib/onlineConstants';
 import { allScores, laserNetwork, totalWarheads } from '../game/engine';
 import type { GameState, NationId } from '../types';
 
@@ -346,13 +348,42 @@ export function AllianceSheet({
   leaderArt,
   onOrder,
   onClose,
+  phase,
 }: {
   state: GameState;
   actorId: NationId;
   leaderArt: (id: NationId) => string;
   onOrder: (fn: (s: GameState) => GameState, label?: string) => void;
   onClose: () => void;
+  /**
+   * Set when this is the timed alliance desk that opens after the round briefing:
+   * a clock runs down, and the desk closes itself when it hits zero.
+   */
+  phase?: { deadline: number };
 }) {
+  const [now, setNow] = useState(() => Date.now());
+  const closedRef = useRef(false);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    if (!phase) return;
+    const tick = () => {
+      const t = Date.now();
+      setNow(t);
+      if (t >= phase.deadline && !closedRef.current) {
+        closedRef.current = true;
+        closeRef.current();
+      }
+    };
+    tick();
+    const id = window.setInterval(tick, 200);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener('visibilitychange', tick);
+    };
+  }, [phase?.deadline]);
+  const left = phase ? Math.max(0, phase.deadline - now) : 0;
   const me = state.nations[actorId];
   const ally = allyOf(state, actorId);
   const invites = incomingInvites(state, actorId);
@@ -407,16 +438,33 @@ export function AllianceSheet({
     </>
   );
 
+  // The rest of the table, in the open: who stands together, and who is still talking
+  const others = alliancePairs(state).filter(([a, b]) => a !== actorId && b !== actorId);
+  const openTalks = allianceTalks(state).filter(
+    (t) => t.status === 'pending' && t.from !== actorId && t.to !== actorId,
+  );
+
   return (
     <div className="ally-veil" role="dialog" aria-modal="true" aria-label="Alliance">
-      <div className="ally-card ally-card--sheet enter-pop">
-        <button type="button" className="ally-x" onClick={onClose} aria-label="Close">
-          ✕
-        </button>
+      <div className={`ally-card ally-card--sheet enter-pop${phase ? ' ally-card--phase' : ''}`}>
+        {phase ? (
+          <div className="talk-clock" aria-label={`${Math.ceil(left / 1000)} seconds left`}>
+            <span className="talk-clock__bar">
+              <i style={{ width: `${Math.min(100, (left / ALLIANCE_PHASE_MS) * 100)}%` }} />
+            </span>
+            <b>{Math.ceil(left / 1000)}s</b>
+          </div>
+        ) : (
+          <button type="button" className="ally-x" onClick={onClose} aria-label="Close">
+            ✕
+          </button>
+        )}
         <div className="ally-card__head">
           <img className="ally-card__icon" src={ART.cop.alliance} alt="" draggable={false} />
           <div>
-            <small className="ally-kicker">Finance &amp; Intel</small>
+            <small className="ally-kicker">
+              {phase ? `Round ${state.round} · alliance talks` : 'Finance & Intel'}
+            </small>
             <h3>{ally ? `Allied with ${nationDef(ally).name}` : 'Alliance'}</h3>
           </div>
         </div>
@@ -539,6 +587,42 @@ export function AllianceSheet({
               })}
             <PactTerms />
           </>
+        )}
+        {phase && (others.length > 0 || openTalks.length > 0) && (
+          <>
+            <p className="ally-sub">Across the table</p>
+            <ul className="talk-list">
+              {others.map(([a, b]) => (
+                <li key={`pair-${a}-${b}`} className="talk-row is-allied">
+                  <span className="talk-faces">
+                    <img src={leaderArt(a)} alt="" draggable={false} />
+                    <img src={leaderArt(b)} alt="" draggable={false} />
+                  </span>
+                  <span>
+                    {nationDef(a).shortName} + {nationDef(b).shortName} · allies
+                  </span>
+                </li>
+              ))}
+              {openTalks.map((t) => (
+                <li key={t.key} className="talk-row is-pending">
+                  <span className="talk-faces">
+                    <img src={leaderArt(t.from)} alt="" draggable={false} />
+                    <img src={leaderArt(t.to)} alt="" draggable={false} />
+                  </span>
+                  <span>
+                    {nationDef(t.from).shortName} + {nationDef(t.to).shortName} · negotiating…
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+        {phase && (
+          <div className="ally-actions">
+            <button type="button" className="ally-btn ally-btn--yes ally-done" onClick={onClose}>
+              Done · start ordering
+            </button>
+          </div>
         )}
         {me.eliminated && <p className="ally-empty">Your nation has fallen.</p>}
       </div>

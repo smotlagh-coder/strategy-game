@@ -109,9 +109,9 @@ describe('alliances online: human to human', () => {
       expect(areAllies(v, na, nb), uid).toBe(false);
       expect(tributeFrom(v, na), uid).toBe(0);
       expect(tributeFrom(v, nb), uid).toBe(0);
-      // nothing left hanging as an invitation, in either direction
-      expect(incomingInvites(v, na), uid).toEqual([]);
-      expect(incomingInvites(v, nb), uid).toEqual([]);
+      // nothing left hanging between the two of them (AI nations may be asking either of them)
+      expect(incomingInvites(v, na), uid).not.toContain(nb);
+      expect(incomingInvites(v, nb), uid).not.toContain(na);
       expect(outgoingInvite(v, nb), uid).toBeNull();
     }
 
@@ -135,7 +135,7 @@ describe('alliances online: human to human', () => {
     // c asks a, who is already allied with b
     room.act(c, (s) => proposeAlliance(s, na, nc));
     expect(allyOf(room.shared, na)).toBe(nb);
-    expect(incomingInvites(room.view(a), na)).toEqual([nc]);
+    expect(incomingInvites(room.view(a), na)).toContain(nc);
 
     room.act(a, (s) => acceptAlliance(s, nc, na));
     for (const uid of room.uids) {
@@ -214,10 +214,14 @@ describe('alliances online: AI nations', () => {
       for (const uid of room.uids) {
         expect(mapOf(room.view(uid)), `${uid} in game ${n}`).toBe(mapOf(independent));
       }
+      // an AI either settles a pact with another AI or sends a human an invitation
       pacts += alliancePairs(independent).length;
+      pacts += independent.turnOrder.filter(
+        (id) => !independent.nations[id].isHuman && outgoingInvite(independent, id),
+      ).length;
       expectConsistent(room);
     }
-    // not vacuous: across ten tables the AI does make pacts
+    // not vacuous: across ten tables the AI does reach out or pair up
     expect(pacts).toBeGreaterThan(0);
   });
 

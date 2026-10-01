@@ -42,7 +42,15 @@ import {
   shieldsLeft,
   whoIsSanctioning,
 } from './game/engine';
-import { alliancePairs, allyOf, areAllies, hasSpyService, pactSlot } from './game/alliance';
+import {
+  allianceDeskOpen,
+  alliancePairs,
+  allyOf,
+  areAllies,
+  hasSpyService,
+  pactSlot,
+} from './game/alliance';
+import { runAllAiAlliances } from './game/allianceAi';
 import { runAllAiUntilHumanOrSummary, runAiTurn, runOnlineAiPlanning } from './game/ai';
 import { buildRoundBriefing, combatLedger } from './game/briefing';
 import type {
@@ -105,6 +113,7 @@ import {
   DISCONNECT_MS,
   STRIKE_CINEMA_MS,
   TARGET_CONFIRM_MS,
+  ALLIANCE_PHASE_MS,
   PURCHASE_WINDOW_MS,
 } from './lib/onlineConstants';
 import { aftermathMyCityIds, aftermathWorldIds } from './lib/lobbyInvite';
@@ -2665,6 +2674,8 @@ function GameBoard({
   const [aimDrones, setAimDrones] = useState(false);
   /** When the timed purchasing window on the command map closes. */
   const [purchaseDeadline, setPurchaseDeadline] = useState(0);
+  /** End of this turn's opening alliance desk; 0 when the turn has none. */
+  const [allianceUntil, setAllianceUntil] = useState(0);
   const [fx, setFx] = useState<FxEvent[]>([]);
   const [busy, setBusy] = useState(false);
   const [idleSecondsLeft, setIdleSecondsLeft] = useState<number | null>(null);
@@ -2883,7 +2894,15 @@ function GameBoard({
     setIdleSecondsLeft(Math.ceil(SELECTION_IDLE_MS / 1000));
     setTargets([]);
     setDroneTargets([]);
-    setPurchaseDeadline(Date.now() + PURCHASE_WINDOW_MS);
+    // After the briefing comes the alliance desk, then ordering: the purchase clock only
+    // starts running once the desk has closed (it is reset when it does)
+    const desk = allianceDeskOpen(stateRef.current, actorId);
+    if (desk && stateRef.current.mode !== 'online') {
+      // Offline the AI acts after the player, so it takes its seat at the desk first
+      setState((s) => runAllAiAlliances(s));
+    }
+    setAllianceUntil(desk ? Date.now() + ALLIANCE_PHASE_MS : 0);
+    setPurchaseDeadline(Date.now() + PURCHASE_WINDOW_MS + (desk ? ALLIANCE_PHASE_MS : 0));
     setWizardStep('command');
   }, [isMyHumanTurn, actorId, state.round, roundBriefingActive]);
 
@@ -3427,6 +3446,11 @@ function GameBoard({
           rivalArt={(id) => leaderArt(state, id)}
           onOrder={applyOrder}
           onProceed={() => advanceAfter(stateRef.current, 'command')}
+          allianceUntil={allianceUntil}
+          onAllianceDone={() => {
+            setAllianceUntil(0);
+            setPurchaseDeadline(Date.now() + PURCHASE_WINDOW_MS);
+          }}
         />
       )}
 
@@ -4164,6 +4188,10 @@ export default function App() {
     round: number;
     briefing: RoundBriefing | null;
   } | null>(null);
+  const roundIntroRef = useRef(roundIntro);
+  roundIntroRef.current = roundIntro;
+  /** The last round whose briefing has been shown and closed; ordering waits for it. */
+  const [introDoneRound, setIntroDoneRound] = useState(0);
   const [dropoutNotice, setDropoutNotice] = useState<{
     playerName: string;
     nationName: string;
@@ -4231,6 +4259,7 @@ export default function App() {
     if (preGame) {
       if (state.phase === 'gameOver' || state.phase === 'mode' || state.phase === 'lobby') {
         lastRoundBannerRef.current = 0;
+        setIntroDoneRound(0);
       }
       return;
     }
@@ -4244,7 +4273,10 @@ export default function App() {
     setRoundIntro({ round: state.round, briefing: buildRoundBriefing(state, myId ?? null) });
   }, [state, sessionUid]);
 
-  const dismissRoundStart = useCallback(() => setRoundIntro(null), []);
+  const dismissRoundStart = useCallback(() => {
+    setIntroDoneRound(roundIntroRef.current?.round ?? appStateRef.current.round);
+    setRoundIntro(null);
+  }, []);
   const dismissDropout = useCallback(() => setDropoutNotice(null), []);
 
   const notePublishedDropout = useCallback(
@@ -4590,7 +4622,13 @@ export default function App() {
           state={state}
           setState={setState}
           sessionUid={sessionUid}
-          roundBriefingActive={Boolean(roundIntro) || strikeTheaterBusy}
+          roundBriefingActive={
+            Boolean(roundIntro) ||
+            strikeTheaterBusy ||
+            // The briefing comes first: ordering (and the alliance desk) wait for it
+            ((state.phase === 'buy' || state.phase === 'action' || state.phase === 'income') &&
+              state.round > introDoneRound)
+          }
           onKicked={(message) => {
             if (sessionUid) void setPlayerStatus(sessionUid, 'available', null);
             setSessionError(message);

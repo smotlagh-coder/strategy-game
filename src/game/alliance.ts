@@ -372,6 +372,14 @@ export function tributeFrom(state: GameState, id: NationId): number {
   return terms.proposer === id ? terms.tribute : -terms.tribute;
 }
 
+/**
+ * Does `id` get the alliance desk this round? Only inside the alliance window, for a
+ * live commander with someone to talk to.
+ */
+export function allianceDeskOpen(state: GameState, id: NationId): boolean {
+  return allianceWindowOpen(state) && canAlly(state.nations[id]) && allianceCandidates(state, id).length > 0;
+}
+
 /** An invitation gets this long to be answered. */
 export const TALK_MAX_MS = 10_000;
 /** The talks window stays up at least this long, even when everything settles at once. */

@@ -604,6 +604,8 @@ export function CommandDashboard({
   rivalArt,
   onOrder,
   onProceed,
+  allianceUntil = 0,
+  onAllianceDone,
 }: {
   state: GameState;
   actorId: NationId;
@@ -617,6 +619,10 @@ export function CommandDashboard({
   /** Apply an order to the live state (and sync it when online). */
   onOrder: (fn: (s: GameState) => GameState, label?: string) => void;
   onProceed: () => void;
+  /** Wall-clock end of the opening alliance desk; 0 when this turn has none. */
+  allianceUntil?: number;
+  /** The alliance desk closed (clock or button): purchasing starts now. */
+  onAllianceDone?: () => void;
 }) {
   const [pick, setPick] = useState<CityPick | null>(null);
   const [active, setActive] = useState<Section | null>(null);
@@ -666,8 +672,20 @@ export function CommandDashboard({
   }, [deadline]);
   const secondsLeft = Math.ceil(msLeft / 1000);
 
+  // The alliance desk: a dedicated opening window before any ordering
+  const [deskOpen, setDeskOpen] = useState(() => allianceUntil > Date.now());
+  const deskRef = useRef(deskOpen);
+  deskRef.current = deskOpen;
+  const closeDesk = () => {
+    if (!deskRef.current) return;
+    deskRef.current = false;
+    setDeskOpen(false);
+    onAllianceDone?.();
+  };
+
   // Nothing left to buy with what is in the treasury: say so for a moment, then move on.
-  const lowTreasury = isTreasuryLow(state, actorId);
+  // (not while the alliance desk is open: ordering has not begun)
+  const lowTreasury = isTreasuryLow(state, actorId) && !deskOpen;
   const [lowUntil, setLowUntil] = useState<number | null>(null);
   useEffect(() => {
     if (!lowTreasury) {
@@ -758,6 +776,8 @@ export function CommandDashboard({
     const fresh = talksNow.filter((t) => !talksSeen.has(t.key));
     if (fresh.length === 0) return;
     fresh.forEach((t) => talksSeen.add(t.key));
+    // The desk already shows every offer; a second window on top would only get in the way
+    if (deskRef.current) return;
     const now = Date.now();
     const mineNew = fresh.some((t) => t.from === actorId || t.to === actorId);
     setTalkSession((cur) => ({
@@ -1373,7 +1393,18 @@ export function CommandDashboard({
         </footer>
       </div>
 
-      {sheetOpen && (
+      {deskOpen && (
+        <AllianceSheet
+          state={state}
+          actorId={actorId}
+          leaderArt={rivalArt}
+          onOrder={onOrder}
+          onClose={closeDesk}
+          phase={{ deadline: allianceUntil }}
+        />
+      )}
+
+      {sheetOpen && !deskOpen && (
         <AllianceSheet
           state={state}
           actorId={actorId}
@@ -1383,7 +1414,7 @@ export function CommandDashboard({
         />
       )}
 
-      {talkSession && (
+      {talkSession && !deskOpen && (
         <AllianceTalks
           state={state}
           actorId={actorId}

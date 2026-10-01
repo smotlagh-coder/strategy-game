@@ -9434,3 +9434,7 @@ button.cx-tile:not(.is-off):hover .cx-tile__orb { filter: brightness(1.25); }
   font-size: 0.72rem;
   opacity: 0.7;
 }
+
+/* Alliance desk after the briefing: a clock on top, a clear way out below */
+.ally-card--phase .talk-clock { margin-bottom: 0.2rem; }
+.ally-done { flex: 1; padding: 0.7rem 1rem; font-size: 1rem; }

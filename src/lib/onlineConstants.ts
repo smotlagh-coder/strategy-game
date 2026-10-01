@@ -34,6 +34,12 @@ export const ROUND_BANNER_MS = 3_000;
 export const ROUND_BRIEFING_MS = 15_000;
 
 /**
+ * The alliance desk that opens after each round briefing, before any ordering.
+ * Everyone gets this long to make, answer or end pacts; purchasing starts after.
+ */
+export const ALLIANCE_PHASE_MS = 15_000;
+
+/**
  * The whole purchasing period on the command map. When it runs out the player
  * moves on with what they bought; when every commander has locked in, play
  * continues at once.

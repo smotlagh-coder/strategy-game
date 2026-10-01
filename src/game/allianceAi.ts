@@ -25,22 +25,35 @@ import type { GameState, NationId } from '../types';
  */
 
 /** Minimum score for an AI to say yes or to go asking. */
-const ACCEPT_AT = 3;
+const ACCEPT_AT = 2.5;
 /** What a $10M-a-round term swings the verdict by. */
 const MONEY_WEIGHT = 1.5;
 /** How much better a new partner must be before an allied AI walks away from its ally. */
 const SWITCH_MARGIN = 1.5;
 /** A bid for a nation that already has an ally has to clear a higher bar. */
 const POACH_EXTRA = 2;
+/** The most a runaway leader can add to how much two chasers want each other. */
+const GANG_MAX = 2.5;
+/** Points of lead that add one point of appeal between two nations chasing the leader. */
+const GANG_PER_POINT = 30;
+/** Points of clear lead over second place that add one point of coolness towards the leader. */
+const LEAD_PER_COOL = 10;
+/** A nation does not befriend the one it is trying to catch. */
+const LEADER_COOL = 2;
 /** Humans are the table's real opponents; an AI weighs a human partner slightly higher. */
 const HUMAN_LIKING = 1;
 
 /** How far apart two standings must be (0 = same, 1 = top to bottom) before an AI puts money on the table. */
 const TERMS_GAP = 0.5;
+/** How far the top two must stand above third place before their pact counts as a lock. */
+const LOCK_MARGIN = 15;
+
 /** Two front-runners do not team up to lock the table: the rest would never catch them. */
 function lockout(state: GameState, a: NationId, b: NationId): boolean {
   const rows = allScores(state).filter((r) => !r.eliminated);
   if (rows.length < 4) return false;
+  // Only a front pair that has pulled clear of the field can lock it
+  if (rows[1].total - rows[2].total < LOCK_MARGIN) return false;
   const front = new Set(rows.slice(0, 2).map((r) => r.nationId));
   return front.has(a) && front.has(b);
 }
@@ -68,6 +81,19 @@ export function allianceAppeal(state: GameState, viewer: NationId, partner: Nati
   // A strong partner is a better shield than a weak one
   appeal += (1 - standing(state, partner)) * 1.5;
   if (p.isHuman) appeal += HUMAN_LIKING;
+  // The table leader is everyone's problem: the nations behind band together against
+  // them, and nobody chasing the leader takes the leader as a partner
+  const rows = allScores(state).filter((r) => !r.eliminated);
+  const top = rows[0];
+  if (top && rows.length >= 3) {
+    if (partner === top.nationId && viewer !== top.nationId) {
+      // Only a leader who has actually pulled clear is shunned; a tie at the top is nobody's target
+      appeal -= Math.min(LEADER_COOL, Math.max(0, top.total - rows[1].total) / LEAD_PER_COOL);
+    } else if (viewer !== top.nationId) {
+      const mine = rows.find((r) => r.nationId === viewer)?.total ?? top.total;
+      appeal += Math.min(GANG_MAX, Math.max(0, top.total - mine) / GANG_PER_POINT);
+    }
+  }
   return appeal;
 }
 
@@ -83,10 +109,8 @@ export function aiWouldAccept(
 ): boolean {
   if (lockout(state, ai, from)) return false;
   const need = standing(state, ai) * 1.5;
-  // Nobody joins hands with the leader while they are still chasing them
-  const chasing = standing(state, from) === 0 && standing(state, ai) > 0 ? 1 : 0;
   const money = tribute > 0 ? MONEY_WEIGHT : tribute < 0 ? -MONEY_WEIGHT : 0;
-  return allianceAppeal(state, ai, from) + need + money - chasing >= ACCEPT_AT;
+  return allianceAppeal(state, ai, from) + need + money >= ACCEPT_AT;
 }
 
 /** What the AI's current partner is worth to it, money included. */
@@ -171,5 +195,15 @@ export function runAiAlliances(state: GameState, ai: NationId): GameState {
   if (!pick) return s;
 
   s = proposeAllianceWithReply(s, pick.id, ai, aiTerms(s, ai, pick.id));
+  return s;
+}
+
+/**
+ * Every AI nation takes its turn at the alliance desk. Offline the AI otherwise acts after
+ * the player's orders, so this is what gives the player something to answer at the start.
+ */
+export function runAllAiAlliances(state: GameState): GameState {
+  let s = state;
+  for (const id of s.turnOrder) s = runAiAlliances(s, id);
   return s;
 }
