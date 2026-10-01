@@ -817,6 +817,48 @@ export async function pushHumanPlanningState(
   });
 }
 
+/**
+ * A commander stopped sending presence (closed tab, crash, dead connection).
+ * Lock them in with whatever they last sent so the table moves on — they keep
+ * their seat and cities and pick up again next round if they come back.
+ */
+export async function lockAbsentHuman(
+  gameId: string,
+  nationId: NationId,
+  round: number,
+): Promise<GameState | null> {
+  const ref = doc(getDb(), 'games', gameId);
+  return runTransaction(getDb(), async (tx) => {
+    const snap = await tx.get(ref);
+    const game = readGameDoc(snap);
+    if (!game) return null;
+    const remote = game.state;
+    if (Number(remote.round) !== Number(round)) return remote;
+    if (remote.phase !== 'buy' && remote.phase !== 'action') return remote;
+    if (remote.planningComplete) return remote;
+    const n = remote.nations[nationId];
+    if (!n?.isHuman || n.eliminated || remote.humanReady?.[nationId]) return remote;
+
+    let next: GameState = {
+      ...remote,
+      humanReady: { ...remote.humanReady, [nationId]: true },
+    };
+    if (!next.aiPlanningComplete) next = runOnlineAiPlanning(next);
+    if (allAliveHumansReady(next)) next = finishOnlineHumanPlanning(next);
+
+    tx.update(ref, {
+      state: encodeGameState(next),
+      sync: nextGameSync(game.sync, next.planningComplete ? 'resolve' : 'playerReady', next.round, Date.now(), {
+        nationId,
+      }),
+      updatedAt: Date.now(),
+      aiLock: null,
+      status: 'active',
+    });
+    return next;
+  });
+}
+
 /** Forfeit an idle/leaving human — burn cities, mark OUT, remove from membership. */
 export async function kickIdleHumanFromGame(
   gameId: string,

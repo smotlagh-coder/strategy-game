@@ -8930,3 +8930,21 @@ button.cx-tile:not(.is-off):hover .cx-tile__orb { filter: brightness(1.25); }
 .panel--ai:not(:has(> img)) > h2,
 .panel--ai:not(:has(> img)) > p,
 .panel--ai:not(:has(> img)) > .thinking-bar { grid-column: 1; }
+
+/* Way back into a match this player is still seated in */
+.lobby-rejoin {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  margin: 0 auto 0.8rem;
+  padding: 0.6rem 0.9rem;
+  max-width: 34rem;
+  border-radius: 14px;
+  border: 1.5px solid rgba(109, 255, 140, 0.7);
+  background: rgba(6, 40, 20, 0.7);
+  box-shadow: 0 0 14px rgba(109, 255, 140, 0.25);
+}
+
+.lobby-rejoin > span { display: flex; flex-direction: column; gap: 0.1rem; text-align: left; }
+.lobby-rejoin small { color: #bfe9cc; }

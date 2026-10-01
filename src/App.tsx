@@ -78,6 +78,8 @@ import {
   incrementSuperpowerWin,
   kickIdleHumanFromGame,
   leaveOnlineGame,
+  lockAbsentHuman,
+  touchGameHeartbeat,
   listenGame,
   enqueueHumanPlanningPush,
   lockInHumanPlanning,
@@ -98,6 +100,8 @@ import {
   ROUND_BANNER_MS,
   ROUND_BRIEFING_MS,
   SELECTION_IDLE_MS,
+  HEARTBEAT_MS,
+  DISCONNECT_MS,
   STRIKE_CINEMA_MS,
   TARGET_CONFIRM_MS,
   PURCHASE_WINDOW_MS,
@@ -2504,6 +2508,12 @@ function nextWizardStep(
   return null;
 }
 
+/** Peer presence bookkeeping; lives outside the board so a remount cannot reset it. */
+const presenceMemory = {
+  beatSeen: {} as Record<string, { v: number; at: number }>,
+  ghosts: new Set<string>(),
+};
+
 function GameBoard({
   state,
   setState,
@@ -2791,7 +2801,40 @@ function GameBoard({
     return () => window.clearInterval(tick);
   }, [isOnline, isMyHumanTurn, myNationId, state.onlineGameId, setState]);
 
-  // Peers: forfeit only after the selection idle window — never from lobby status / tab blur
+  // Presence: while my orders are open, tell the table I am still here. Peers use
+  // this to move on without a commander whose tab closed or connection died.
+  const iAmReady = Boolean(myNationId && state.humanReady?.[myNationId]);
+  useEffect(() => {
+    if (!isOnline || !myNationId || !state.onlineGameId) return;
+    if (state.phase !== 'buy' && state.phase !== 'action') return;
+    if (iAmReady || state.planningComplete) return;
+    const gameId = state.onlineGameId;
+    const nation = myNationId;
+    const beat = () => {
+      void touchGameHeartbeat(gameId, nation).catch(() => undefined);
+    };
+    beat();
+    const timer = window.setInterval(beat, HEARTBEAT_MS);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') beat();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
+  }, [isOnline, myNationId, state.onlineGameId, state.phase, state.round, state.planningComplete, iAmReady]);
+
+  // What each peer's presence looked like when I last checked, on MY clock so
+  // differences between device clocks cannot cause a false drop.
+  // Module-level so it survives the board remounting between rounds.
+  const beatSeenRef = { current: presenceMemory.beatSeen };
+  const ghostNationsRef = { current: presenceMemory.ghosts };
+
+  // Peers: a silent commander is locked in so nobody waits on them; forfeit only
+  // after the selection idle window — never from lobby status / tab blur
   useEffect(() => {
     if (!isOnline || !humansPlanning || !state.onlineGameId || !sessionUid) return;
 
@@ -2802,6 +2845,28 @@ function GameBoard({
       for (const id of aliveHumanNations(s)) {
         if (s.humanReady?.[id]) continue;
         if (id === myNationId) continue;
+
+        const key = `${s.onlineGameId}:${s.round}:${id}`;
+        const ghostKey = `${s.onlineGameId}:${id}`;
+        const beat = s.humanHeartbeat?.[id] ?? 0;
+        const seen = beatSeenRef.current[key];
+        if (!seen || seen.v !== beat) {
+          beatSeenRef.current[key] = { v: beat, at: now };
+          // Their pulse changed: they are back
+          if (seen && seen.v !== beat) ghostNationsRef.current.delete(ghostKey);
+        } else {
+          // A commander already known to be gone is skipped after one missed beat
+          const limit = ghostNationsRef.current.has(ghostKey) ? HEARTBEAT_MS + 2_000 : DISCONNECT_MS;
+          if (now - seen.at >= limit) {
+            ghostNationsRef.current.add(ghostKey);
+            void (async () => {
+              const got = await tryAcquireAiLock(s.onlineGameId!, sessionUid, `absent-${s.round}-${id}`);
+              if (!got) return;
+              await lockAbsentHuman(s.onlineGameId!, id, s.round);
+            })().catch((err) => console.error('lock absent failed', err));
+            continue;
+          }
+        }
         if (!isHumanDisconnected(s, id, now)) continue;
         void (async () => {
           const got = await tryAcquireAiLock(

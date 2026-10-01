@@ -78,7 +78,21 @@ export function storeDisplayName(name: string) {
  * Anonymous Firebase Auth is the network identity (Firestore rules use auth.uid).
  * Persistence is local-only so each browser profile keeps its own user.
  */
-export async function ensureAuthSession(): Promise<User | null> {
+let authSessionInFlight: Promise<User | null> | null = null;
+
+export function ensureAuthSession(): Promise<User | null> {
+  // The name gate and the submit button both ask for a session. Two sign-ins at
+  // once make two anonymous users, and the loser's uid no longer matches the
+  // token Firestore sends ("Missing or insufficient permissions").
+  if (!authSessionInFlight) {
+    authSessionInFlight = openAuthSession().finally(() => {
+      authSessionInFlight = null;
+    });
+  }
+  return authSessionInFlight;
+}
+
+async function openAuthSession(): Promise<User | null> {
   if (!isFirebaseConfigured()) return null;
   const auth = getFirebaseAuth();
   const clientId = getOrCreateClientId();

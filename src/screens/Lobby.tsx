@@ -23,7 +23,7 @@ import {
 } from '../lib/multiplayer';
 import { heartbeat, formatPlayerLabel, setPlayerStatus } from '../lib/session';
 import { inviteButtonState, isAlreadyInvited, lobbyCodeFromId, pickLobbyMatchGame } from '../lib/lobbyInvite';
-import type { GameState, InviteDoc, NationId, OnlineLobby, PlayerDoc } from '../types';
+import type { GameState, InviteDoc, NationId, OnlineGameDoc, OnlineLobby, PlayerDoc } from '../types';
 
 export function LobbyScreen({
   uid,
@@ -136,6 +136,23 @@ export function LobbyScreen({
     }
     return listenLobby(lobbyId, setLobby);
   }, [lobbyId]);
+
+  // A match this player is still seated in (reloaded tab, lost connection, closed by
+  // accident) — offer a way back instead of leaving the seat to be forfeited.
+  const [liveMatches, setLiveMatches] = useState<{ id: string; data: OnlineGameDoc }[]>([]);
+  useEffect(() => listenMyActiveGames(uid, setLiveMatches), [uid]);
+  const resumable = useMemo(() => {
+    const now = Date.now();
+    return liveMatches.filter(({ data }) => {
+      const s = data.state;
+      const seat = s.uidToNation?.[uid];
+      return (
+        Boolean(seat && s.nations[seat]?.isHuman && !s.nations[seat]?.eliminated) &&
+        s.phase !== 'gameOver' &&
+        now - Number(data.updatedAt ?? 0) < 10 * 60_000
+      );
+    });
+  }, [liveMatches, uid]);
 
   // Guests enter the match as soon as the lobby points at a game. Keep retrying
   // until join sticks — a one-shot effect used to leave peers on the lobby for
@@ -337,6 +354,27 @@ export function LobbyScreen({
         </p>
 
         {error && <p className="session-error">{error}</p>}
+
+        {!lobbyId &&
+          resumable.map((m) => (
+            <div key={m.id} className="lobby-rejoin">
+              <span>
+                <strong>Match in progress</strong>
+                <small>
+                  Round {m.data.state.round}/{m.data.state.maxRounds} ·{' '}
+                  {nationDef(m.data.state.uidToNation?.[uid] ?? m.data.state.turnOrder[0]).name}
+                </small>
+              </span>
+              <button
+                className="btn btn--primary"
+                type="button"
+                disabled={busy}
+                onClick={() => void enterGame(m.id, m.data.state)}
+              >
+                Rejoin
+              </button>
+            </div>
+          ))}
 
         <div className="lobby-grid">
           <section className="lobby-panel">
