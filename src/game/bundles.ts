@@ -2,6 +2,7 @@ import { COSTS } from '../data/nations';
 import {
   buyAerospaceTech,
   buyBombs,
+  buyCommandos,
   buyDrones,
   buyHydrogenBomb,
   buyLaser,
@@ -15,6 +16,7 @@ import {
   canBuyUnderground,
   currentNationId,
   maxBombsPurchasable,
+  maxCommandosPurchasable,
   maxDronesPurchasable,
   maxHydrogenPurchasable,
   maxMagneticPurchasable,
@@ -83,6 +85,12 @@ export function maxDronesBundled(state: GameState, nationId?: NationId): number 
   return s ? maxDronesPurchasable(s, id) : 0;
 }
 
+export function maxCommandosBundled(state: GameState, nationId?: NationId): number {
+  const id = idOf(state, nationId);
+  const s = withAerospace(state, id);
+  return s ? maxCommandosPurchasable(s, id) : 0;
+}
+
 export function canBuyLaserBundled(state: GameState, nationId?: NationId): boolean {
   const id = idOf(state, nationId);
   const s = withAerospace(state, id);
@@ -120,6 +128,15 @@ export function buyDronesBundled(state: GameState, count: number, nationId?: Nat
   if (!s) return state;
   const k = Math.min(count, maxDronesPurchasable(s, id));
   return k < 1 ? state : buyDrones(s, k, id);
+}
+
+/** Invisible Force squads; the first one also unlocks Aerospace Tech. */
+export function buyCommandosBundled(state: GameState, count: number, nationId?: NationId): GameState {
+  const id = idOf(state, nationId);
+  const s = withAerospace(state, id);
+  if (!s) return state;
+  const k = Math.min(count, maxCommandosPurchasable(s, id));
+  return k < 1 ? state : buyCommandos(s, k, id);
 }
 
 /** A laser network; if Aerospace Tech is missing it is unlocked in the same purchase. */

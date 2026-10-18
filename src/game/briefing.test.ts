@@ -10,7 +10,8 @@ import {
   startGame,
   toggleSanction,
 } from './engine';
-import { buildRoundBriefing } from './briefing';
+import { buildRoundBriefing, findOffenceOrders } from './briefing';
+import { queueStrike } from './engine';
 import type { GameState, NationId } from '../types';
 
 const SEATS: NationId[] = ['us', 'uk', 'russia'];
@@ -594,7 +595,9 @@ describe('round briefing', () => {
     const uk = brief.world.find((r) => r.nationId === 'uk')!;
     expect(uk.cities.every((c) => c.known && c.hasShield)).toBe(true);
     const ukOrder = brief.offenceOrders.find((o) => o.nationId === 'uk');
-    if (ukOrder) expect(ukOrder.icon).toBe('drone');
+    // Drones open the dome, alone or ahead of a squad
+    if (ukOrder) expect(['drone', 'commando']).toContain(ukOrder.icon);
+    if (ukOrder?.icon === 'commando') expect(ukOrder.action).toContain('drone');
   });
 
   it('leaves the exchange at zero when nobody fired', () => {
@@ -602,5 +605,143 @@ describe('round briefing', () => {
     expect(brief.damageReceived).toBe(0);
     expect(brief.warfareSpent).toBe(0);
     expect(brief.enemyLoss).toBe(0);
+  });
+});
+
+describe('Invisible Force in the briefing', () => {
+  function raided(): GameState {
+    let s = table();
+    s = {
+      ...s,
+      round: 2,
+      nations: {
+        ...s.nations,
+        uk: {
+          ...s.nations.uk,
+          isHuman: true,
+          hasAerospaceTech: true,
+          aerospaceTechUnlockedRound: 0,
+          commandos: 1,
+        },
+      },
+      humanNations: ['us', 'uk'],
+    };
+    const target = s.nations.us.cities[0];
+    s = queueStrike(s, 'us', target.id, 'uk', 'commando');
+    return settle(s);
+  }
+
+  it('tells the victim which city was taken and by whom', () => {
+    const brief = buildRoundBriefing(raided(), 'us')!;
+    expect(brief.lost).toHaveLength(1);
+    expect(brief.lost[0]).toMatchObject({ heldBy: 'uk', fresh: true });
+    expect(brief.untouched).toBe(false);
+    expect(brief.raiders.find((r) => r.id === 'uk')?.raids).toBe(1);
+  });
+
+  it('keeps the lost city on the list in later rounds, no longer fresh', () => {
+    const later = settle(raided());
+    const brief = buildRoundBriefing(later, 'us')!;
+    expect(brief.lost[0]?.heldBy).toBe('uk');
+    expect(brief.lost[0]?.fresh).toBe(false);
+  });
+
+  it('flags the captured city on the captor\'s own board with its founder', () => {
+    const brief = buildRoundBriefing(raided(), 'uk')!;
+    const held = brief.cities.find((c) => c.heldFrom === 'us');
+    expect(held?.status).toBe('captured');
+  });
+
+  it('advises the victim to take the city back when a squad is in stock', () => {
+    let s = raided();
+    s = {
+      ...s,
+      nations: { ...s.nations, us: { ...s.nations.us, hasAerospaceTech: true, commandos: 1 } },
+    };
+    const orders = findOffenceOrders(s, 'us', 5);
+    expect(orders.some((o) => o.icon === 'commando')).toBe(true);
+  });
+
+  /** Us with nothing in stock but cash, looking at one open UK city */
+  function scouting(money: number, patch: Record<string, unknown> = {}): GameState {
+    const base = table();
+    const uk = base.nations.uk;
+    return {
+      ...base,
+      round: 3,
+      nations: {
+        ...base.nations,
+        us: {
+          ...base.nations.us,
+          money,
+          hasSpyNetwork: true,
+          hasNuclearTech: false,
+          drones: 0,
+          bombs: 0,
+          ...patch,
+        },
+        uk: { ...uk, cities: uk.cities.map((c) => ({ ...c, hasShield: false, isUnderground: false })) },
+      },
+    };
+  }
+
+  it('advises buying a squad to take over a bare city when the treasury allows it', () => {
+    const orders = findOffenceOrders(scouting(COSTS.commando + COSTS.aerospaceTech), 'us', 5);
+    expect(orders[0]?.icon).toBe('commando');
+    expect(orders[0]?.action).toBe('Take over');
+  });
+
+  it('ranks a takeover above a plain nuke on an open city', () => {
+    const orders = findOffenceOrders(scouting(400), 'us', 1);
+    expect(orders[0]?.icon).toBe('commando');
+  });
+
+  it('does not advise a squad the treasury cannot pay for', () => {
+    const orders = findOffenceOrders(scouting(COSTS.commando - 1), 'us', 5);
+    expect(orders.some((o) => o.icon === 'commando')).toBe(false);
+  });
+
+  it('pairs a squad with drones for a shielded city', () => {
+    let s = scouting(400, { hasAerospaceTech: true, aerospaceTechUnlockedRound: 0, commandos: 1 });
+    const uk = s.nations.uk;
+    s = {
+      ...s,
+      nations: {
+        ...s.nations,
+        uk: { ...uk, cities: uk.cities.map((c) => ({ ...c, hasShield: true })) },
+      },
+    };
+    const orders = findOffenceOrders(s, 'us', 5);
+    expect(orders[0]?.icon).toBe('commando');
+    expect(orders[0]?.action).toBe('Take over + drone');
+  });
+
+  it('pairs a squad with hydrogen for a bunker city', () => {
+    let s = scouting(400, { hasAerospaceTech: true, aerospaceTechUnlockedRound: 0, commandos: 1 });
+    const uk = s.nations.uk;
+    s = {
+      ...s,
+      nations: {
+        ...s.nations,
+        uk: { ...uk, cities: uk.cities.map((c) => ({ ...c, isUnderground: true })) },
+      },
+    };
+    const orders = findOffenceOrders(s, 'us', 5);
+    expect(orders.some((o) => o.action === 'Take over + hydrogen')).toBe(true);
+  });
+
+  it('stays off a nation whose laser network it can see', () => {
+    let s = scouting(400, { hasAerospaceTech: true, aerospaceTechUnlockedRound: 0, commandos: 1 });
+    const uk = s.nations.uk;
+    s = {
+      ...s,
+      nations: {
+        ...s.nations,
+        uk: { ...uk, cities: uk.cities.map((c, i) => ({ ...c, hasLaser: i === 0 })) },
+      },
+    };
+    expect(
+      findOffenceOrders(s, 'us', 9).some((o) => o.icon === 'commando' && o.nationId === 'uk'),
+    ).toBe(false);
   });
 });

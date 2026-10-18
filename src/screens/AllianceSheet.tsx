@@ -467,6 +467,12 @@ export function AllianceSheet({
             </small>
             <h3>{ally ? `Allied with ${nationDef(ally).name}` : 'Alliance'}</h3>
           </div>
+          {phase && (
+            <button type="button" className="ally-btn ally-btn--yes ally-skip" onClick={onClose}>
+              Skip
+              <span aria-hidden> ›</span>
+            </button>
+          )}
         </div>
 
         {ally && invites.length > 0 && (
@@ -616,13 +622,6 @@ export function AllianceSheet({
               ))}
             </ul>
           </>
-        )}
-        {phase && (
-          <div className="ally-actions">
-            <button type="button" className="ally-btn ally-btn--yes ally-done" onClick={onClose}>
-              Done · start ordering
-            </button>
-          </div>
         )}
         {me.eliminated && <p className="ally-empty">Your nation has fallen.</p>}
       </div>

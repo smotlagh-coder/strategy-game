@@ -5,6 +5,9 @@ import {
   MAX_SANCTIONS,
   RESEARCH_INCOME,
   SANCTION_PENALTY,
+  SCORE_CAPTURE,
+  SCORE_CAPTURE_CLEAN,
+  SCORE_RESEARCH,
   nationDef,
 } from '../data/nations';
 import {
@@ -20,6 +23,7 @@ import {
   canBuyShield,
   canBuyUnderground,
   cityAsSeenBy,
+  commandoStock,
   laserNetwork,
   seesCity,
   formatMoney,
@@ -28,6 +32,7 @@ import {
 } from './engine';
 import {
   maxBombsBundled,
+  maxCommandosBundled,
   maxDronesBundled,
   maxHydrogenBundled,
   maxMagneticBundled,
@@ -50,6 +55,8 @@ export type BriefingCityStatus =
   | 'swarmed'
   | 'shieldLost'
   | 'absorbed'
+  | 'repelled'
+  | 'captured'
   | 'destroyed';
 
 /** Worst thing that happened to a city is what its tile reports. */
@@ -60,6 +67,8 @@ const STATUS_ORDER: BriefingCityStatus[] = [
   'swarmed',
   'shieldLost',
   'absorbed',
+  'repelled',
+  'captured',
   'destroyed',
 ];
 
@@ -69,6 +78,8 @@ const EVENT_STATUS: Partial<Record<RoundWorldEvent['kind'], BriefingCityStatus>>
   droneDamage: 'swarmed',
   shieldDestroyed: 'shieldLost',
   strikeAbsorbed: 'absorbed',
+  raidRepelled: 'repelled',
+  cityCaptured: 'captured',
   cityDestroyed: 'destroyed',
 };
 
@@ -83,6 +94,17 @@ export interface BriefingCity {
   hasLaser: boolean;
   /** Rivals that aimed at this city in the round just played */
   attackers: NationId[];
+  /** The nation this city was founded for, while we hold it after a takeover */
+  heldFrom?: NationId;
+}
+
+/** A city of ours that another nation holds after an Invisible Force takeover. */
+export interface BriefingLostCity {
+  id: string;
+  name: string;
+  heldBy: NationId;
+  /** Taken in the round just played */
+  fresh: boolean;
 }
 
 /** A rival's whole volley against us, collapsed into one row. */
@@ -90,6 +112,8 @@ export interface BriefingRaider {
   id: NationId;
   nukes: number;
   swarms: number;
+  /** Invisible Force squads sent at us, whether they landed or were turned back */
+  raids: number;
   cities: string[];
 }
 
@@ -103,6 +127,8 @@ export interface BriefingAssets {
   lasers: number;
   bombs: number;
   drones: number;
+  /** Invisible Force squads in stock */
+  commandos: number;
   spyNetwork: boolean;
   /** Warheads / packs can actually be bought and fired this round */
   canArmNukes: boolean;
@@ -142,6 +168,7 @@ export type BriefingOrderIcon =
   | 'drone'
   | 'hydrogen'
   | 'magnetic'
+  | 'commando'
   | 'hold';
 
 export interface BriefingOrder {
@@ -179,6 +206,8 @@ export interface BriefingWorldCity {
   hasLaser: boolean;
   /** What last round did to the city — only known for the viewer's own cities */
   status?: BriefingCityStatus;
+  /** The nation this city was founded for, while another one holds it */
+  heldFrom?: NationId;
 }
 
 /** One ranked nation on the world table. */
@@ -195,6 +224,8 @@ export interface RoundBriefing {
   round: number;
   nationId: NationId;
   cities: BriefingCity[];
+  /** Cities taken from us and not yet won back */
+  lost: BriefingLostCity[];
   raiders: BriefingRaider[];
   sanctioners: NationId[];
   sanctionPenalty: number;
@@ -232,6 +263,8 @@ export interface RoundBriefing {
   untouched: boolean;
 }
 
+const RAID_KINDS: RoundWorldEvent['kind'][] = ['cityCaptured', 'raidRepelled'];
+
 const NUKE_KINDS: RoundWorldEvent['kind'][] = [
   'cityDestroyed',
   'shieldDestroyed',
@@ -242,6 +275,7 @@ const cash = (amount: number) => `$${formatMoney(amount)}`;
 
 const LOSS_KINDS: RoundWorldEvent['kind'][] = [
   'cityDestroyed',
+  'cityCaptured',
   'shieldDestroyed',
   'droneDamage',
 ];
@@ -249,6 +283,7 @@ const LOSS_KINDS: RoundWorldEvent['kind'][] = [
 /** What one launched weapon cost the attacker. A missing kind is a nuclear warhead. */
 export function weaponSpend(weapon: PendingStrike['weapon']): number {
   if (weapon === 'drone') return COSTS.drone;
+  if (weapon === 'commando') return COSTS.commando;
   if (weapon === 'hydrogen') return COSTS.bombHydrogen;
   if (weapon === 'magnetic') return COSTS.bombMagnetic;
   return COSTS.bomb;
@@ -258,7 +293,7 @@ function stampedLoss(event: RoundWorldEvent): number {
   if (event.amount != null) return event.amount;
   if (event.kind === 'shieldDestroyed') return COSTS.shield;
   if (event.kind === 'droneDamage') return DRONE_DAMAGE;
-  if (event.kind === 'cityDestroyed') return COSTS.rebuild;
+  if (event.kind === 'cityDestroyed' || event.kind === 'cityCaptured') return COSTS.rebuild;
   return 0;
 }
 
@@ -318,6 +353,7 @@ function readAssets(state: GameState, myId: NationId): BriefingAssets {
     lasers: alive.filter((c) => c.hasLaser).length,
     bombs: totalWarheads(n),
     drones: n.drones,
+    commandos: commandoStock(n),
     spyNetwork: hasSpyService(state, myId),
     // Tech comes with the first purchase, so an untouched arsenal can still be armed
     canArmNukes: canBuyBombs(state, myId) || !hasBallisticTech(state, myId),
@@ -624,6 +660,7 @@ const DEFENCE_PRICE: Record<BriefingOrderIcon, () => number> = {
   drone: () => 0,
   hydrogen: () => 0,
   magnetic: () => 0,
+  commando: () => 0,
   hold: () => 0,
 };
 
@@ -746,7 +783,16 @@ export function findOffenceOrders(state: GameState, myId: NationId, limit = 3): 
   const canHydrogen = (me.hydrogenBombs ?? 0) > 0 || maxHydrogenBundled(state, myId) > 0;
   const canMagnetic = (me.magneticBombs ?? 0) > 0 || maxMagneticBundled(state, myId) > 0;
   const canSwarm = me.drones > 0 || maxDronesBundled(state, myId) > 0;
-  if (!canNuke && !canHydrogen && !canSwarm) return [];
+  // A squad in stock, or one the treasury can buy (Aerospace Tech comes with the first)
+  const squadInStock = commandoStock(me) > 0;
+  const canRaid = squadInStock || maxCommandosBundled(state, myId) > 0;
+  // The squad plus its escort has to fit the treasury together, not just one at a time
+  const aerospaceBill = hasAerospaceAccess(state, myId) ? 0 : COSTS.aerospaceTech;
+  const squadBill = squadInStock ? 0 : COSTS.commando + aerospaceBill;
+  const fits = (extra: number) => squadBill + extra <= me.money;
+  const swarmBill = me.drones > 0 ? 0 : COSTS.drone + (squadBill > 0 ? 0 : aerospaceBill);
+  const hydrogenBill = (me.hydrogenBombs ?? 0) > 0 ? 0 : COSTS.bombHydrogen;
+  if (!canNuke && !canHydrogen && !canSwarm && !canRaid) return [];
 
   const nationRank = (id: NationId): number => {
     let score = 0;
@@ -805,6 +851,33 @@ export function findOffenceOrders(state: GameState, myId: NationId, limit = 3): 
         score += 4;
       }
 
+      // The squad takes a city over: it scores the conquest bonus and the city and its lab
+      // come along. A bare city, above all one we lost, is the clean case; a covered one
+      // needs a swarm (shield) or hydrogen (bunker) to clear the way first.
+      const justLost =
+        raw.originId === myId && raw.capturedRound != null && raw.capturedRound >= state.round - 1;
+      const ours = raw.originId === myId;
+      const takeScore =
+        SCORE_CAPTURE +
+        (ours ? 0 : SCORE_CAPTURE_CLEAN + (raw.hasResearch ? SCORE_RESEARCH : 0)) +
+        (ours ? 20 : 0) -
+        (squadInStock ? 0 : 6);
+      if (canRaid && !laserKnown) {
+        const verb = ours ? 'Retake' : 'Take over';
+        if ((known || justLost) && !city.isUnderground && !city.hasShield) {
+          pick = { action: verb, icon: 'commando' };
+          score += takeScore;
+        } else if (known && city.hasShield && !city.isUnderground && canSwarm && fits(swarmBill)) {
+          // Drones tie the shield up and keep the takeover clean
+          pick = { action: `${verb} + drone`, icon: 'commando' };
+          score += takeScore - 4;
+        } else if (known && city.isUnderground && canHydrogen && fits(hydrogenBill)) {
+          // Hydrogen opens the bunker without razing the city, but it is a warhead: no clean bonus
+          pick = { action: `${verb} + hydrogen`, icon: 'commando' };
+          score += SCORE_CAPTURE + (ours ? 20 : 0) - (squadInStock ? 0 : 6) - 6;
+        }
+      }
+
       if (pick && known && laserKnown && !city.isUnderground && canMagnetic && pick.icon !== 'drone') {
         pick = { action: 'Magnetic', icon: 'magnetic' };
         score += 4;
@@ -857,6 +930,7 @@ function buildWorld(
           hasResearch: Boolean(city.hasResearch),
           hasLaser: Boolean(city.hasLaser),
           status: row.nationId === myId ? ownStatus.get(raw.id) : undefined,
+          heldFrom: raw.originId,
         };
       }),
     };
@@ -886,6 +960,10 @@ export function buildRoundBriefing(
       const next = EVENT_STATUS[hit.kind];
       if (next && STATUS_ORDER.indexOf(next) > STATUS_ORDER.indexOf(status)) status = next;
     }
+    // A city the squad took (or took back) in the round just played
+    if (city.capturedRound != null && city.capturedRound === (state.previousRoundNumber ?? -1)) {
+      status = 'captured';
+    }
     return {
       id: city.id,
       name: city.name,
@@ -895,21 +973,38 @@ export function buildRoundBriefing(
       hasShield: city.hasShield,
       hasResearch: city.hasResearch,
       hasLaser: Boolean(city.hasLaser),
+      heldFrom: city.originId,
       attackers: Array.from(
         new Set(hits.map((e) => e.attackerId).filter((id): id is NationId => Boolean(id))),
       ),
     };
   });
 
+  const lost: BriefingLostCity[] = [];
+  for (const holder of state.turnOrder) {
+    if (holder === myId) continue;
+    for (const c of state.nations[holder].cities) {
+      if (c.originId === myId && !c.destroyed) {
+        lost.push({
+          id: c.id,
+          name: c.name,
+          heldBy: holder,
+          fresh: c.capturedRound != null && c.capturedRound === (state.previousRoundNumber ?? -1),
+        });
+      }
+    }
+  }
+
   const raiders: BriefingRaider[] = [];
   for (const event of events) {
     if (!event.attackerId) continue;
     let raider = raiders.find((r) => r.id === event.attackerId);
     if (!raider) {
-      raider = { id: event.attackerId, nukes: 0, swarms: 0, cities: [] };
+      raider = { id: event.attackerId, nukes: 0, swarms: 0, raids: 0, cities: [] };
       raiders.push(raider);
     }
-    if (NUKE_KINDS.includes(event.kind)) raider.nukes += 1;
+    if (RAID_KINDS.includes(event.kind)) raider.raids += 1;
+    else if (NUKE_KINDS.includes(event.kind)) raider.nukes += 1;
     else raider.swarms += 1;
     if (event.cityName && !raider.cities.includes(event.cityName)) {
       raider.cities.push(event.cityName);
@@ -940,6 +1035,7 @@ export function buildRoundBriefing(
     round: state.round,
     nationId: myId,
     cities,
+    lost,
     raiders,
     sanctioners,
     sanctionPenalty,
@@ -961,6 +1057,6 @@ export function buildRoundBriefing(
     offenceOrders,
     intelAdvice,
     world: buildWorld(state, myId, scores, new Map(cities.map((c) => [c.id, c.status]))),
-    untouched: raiders.length === 0 && cities.every((c) => c.status === 'quiet'),
+    untouched: raiders.length === 0 && lost.length === 0 && cities.every((c) => c.status === 'quiet'),
   };
 }

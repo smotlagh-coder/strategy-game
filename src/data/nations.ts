@@ -174,6 +174,8 @@ export {
   SCORE_SHIELD,
   SCORE_BUNKER,
   SCORE_KILL,
+  SCORE_CAPTURE,
+  SCORE_CAPTURE_CLEAN,
   SCORE_ELIMINATION,
   SCORE_ANGEL,
   SCORE_EVIL,
@@ -200,6 +202,8 @@ export const MAX_HYDROGEN_PER_GAME = 1;
 export const MAX_MAGNETIC_PER_GAME = 2;
 /** Max drone packs a nation may purchase in a single round */
 export const MAX_DRONES_PER_ROUND = 3;
+/** Invisible Force squads a nation may assemble in a single round */
+export const MAX_COMMANDOS_PER_ROUND = 1;
 /**
  * Shields a nation may install in a single round. One keeps a city exposed
  * while defences go up city by city, instead of a whole nation walling off in
@@ -258,6 +262,10 @@ export function initialNation(id: NationId): NationState {
     scoutedCities: [],
     aerospaceTechUnlockedRound: null,
     drones: 0,
+    commandos: 0,
+    commandosUsed: 0,
+    commandosBoughtThisRound: 0,
+    citiesRaidedThisRound: [],
     researchCenters: 0,
     eliminated: false,
     sanctions: [],

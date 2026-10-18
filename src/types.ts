@@ -31,7 +31,11 @@ export type Phase =
 /** Ballistic warhead kinds — all require Ballistic Missile Tech */
 export type WarheadKind = 'nuke' | 'hydrogen' | 'magnetic';
 
-export type StrikeWeapon = WarheadKind | 'drone';
+/**
+ * Everything a nation can send at an enemy city. 'commando' is the Invisible
+ * Force: an airborne squad that takes a city over instead of destroying it.
+ */
+export type StrikeWeapon = WarheadKind | 'drone' | 'commando';
 
 export interface PendingStrike {
   attackerId: NationId;
@@ -57,6 +61,10 @@ export interface City {
   hasLaser?: boolean;
   /** Round this city was last raised from rubble; also drives the "new build" shine */
   rebuiltRound?: number;
+  /** Set while the city is held by a nation other than the one it was founded for */
+  originId?: NationId;
+  /** Round the Invisible Force took this city over (drives the "held" badge) */
+  capturedRound?: number;
 }
 
 /**
@@ -112,6 +120,14 @@ export interface NationState {
   /** Round when aerospace tech was unlocked; drones require a later round */
   aerospaceTechUnlockedRound: number | null;
   drones: number;
+  /** Invisible Force squads in stock (helicopter-borne commandos). Absent on older saves. */
+  commandos?: number;
+  /** Squads sent in this game (online merge) */
+  commandosUsed?: number;
+  /** Squads bought this round (cap MAX_COMMANDOS_PER_ROUND) */
+  commandosBoughtThisRound?: number;
+  /** City ids this nation sent commandos to this round */
+  citiesRaidedThisRound?: string[];
   researchCenters: number;
   /** Spy service bought — reveals enemy city defences for the rest of the game */
   hasSpyNetwork: boolean;
@@ -202,7 +218,9 @@ export interface RoundWorldEvent {
     | 'droneDamage'
     | 'dronesIntercepted'
     | 'strikeAbsorbed'
-    | 'cityRebuilt';
+    | 'cityRebuilt'
+    | 'cityCaptured'
+    | 'raidRepelled';
   nationId: NationId;
   cityId?: string;
   cityName?: string;
@@ -214,11 +232,15 @@ export interface RoundWorldEvent {
   /** Rebuild the treasury paid for on its own to keep a wiped-out nation alive */
   automatic?: boolean;
   /** What was covering the city when this strike landed */
-  cover?: 'shield' | 'bunker';
+  cover?: 'shield' | 'bunker' | 'laser';
   /** A magnetic bomb had already darkened a laser network for this hit */
   laserDown?: boolean;
   /** An ally's laser network covered the city (its own network was spent or absent) */
   coveredBy?: NationId;
+  /** Score banked by the captor for a takeover */
+  points?: number;
+  /** The takeover needed no warhead */
+  clean?: boolean;
 }
 
 /** Income applied at round start (shown on aftermath) */

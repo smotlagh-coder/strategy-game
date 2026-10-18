@@ -145,6 +145,18 @@ function mergeAlliance(remote: NationState, local: NationState): Pick<NationStat
 }
 
 /** Union city upgrades so a stale push cannot wipe research/shields. */
+/** Same monotonic reasoning again, for Invisible Force squads. */
+export function mergeCommandoStock(remote: NationState, local: NationState): number {
+  const atStart = (n: NationState) =>
+    counter(n.commandos) - counter(n.commandosBoughtThisRound) + counter(n.commandosUsed);
+  const bought = Math.max(
+    counter(remote.commandosBoughtThisRound),
+    counter(local.commandosBoughtThisRound),
+  );
+  const launched = Math.max(counter(remote.commandosUsed), counter(local.commandosUsed));
+  return Math.max(0, Math.max(atStart(remote), atStart(local)) + bought - launched);
+}
+
 export function mergeNationPlanning(
   remote: NationState | undefined,
   local: NationState | undefined,
@@ -198,8 +210,12 @@ export function mergeNationPlanning(
   });
   const researchCenters = cities.filter((c) => !c.destroyed && c.hasResearch).length;
 
+  // A nation whose cities were all taken over (or razed) stays in while it still
+  // holds a squad that can win one back; the engine decides when that ends.
+  const lastStand = Math.max(counter(remote.commandos), counter(local.commandos)) > 0;
   const eliminated =
-    Boolean(remote.eliminated || local.eliminated) || cities.every((c) => c.destroyed);
+    Boolean(remote.eliminated || local.eliminated) ||
+    (cities.every((c) => c.destroyed) && !lastStand);
   const seatHeld = remote.isHuman && local.isHuman;
 
   const remoteIncome = remote.incomeRound ?? 0;
@@ -256,6 +272,15 @@ export function mergeNationPlanning(
       counter(local.dronesBoughtThisRound),
     ),
     dronesUsed: Math.max(counter(remote.dronesUsed), counter(local.dronesUsed)),
+    commandos: eliminated ? 0 : mergeCommandoStock(remote, local),
+    commandosBoughtThisRound: Math.max(
+      counter(remote.commandosBoughtThisRound),
+      counter(local.commandosBoughtThisRound),
+    ),
+    commandosUsed: Math.max(counter(remote.commandosUsed), counter(local.commandosUsed)),
+    citiesRaidedThisRound: Array.from(
+      new Set([...(remote.citiesRaidedThisRound ?? []), ...(local.citiesRaidedThisRound ?? [])]),
+    ),
     citiesDronedThisRound: Array.from(
       new Set([...(remote.citiesDronedThisRound ?? []), ...(local.citiesDronedThisRound ?? [])]),
     ),

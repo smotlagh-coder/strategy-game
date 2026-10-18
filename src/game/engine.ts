@@ -6,6 +6,7 @@ import {
   MAX_HYDROGEN_PER_GAME,
   MAX_MAGNETIC_PER_GAME,
   MAX_DRONES_PER_ROUND,
+  MAX_COMMANDOS_PER_ROUND,
   LASER_INTERCEPTS_PER_ROUND,
   MAX_SANCTIONS,
   MAX_RESEARCH_PER_ROUND,
@@ -22,6 +23,8 @@ import {
   SCORE_RESEARCH,
   SCORE_SHIELD,
   SCORE_KILL,
+  SCORE_CAPTURE,
+  SCORE_CAPTURE_CLEAN,
   SCORE_ELIMINATION,
   SCORE_ANGEL,
   SCORE_EVIL,
@@ -49,6 +52,7 @@ import {
   AFTERMATH_THINK_MS,
   RECAP_AUTO_MS,
   SELECTION_IDLE_MS,
+  RAID_CINEMA_EXTRA_MS,
   STRIKE_CINEMA_MS,
 } from '../lib/onlineConstants';
 import type {
@@ -128,7 +132,7 @@ export function assetLossFor(
     .filter(
       (e) =>
         e.nationId === nationId &&
-        (e.kind === 'cityDestroyed' || e.kind === 'shieldDestroyed'),
+        (e.kind === 'cityDestroyed' || e.kind === 'shieldDestroyed' || e.kind === 'cityCaptured'),
     )
     .reduce((sum, e) => {
       if (e.amount != null) return sum + e.amount;
@@ -298,6 +302,7 @@ export function forfeitNation(state: GameState, nationId: NationId): GameState {
     hydrogenBombs: 0,
     magneticBombs: 0,
     drones: 0,
+    commandos: 0,
     isHuman: false,
   };
   delete forfeited.playerSlot;
@@ -544,8 +549,8 @@ export function roundOffenseScore(state: GameState, id: NationId): number {
   }
   for (const e of state.roundEvents) {
     if (e.attackerId !== id) continue;
-    if (e.kind === 'cityDestroyed') score += 100;
-    else if (e.kind === 'shieldDestroyed') score += 20;
+    if (e.kind === 'cityDestroyed' || e.kind === 'cityCaptured') score += 100;
+    else if (e.kind === 'shieldDestroyed' || e.kind === 'raidRepelled') score += 20;
     else if (e.kind === 'droneDamage') score += 2;
     else if (e.kind === 'nationEliminated') score += 50;
   }
@@ -644,6 +649,9 @@ function checkEliminations(state: GameState): GameState {
     // Last city gone: one automatic rebuild per match if the treasury covers it
     const canEmergency =
       (n.emergencyRebuildsUsed ?? 0) < 1 && n.money >= COSTS.rebuild;
+    // Cities taken over are not rubble: a nation that can still send a squad to
+    // win one back is in the fight, even with nothing standing.
+    if (!n.eliminated && n.cities.every((c) => c.destroyed) && canRetake(state, n)) continue;
     if (!n.eliminated && n.cities.every((c) => c.destroyed) && canEmergency) {
       const lost = lastCityLost({ ...state, roundEvents }, n);
       if (lost) {
@@ -679,7 +687,7 @@ function checkEliminations(state: GameState): GameState {
       const bestPrior = priorTotals.length ? Math.max(0, ...priorTotals) : 0;
       // Freeze best known score so a wipeout doesn't erase standings
       const lockedScore = Math.max(bestPrior, n.lockedScore ?? 0);
-      nations[id] = { ...n, eliminated: true, bombs: 0, drones: 0, lockedScore };
+      nations[id] = { ...n, eliminated: true, bombs: 0, drones: 0, commandos: 0, lockedScore };
       logEntries.push(log(`${nationDef(id).name} has been eliminated!`, 'attack'));
       roundEvents.push(
         worldEvent({ kind: 'nationEliminated', nationId: id }),
@@ -690,7 +698,11 @@ function checkEliminations(state: GameState): GameState {
         let partners: NationId[] = [];
         for (let i = roundEvents.length - 1; i >= 0; i -= 1) {
           const e = roundEvents[i];
-          if (e.kind === 'cityDestroyed' && e.nationId === id && e.attackerId) {
+          if (
+            (e.kind === 'cityDestroyed' || e.kind === 'cityCaptured') &&
+            e.nationId === id &&
+            e.attackerId
+          ) {
             finisher = e.attackerId;
             partners = e.sharedWith ?? [];
             break;
@@ -1270,6 +1282,55 @@ export function buyDrones(state: GameState, count: number, nationId?: NationId):
   return s;
 }
 
+/** Invisible Force squads in stock (older saves have no such field). */
+export function commandoStock(n: Pick<NationState, 'commandos'>): number {
+  return n.commandos ?? 0;
+}
+
+/** Helicopters are aerospace: the Invisible Force needs the same tech as drones. */
+export function canBuyCommandos(state: GameState, nationId?: NationId): boolean {
+  return canBuyDrones(state, nationId);
+}
+
+export function maxCommandosPurchasable(state: GameState, nationId?: NationId): number {
+  const id = nationId ?? currentNationId(state);
+  const n = state.nations[id];
+  if (!canBuyCommandos(state, id)) return 0;
+  const byMoney = Math.floor(n.money / COSTS.commando);
+  const byCap = MAX_COMMANDOS_PER_ROUND - (n.commandosBoughtThisRound ?? 0);
+  return Math.max(0, Math.min(byMoney, byCap));
+}
+
+export function buyCommando(state: GameState, nationId?: NationId): GameState {
+  const id = nationId ?? currentNationId(state);
+  const n = state.nations[id];
+  if (maxCommandosPurchasable(state, id) < 1) return state;
+  return {
+    ...state,
+    nations: {
+      ...state.nations,
+      [id]: {
+        ...n,
+        money: +(n.money - COSTS.commando).toFixed(2),
+        commandos: commandoStock(n) + 1,
+        commandosBoughtThisRound: (n.commandosBoughtThisRound ?? 0) + 1,
+      },
+    },
+    log: [
+      ...state.log,
+      log(`${nationDef(id).name} readied an Invisible Force squad.`, 'attack'),
+    ],
+  };
+}
+
+export function buyCommandos(state: GameState, count: number, nationId?: NationId): GameState {
+  let s = state;
+  const id = nationId ?? currentNationId(s);
+  const n = Math.max(0, Math.min(count, maxCommandosPurchasable(s, id)));
+  for (let i = 0; i < n; i += 1) s = buyCommando(s, id);
+  return s;
+}
+
 export function buyBomb(state: GameState, nationId?: NationId): GameState {
   const id = nationId ?? currentNationId(state);
   const n = state.nations[id];
@@ -1616,7 +1677,9 @@ export function queueStrike(
   const attacker = state.nations[attackerId];
   const defender = state.nations[targetNation];
   const drone = weapon === 'drone';
-  const warhead: WarheadKind | null = drone ? null : weapon === 'hydrogen' || weapon === 'magnetic' ? weapon : 'nuke';
+  const commando = weapon === 'commando';
+  const warhead: WarheadKind | null =
+    drone || commando ? null : weapon === 'hydrogen' || weapon === 'magnetic' ? weapon : 'nuke';
 
   if (
     attacker.eliminated ||
@@ -1624,7 +1687,11 @@ export function queueStrike(
     attackerId === targetNation ||
     // Allies never strike each other
     areAllies(state, attackerId, targetNation) ||
-    (drone
+    (commando
+      ? commandoStock(attacker) < 1 ||
+        !hasAerospaceAccess(state, attackerId) ||
+        (attacker.citiesRaidedThisRound ?? []).includes(cityId)
+      : drone
       ? attacker.drones < 1 ||
         !hasAerospaceAccess(state, attackerId) ||
         attacker.citiesDronedThisRound.includes(cityId)
@@ -1652,12 +1719,18 @@ export function queueStrike(
     attackerId,
     targetNationId: targetNation,
     cityId,
-    weapon: drone ? 'drone' : warhead!,
+    weapon: commando ? 'commando' : drone ? 'drone' : warhead!,
   };
 
   let spend: Partial<NationState>;
   let defenderPatch: Partial<NationState> = {};
-  if (drone) {
+  if (commando) {
+    spend = {
+      commandos: commandoStock(attacker) - 1,
+      commandosUsed: (attacker.commandosUsed ?? 0) + 1,
+      citiesRaidedThisRound: [...(attacker.citiesRaidedThisRound ?? []), cityId],
+    };
+  } else if (drone) {
     spend = {
       drones: attacker.drones - 1,
       dronesUsed: attacker.dronesUsed + 1,
@@ -1704,7 +1777,9 @@ export function queueStrike(
     log: [
       ...state.log,
       log(
-        drone
+        commando
+          ? `${nationDef(attackerId).name} put an Invisible Force squad in the air.`
+          : drone
           ? `${nationDef(attackerId).name} launched a drone swarm.`
           : warhead === 'magnetic'
             ? `${nationDef(attackerId).name} locked a magnetic bomb on ${nationDef(targetNation).name} — their laser network is dark for the round.`
@@ -1911,6 +1986,255 @@ function coAttackers(state: GameState, strike: PendingStrike): NationId[] {
   return [...seen];
 }
 
+/** The same nation also sent a squad to this city, so its hydrogen bomb is the door-opener. */
+function raidFollows(state: GameState, strike: PendingStrike): boolean {
+  return state.pendingStrikes.some(
+    (s) =>
+      s.weapon === 'commando' &&
+      s.attackerId === strike.attackerId &&
+      s.targetNationId === strike.targetNationId &&
+      s.cityId === strike.cityId,
+  );
+}
+
+function breachForRaid(state: GameState, strike: PendingStrike, city: City): GameState {
+  const attackerName = nationDef(strike.attackerId).name;
+  const targetName = nationDef(strike.targetNationId).name;
+  const defender = state.nations[strike.targetNationId];
+  const cover = city.isUnderground ? 'bunker' : 'shield';
+  const seen = scoutCity(state, strike.attackerId, city.id);
+  return {
+    ...seen,
+    nations: {
+      ...seen.nations,
+      [strike.targetNationId]: {
+        ...defender,
+        cities: defender.cities.map((c) =>
+          c.id === city.id ? { ...c, hasShield: false, isUnderground: false } : c,
+        ),
+      },
+    },
+    log: [
+      ...seen.log,
+      log(
+        `${attackerName}'s hydrogen bomb tore the ${cover} off ${city.name} (${targetName}) and left the city standing for the squad.`,
+        'attack',
+      ),
+    ],
+    roundEvents: [
+      ...seen.roundEvents,
+      worldEvent({
+        kind: 'shieldDestroyed',
+        nationId: strike.targetNationId,
+        cityId: city.id,
+        cityName: city.name,
+        attackerId: strike.attackerId,
+        amount: cover === 'bunker' ? COSTS.underground : COSTS.shield,
+        cover,
+      }),
+    ],
+  };
+}
+
+/** The squad turned back: it is spent, and the table learns what stopped it. */
+function raidRepelled(
+  state: GameState,
+  strike: PendingStrike,
+  city: City,
+  cover: 'laser' | 'shield' | 'bunker',
+  extra: Partial<GameState> = {},
+  coveredBy?: NationId,
+): GameState {
+  const attackerName = nationDef(strike.attackerId).name;
+  const targetName = nationDef(strike.targetNationId).name;
+  const what =
+    cover === 'laser'
+      ? `the laser network shot down the helicopters over ${city.name}`
+      : cover === 'bunker'
+        ? `the bunkers under ${city.name} sealed the city`
+        : `the shield over ${city.name} kept the helicopters out`;
+  const base = { ...state, ...extra };
+  // The squad saw what stopped it; a bunker was seen by the whole table
+  const seen =
+    cover === 'bunker'
+      ? revealCityToEveryone(base, city.id)
+      : cover === 'shield'
+        ? scoutCity(base, strike.attackerId, city.id)
+        : base;
+  return {
+    ...seen,
+    log: [
+      ...seen.log,
+      log(`${attackerName}'s Invisible Force was turned back — ${what} (${targetName}).`, 'attack'),
+    ],
+    roundEvents: [
+      ...seen.roundEvents,
+      worldEvent({
+        kind: 'raidRepelled',
+        nationId: strike.targetNationId,
+        cityId: city.id,
+        cityName: city.name,
+        attackerId: strike.attackerId,
+        cover,
+        coveredBy,
+      }),
+    ],
+  };
+}
+
+function countResearch(cities: City[]): number {
+  return cities.filter((c) => !c.destroyed && c.hasResearch).length;
+}
+
+/**
+ * The squad lands: the city leaves the defender's list and joins the attacker's.
+ * Its defences are gone; the research lab (and the income) comes with it. Going
+ * back to the nation it was founded for clears the "held" mark.
+ */
+function captureCity(state: GameState, strike: PendingStrike, city: City): GameState {
+  const attacker = state.nations[strike.attackerId];
+  const defender = state.nations[strike.targetNationId];
+  const home = city.originId ?? defender.id;
+  const homecoming = home === attacker.id;
+  const held: City = {
+    ...city,
+    hasShield: false,
+    isUnderground: false,
+    hasLaser: false,
+    capturedRound: state.round,
+    ...(homecoming ? {} : { originId: home }),
+  };
+  if (homecoming) delete held.originId;
+  const defenderCities = defender.cities.filter((c) => c.id !== city.id);
+  const attackerCities = [...attacker.cities, held];
+  // Conquest pays like a kill. Clean means no warhead of ours went near the city,
+  // so what stood there is ours intact; a lab taken whole is worth a second look.
+  // A founder taking its own city home earns the base bonus only.
+  const warheadUsed = state.pendingStrikes.some(
+    (p) =>
+      p.attackerId === attacker.id &&
+      p.targetNationId === defender.id &&
+      p.cityId === city.id &&
+      p.weapon !== 'drone' &&
+      p.weapon !== 'commando',
+  );
+  const clean = !warheadUsed && !homecoming;
+  const points =
+    SCORE_CAPTURE + (clean ? SCORE_CAPTURE_CLEAN + (city.hasResearch ? SCORE_RESEARCH : 0) : 0);
+  const attackerName = nationDef(strike.attackerId).name;
+  const defenderName = nationDef(strike.targetNationId).name;
+  const next: GameState = {
+    ...state,
+    nations: {
+      ...state.nations,
+      [defender.id]: {
+        ...defender,
+        cities: defenderCities,
+        researchCenters: countResearch(defenderCities),
+      },
+      [attacker.id]: {
+        ...attacker,
+        cities: attackerCities,
+        researchCenters: countResearch(attackerCities),
+        attackPoints: (attacker.attackPoints ?? 0) + points,
+      },
+    },
+    log: [
+      ...state.log,
+      log(
+        homecoming
+          ? `${attackerName}'s Invisible Force took ${city.name} back from ${defenderName} — the city is home again.`
+          : `${attackerName}'s Invisible Force took over ${city.name} from ${defenderName} — the city is theirs now.`,
+        'attack',
+      ),
+    ],
+    roundEvents: [
+      ...state.roundEvents,
+      worldEvent({
+        kind: 'cityCaptured',
+        nationId: defender.id,
+        cityId: city.id,
+        cityName: city.name,
+        attackerId: attacker.id,
+        amount: cityAssetValue(city),
+        points: points > 0 ? points : undefined,
+        clean: clean ? true : undefined,
+      }),
+    ],
+  };
+  return checkEliminations(next);
+}
+
+/**
+ * Resolve one squad. It has to get past the lasers, a bunker and a shield; the
+ * drones, warheads and hydrogen bombs ordered alongside it are what open the way
+ * (they resolve first). A shield tied up by a swarm, or stripped by a warhead,
+ * lets it through.
+ */
+function applyRaid(state: GameState, strike: PendingStrike, city: City | undefined): GameState {
+  const attackerName = nationDef(strike.attackerId).name;
+  if (!city || city.destroyed) {
+    return {
+      ...state,
+      log: [
+        ...state.log,
+        log(
+          `${attackerName}'s Invisible Force found nothing left to take at ${city?.name ?? strike.cityId}.`,
+          'attack',
+        ),
+      ],
+    };
+  }
+
+  const coverId = laserCoverFor(state, strike.targetNationId);
+  if (coverId) {
+    const guard = state.nations[coverId];
+    const battery = guard.cities.find((c) => !c.destroyed && c.hasLaser);
+    const withBattery = battery ? scoutCity(state, strike.attackerId, battery.id) : state;
+    return raidRepelled(
+      withBattery,
+      strike,
+      city,
+      'laser',
+      {
+        nations: {
+          ...withBattery.nations,
+          [coverId]: { ...guard, dronesInterceptedThisRound: guard.dronesInterceptedThisRound + 1 },
+        },
+      },
+      coverId !== strike.targetNationId ? coverId : undefined,
+    );
+  }
+  if (city.isUnderground) return raidRepelled(state, strike, city, 'bunker');
+  if (city.hasShield && !shieldIsBusy(state, strike.targetNationId, strike.cityId)) {
+    return raidRepelled(state, strike, city, 'shield');
+  }
+  return captureCity(state, strike, city);
+}
+
+/**
+ * A nation with no city left standing is not out while its squad can still go
+ * after a city that was taken from it — either one in stock, or one already
+ * ordered onto that very city.
+ */
+function canRetake(state: GameState, n: NationState): boolean {
+  const heldElsewhere = (id: string) =>
+    state.turnOrder.some((otherId) =>
+      state.nations[otherId]?.cities.some(
+        (c) => c.id === id && c.originId === n.id && !c.destroyed,
+      ),
+    );
+  const stocked =
+    commandoStock(n) > 0 &&
+    state.turnOrder.some((otherId) =>
+      state.nations[otherId]?.cities.some((c) => c.originId === n.id && !c.destroyed),
+    );
+  const ordered = state.pendingStrikes.some(
+    (s) => s.attackerId === n.id && s.weapon === 'commando' && heldElsewhere(s.cityId),
+  );
+  return stocked || ordered;
+}
+
 /** Apply damage for a previously queued strike (bomb or drone pack already spent). */
 export function applyQueuedStrike(state: GameState, strike: PendingStrike): GameState {
   const attacker = state.nations[strike.attackerId];
@@ -1933,6 +2257,7 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
   // to a plain nuke (which would bounce off bunkers).
   const weapon: StrikeWeapon =
     strike.weapon === 'drone' ||
+    strike.weapon === 'commando' ||
     strike.weapon === 'hydrogen' ||
     strike.weapon === 'magnetic'
       ? strike.weapon
@@ -1940,6 +2265,7 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
   const strikeNorm = weapon === strike.weapon ? strike : { ...strike, weapon };
 
   const city = defender.cities.find((c) => c.id === strikeNorm.cityId);
+  if (weapon === 'commando') return applyRaid(state, strikeNorm, city);
   if (city && !city.destroyed && weapon === 'drone') {
     return applyDroneStrike(state, strikeNorm, city);
   }
@@ -1947,6 +2273,18 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
   const hydrogen = weapon === 'hydrogen';
   const magnetic = weapon === 'magnetic';
   const warheadName = hydrogen ? 'hydrogen bomb' : magnetic ? 'magnetic bomb' : 'warhead';
+
+  // A hydrogen bomb that leads a squad in only breaches the defences — the city is
+  // meant to be taken, not levelled.
+  if (
+    hydrogen &&
+    city &&
+    !city.destroyed &&
+    (city.isUnderground || city.hasShield) &&
+    raidFollows(state, strikeNorm)
+  ) {
+    return breachForRaid(state, strikeNorm, city);
+  }
 
   // A player can bunker a city in the same round a warhead was aimed at it —
   // only a hydrogen bomb cracks the rock.
@@ -2158,9 +2496,11 @@ export function finishStrikeResolution(state: GameState): GameState {
 
 /** Drones go in first; every client resolves the round in this same order. */
 export function orderStrikesForResolution(strikes: PendingStrike[]): PendingStrike[] {
+  // Drones and warheads clear the way first; the squads land on whatever is left
   return [
     ...strikes.filter((s) => s.weapon === 'drone'),
-    ...strikes.filter((s) => s.weapon !== 'drone'),
+    ...strikes.filter((s) => s.weapon !== 'drone' && s.weapon !== 'commando'),
+    ...strikes.filter((s) => s.weapon === 'commando'),
   ];
 }
 
@@ -2182,9 +2522,12 @@ export function groupStrikesByAttacker(
 
 /** How long the launch cinema plus aftermath recap runs on every client. */
 export function cinemaDurationMs(state: GameState): number {
-  const volleys = groupStrikesByAttacker(state.resolvedStrikes ?? []).length;
+  const groups = groupStrikesByAttacker(state.resolvedStrikes ?? []);
+  const volleys = groups.length;
   if (volleys === 0) return state.previousRoundEvents?.length ? RECAP_AUTO_MS : 0;
-  return volleys * STRIKE_CINEMA_MS + RECAP_AUTO_MS;
+  // A squad in the volley adds the hover and the drop
+  const raids = groups.filter((v) => v.strikes.some((s) => s.weapon === 'commando')).length;
+  return volleys * STRIKE_CINEMA_MS + raids * RAID_CINEMA_EXTRA_MS + RECAP_AUTO_MS;
 }
 
 /**
@@ -2355,6 +2698,8 @@ export function nextRound(state: GameState): GameState {
       bombsBoughtThisRound: 0,
       citiesDronedThisRound: [],
       dronesBoughtThisRound: 0,
+      citiesRaidedThisRound: [],
+      commandosBoughtThisRound: 0,
       shieldsBoughtThisRound: 0,
       researchBoughtThisRound: 0,
       dronesInterceptedThisRound: 0,

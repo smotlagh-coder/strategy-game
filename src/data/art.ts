@@ -56,6 +56,7 @@ export const ART = {
     ballisticTech: '/art/cop-ballistic-tech.webp',
     aerospaceTech: '/art/cop-aerospace-tech.webp',
     drone: '/art/cop-drone-pack.webp',
+    commando: '/art/cop-commando.webp',
     spy: '/art/cop-spy.webp',
     sanction: '/art/cop-sanctions.webp',
     alliance: '/art/cop-alliance.webp',
@@ -68,6 +69,8 @@ export const ART = {
   },
   missileMagnetic: '/art/missile-magnetic.webp',
   drone: '/art/drone.webp',
+  /** Black transport helicopter, side view — the Invisible Force's ride */
+  heli: '/art/invisible-force-heli.webp',
   explosion: '/art/explosion.webp',
   explosionHydrogen: '/art/explosion-hydrogen.webp',
   explosionMagnetic: '/art/explosion-magnetic.webp',

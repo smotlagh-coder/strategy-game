@@ -22,6 +22,8 @@ export type CostTable = {
   /** Magnetic warhead — kills laser for the round, 2/game */
   bombMagnetic: number;
   drone: number;
+  /** Invisible Force squad — takes a city over, 1/round */
+  commando: number;
   research: number;
 };
 
@@ -42,6 +44,10 @@ export type BalanceProfile = {
   scoreBunker: number;
   /** Points banked by the attacker when a city is destroyed */
   scoreKill: number;
+  /** Banked by the attacker for taking a city over with the Invisible Force */
+  scoreCapture: number;
+  /** Extra for a bloodless takeover: no warhead of the attacker's touched the city */
+  scoreCaptureClean: number;
   /** Bonus when an attacker's strike eliminates a nation */
   scoreElimination: number;
   /** Prestige for the round's most peaceful seat (angel) */
@@ -65,6 +71,7 @@ export const LEGACY_PROFILE: BalanceProfile = {
     bombHydrogen: 60,
     bombMagnetic: 40,
     drone: 10,
+    commando: 45,
     research: 20,
   },
   startingMoney: 140,
@@ -79,6 +86,8 @@ export const LEGACY_PROFILE: BalanceProfile = {
   scoreShield: 8,
   scoreBunker: 16,
   scoreKill: 0,
+  scoreCapture: 0,
+  scoreCaptureClean: 0,
   scoreElimination: 0,
   scoreAngel: 0,
   scoreEvil: 0,
@@ -103,6 +112,7 @@ export const CURRENT_PROFILE: BalanceProfile = {
     bombHydrogen: 60,
     bombMagnetic: 40,
     drone: 10,
+    commando: 45,
     research: 20,
   },
   startingMoney: 140,
@@ -117,6 +127,8 @@ export const CURRENT_PROFILE: BalanceProfile = {
   scoreShield: 8,
   scoreBunker: 14,
   scoreKill: 20,
+  scoreCapture: 20,
+  scoreCaptureClean: 15,
   scoreElimination: 25,
   scoreAngel: 10,
   scoreEvil: 12,
@@ -140,6 +152,8 @@ export let SCORE_RESEARCH = CURRENT_PROFILE.scoreResearch;
 export let SCORE_SHIELD = CURRENT_PROFILE.scoreShield;
 export let SCORE_BUNKER = CURRENT_PROFILE.scoreBunker;
 export let SCORE_KILL = CURRENT_PROFILE.scoreKill;
+export let SCORE_CAPTURE = CURRENT_PROFILE.scoreCapture;
+export let SCORE_CAPTURE_CLEAN = CURRENT_PROFILE.scoreCaptureClean;
 export let SCORE_ELIMINATION = CURRENT_PROFILE.scoreElimination;
 export let SCORE_ANGEL = CURRENT_PROFILE.scoreAngel;
 export let SCORE_EVIL = CURRENT_PROFILE.scoreEvil;
@@ -158,6 +172,8 @@ export function applyBalanceProfile(profile: BalanceProfile): void {
   SCORE_SHIELD = profile.scoreShield;
   SCORE_BUNKER = profile.scoreBunker;
   SCORE_KILL = profile.scoreKill;
+  SCORE_CAPTURE = profile.scoreCapture;
+  SCORE_CAPTURE_CLEAN = profile.scoreCaptureClean;
   SCORE_ELIMINATION = profile.scoreElimination;
   SCORE_ANGEL = profile.scoreAngel;
   SCORE_EVIL = profile.scoreEvil;

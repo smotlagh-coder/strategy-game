@@ -6,6 +6,7 @@ import {
   DRONE_DAMAGE,
   LASER_INTERCEPTS_PER_ROUND,
   MAX_BOMBS_PER_ROUND,
+  MAX_COMMANDOS_PER_ROUND,
   MAX_DRONES_PER_ROUND,
   MAX_HYDROGEN_PER_GAME,
   MAX_MAGNETIC_PER_GAME,
@@ -25,6 +26,7 @@ import {
   canBuyShield,
   canBuySpyNetwork,
   canBuyUnderground,
+  commandoStock,
   formatMoney,
   sanctionsLeft,
   toggleSanction,
@@ -56,6 +58,7 @@ import {
   aerospaceBundleCost,
   ballisticBundleCost,
   buyBombsBundled,
+  buyCommandosBundled,
   buyDronesBundled,
   buyHydrogenBundled,
   buyLaserBundled,
@@ -63,6 +66,7 @@ import {
   canBuyLaserBundled,
   isTreasuryLow,
   maxBombsBundled,
+  maxCommandosBundled,
   maxDronesBundled,
   maxHydrogenBundled,
   maxMagneticBundled,
@@ -738,6 +742,9 @@ export function CommandDashboard({
   const hydrogenMax = maxHydrogenBundled(state, actorId);
   const magneticMax = maxMagneticBundled(state, actorId);
   const droneMax = maxDronesBundled(state, actorId);
+  const commandoMax = maxCommandosBundled(state, actorId);
+  const squads = commandoStock(me);
+  const squadsLeft = MAX_COMMANDOS_PER_ROUND - (me.commandosBoughtThisRound ?? 0);
   const ballisticExtra = ballisticBundleCost(state, actorId);
   const aerospaceExtra = aerospaceBundleCost(state, actorId);
   const rubble = me.cities.filter((c) => c.destroyed).length;
@@ -912,6 +919,7 @@ export function CommandDashboard({
   const magneticCost = COSTS.bombMagnetic + ballisticExtra;
   const hydrogenCost = COSTS.bombHydrogen + ballisticExtra;
   const droneCost = COSTS.drone + aerospaceExtra;
+  const commandoCost = COSTS.commando + aerospaceExtra;
   const withTech = (extra: number) => (extra > 0 ? 'with tech' : undefined);
 
   const sanctionRoster = (
@@ -1015,6 +1023,23 @@ export function CommandDashboard({
           advised: advisedOffence.has('drone'),
           locked: droneMax < 1,
           onPress: () => onOrder((s) => buyDronesBundled(s, 1, actorId), '+1 Drone Pack'),
+        },
+        {
+          key: 'commando',
+          art: ART.cop.commando,
+          short: 'Invisible',
+          label: 'Invisible Force',
+          info: 'Helicopter squad takes a city over. Shields, lasers and bunkers turn it back.',
+          lit: squads > 0,
+          count: squads,
+          mag: magazine(squads, commandoMax, squadsLeft),
+          price: cash(commandoCost),
+          priceNote: withTech(aerospaceExtra),
+          note: stockNote(commandoMax, commandoCost, squadsLeft),
+          tone: stockTone(commandoMax, commandoCost),
+          advised: advisedOffence.has('commando'),
+          locked: commandoMax < 1,
+          onPress: () => onOrder((s) => buyCommandosBundled(s, 1, actorId), '+1 Invisible Force'),
         },
       ],
     },
@@ -1178,7 +1203,7 @@ export function CommandDashboard({
     },
   ];
 
-  const hasStrike = warheads > 0 || me.drones > 0;
+  const hasStrike = warheads > 0 || me.drones > 0 || squads > 0;
   const openSection = pieSections.find((s) => s.id === active) ?? null;
   const focused = openSection?.icons.find((i) => i.key === focusKey) ?? null;
 
@@ -1358,7 +1383,7 @@ export function CommandDashboard({
               {hasStrike
                 ? `Ready to fire: ${warheads} warhead${warheads === 1 ? '' : 's'} · ${me.drones} drone pack${
                     me.drones === 1 ? '' : 's'
-                  }`
+                  }${squads > 0 ? ` · ${squads} Invisible Force` : ''}`
                 : 'Nothing armed yet'}
             </p>
             {othersPending != null && othersPending > 0 && (

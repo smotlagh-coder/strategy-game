@@ -14,6 +14,7 @@ import {
   buyBomb,
   buyHydrogenBomb,
   buyMagneticBomb,
+  buyCommando,
   buyDrone,
   buyLaser,
   buyNuclearTech,
@@ -38,7 +39,9 @@ import {
   currentNationId,
   endTurn,
   finishBuyPhase,
+  commandoStock,
   maxBombsPurchasable,
+  maxCommandosPurchasable,
   maxDronesPurchasable,
   maxHydrogenPurchasable,
   maxMagneticPurchasable,
@@ -300,6 +303,43 @@ export function pickDroneTarget(
   return null;
 }
 
+/**
+ * A city the Invisible Force can take this round, or null. The squad only walks
+ * into a city nothing covers, so the AI needs eyes on the defences — or a good
+ * reason to gamble: a city that was taken from it, or one just taken from someone
+ * else (a takeover strips every defence, and nobody has rebuilt them yet).
+ */
+export function pickRaidTarget(
+  state: GameState,
+  attackerId: NationId,
+): { nationId: NationId; cityId: string } | null {
+  const raided = new Set(state.nations[attackerId].citiesRaidedThisRound ?? []);
+  const weighed = weighRivals(state, attackerId);
+  const picks: { nationId: NationId; cityId: string; score: number }[] = [];
+  for (const rival of weighed) {
+    const covered = laserShotsKnownTo(state, attackerId, rival.id) > 0;
+    for (const raw of state.nations[rival.id].cities) {
+      if (raw.destroyed || raided.has(raw.id)) continue;
+      const known = seesCity(state, attackerId, rival.id, raw.id);
+      const view = cityAsSeenBy(state, attackerId, rival.id, raw);
+      const stripped = raw.capturedRound != null && raw.capturedRound >= state.round - 1;
+      const ours = raw.originId === attackerId;
+      const open = known
+        ? !view.isUnderground && !view.hasShield && !covered
+        : (ours || stripped) && !covered;
+      if (!open) continue;
+      picks.push({
+        nationId: rival.id,
+        cityId: raw.id,
+        score: rival.weight + (ours ? 60 : 0) + (stripped ? 15 : 0) + (view.hasResearch ? 8 : 0),
+      });
+    }
+  }
+  picks.sort((a, b) => b.score - a.score);
+  const best = picks[0];
+  return best ? { nationId: best.nationId, cityId: best.cityId } : null;
+}
+
 /** Enemy cities a warhead could actually take off the board this round. */
 function openTargets(state: GameState, id: NationId): City[] {
   const swarms = state.nations[id].drones;
@@ -522,6 +562,18 @@ export function runAiBuyPhase(state: GameState): GameState {
     if (keep) s = buyUnderground(s, keep.id, id);
   }
 
+  // Out of spare cash, a squad is the best way to turn a city nothing covers into
+  // our own: only bought with the tech already in hand and a city to take
+  if (
+    s.round < s.maxRounds &&
+    commandoStock(me()) < 1 &&
+    maxCommandosPurchasable(s, id) > 0 &&
+    spare() >= COSTS.commando &&
+    pickRaidTarget(s, id)
+  ) {
+    s = buyCommando(s, id);
+  }
+
   return finishBuyPhase(s);
 }
 
@@ -668,6 +720,15 @@ export function runAiNationTurn(state: GameState, nationId: NationId): GameState
     const target = pickDroneTarget(s, nationId);
     if (!target) break;
     s = queueStrike(s, target.nationId, target.cityId, nationId, 'drone');
+  }
+
+  // The squad goes last, after the drones that may have tied up a shield
+  while (commandoStock(s.nations[nationId]) > 0) {
+    const target = pickRaidTarget(s, nationId);
+    if (!target) break;
+    const before = s;
+    s = queueStrike(s, target.nationId, target.cityId, nationId, 'commando');
+    if (s === before) break;
   }
   return s;
 }
