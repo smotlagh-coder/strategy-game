@@ -168,6 +168,18 @@ describe('3-player online simulation', () => {
     expect(merged.cities[1].hasShield).toBe(true);
   });
 
+  it('keeps to one shield and one lab a round when two sides planned different cities', () => {
+    const { state, uids } = makeThreePlayerGame();
+    const nationId = state.uidToNation![uids[0]] as NationId;
+    const [a, b] = state.nations[nationId].cities;
+    const left = buyResearch(buyShield(state, a.id, nationId), a.id, nationId);
+    const right = buyResearch(buyShield(state, b.id, nationId), b.id, nationId);
+    const merged = mergeNationPlanning(left.nations[nationId], right.nations[nationId]);
+    expect(merged.cities.filter((c) => c.hasShield)).toHaveLength(1);
+    expect(merged.cities.filter((c) => c.hasResearch)).toHaveLength(1);
+    expect(merged.researchCenters).toBe(1);
+  });
+
   it('never keeps a shield on a city that went underground after a sync', () => {
     const { state, uids } = makeThreePlayerGame();
     const nationId = state.uidToNation![uids[0]] as NationId;

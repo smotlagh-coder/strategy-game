@@ -170,6 +170,34 @@ export function mergeCommandoStock(remote: NationState, local: NationState): num
   return Math.max(0, Math.max(atStart(remote), atStart(local)) + bought - launched);
 }
 
+/**
+ * Union-merging city upgrades protects against stale pushes, but two sides that
+ * each planned one shield (or one lab) on different cities would add up to two.
+ * The round caps are one of each, so when the union holds more than either side
+ * did, keep the fuller side's upgrades only.
+ */
+function capPlanningUnion(
+  remote: NationState,
+  local: NationState,
+  merged: NationState['cities'],
+): NationState['cities'] {
+  const count = (cities: NationState['cities'], key: 'hasShield' | 'hasResearch') =>
+    cities.filter((c) => !c.destroyed && c[key]).length;
+  let out = merged;
+  for (const key of ['hasShield', 'hasResearch'] as const) {
+    const r = count(remote.cities, key);
+    const l = count(local.cities, key);
+    if (count(out, key) <= Math.max(r, l)) continue;
+    const winner = l > r ? local : remote;
+    out = out.map((c) => {
+      if (!c[key]) return c;
+      const w = winner.cities.find((x) => x.id === c.id);
+      return w && w[key] ? c : { ...c, [key]: false };
+    });
+  }
+  return out;
+}
+
 export function mergeNationPlanning(
   remote: NationState | undefined,
   local: NationState | undefined,
@@ -182,7 +210,7 @@ export function mergeNationPlanning(
   if (!remote.isHuman && local.isHuman) return remote;
   if (!local.isHuman && remote.isHuman) return local;
 
-  const cities = remote.cities.map((rc) => {
+  const mergedCities = remote.cities.map((rc) => {
     const lc = local.cities.find((c) => c.id === rc.id) ?? rc;
     const rebuiltRound = Math.max(rc.rebuiltRound ?? 0, lc.rebuiltRound ?? 0) || undefined;
     // Rubble is normally sticky, but the side that has seen the newer rebuild wins:
@@ -221,6 +249,7 @@ export function mergeNationPlanning(
       hasLaser: Boolean(rc.hasLaser || lc.hasLaser),
     };
   });
+  const cities = capPlanningUnion(remote, local, mergedCities);
   const researchCenters = cities.filter((c) => !c.destroyed && c.hasResearch).length;
 
   // A nation whose cities were all taken over (or razed) stays in while it still
