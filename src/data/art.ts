@@ -106,6 +106,9 @@ export const ART = {
       dust: '/art/mv-fx-dust.webp',
       airburst: '/art/mv-fx-airburst.webp',
       emp: '/art/mv-fx-emp.webp',
+      /** Booster exhaust jet (nozzle at the right edge, plume streaming left) and a billowing smoke cloud */
+      booster: '/art/mv-fx-booster.webp',
+      plume: '/art/mv-fx-plume.webp',
     },
   },
   explosion: '/art/explosion.webp',

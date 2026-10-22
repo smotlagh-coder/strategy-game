@@ -1862,11 +1862,31 @@ export function laserShotsKnownTo(
   return known(targetId) + (ally ? known(ally) : 0);
 }
 
+/** A magnetic bomb is locked on this very city: no laser may fire over it, whoever owns the battery. */
+export function magneticOnCity(state: GameState, nationId: NationId, cityId: string): boolean {
+  return state.pendingStrikes.some(
+    (p) => p.weapon === 'magnetic' && p.targetNationId === nationId && p.cityId === cityId,
+  );
+}
+
+/** Lasers stand behind this nation, its own or its ally's, working or not. */
+export function laserStandsBehind(state: GameState, nationId: NationId): boolean {
+  const ally = allyOf(state, nationId);
+  return laserNetwork(state, nationId) || Boolean(ally && laserNetwork(state, ally));
+}
+
 /**
  * Whose laser network covers `targetId` right now: its own while it has shots
  * left, then its ally's — allies defend each other's cities with their lasers.
+ * Over a city a magnetic bomb is aimed at, no network works at all, an ally's
+ * included.
  */
-export function laserCoverFor(state: GameState, targetId: NationId): NationId | null {
+export function laserCoverFor(
+  state: GameState,
+  targetId: NationId,
+  cityId?: string,
+): NationId | null {
+  if (cityId && magneticOnCity(state, targetId, cityId)) return null;
   if (laserInterceptsLeft(state, targetId) > 0) return targetId;
   const ally = allyOf(state, targetId);
   return ally && laserInterceptsLeft(state, ally) > 0 ? ally : null;
@@ -1899,7 +1919,7 @@ function applyDroneStrike(
   city: City,
 ): GameState {
   const defender = state.nations[strike.targetNationId];
-  const coverId = laserCoverFor(state, strike.targetNationId);
+  const coverId = laserCoverFor(state, strike.targetNationId, strike.cityId);
   if (coverId) {
     const guard = state.nations[coverId];
     const defending = coverId !== strike.targetNationId;
@@ -2051,7 +2071,7 @@ function breachForRaid(state: GameState, strike: PendingStrike, city: City): Gam
         amount: cover === 'bunker' ? COSTS.underground : COSTS.shield,
         cover,
         lost: assetsOf({ ...city, hasLaser: false, hasResearch: false }),
-        laserDown: magnetic && laserNetwork(state, strike.targetNationId) ? true : undefined,
+        laserDown: magnetic && laserStandsBehind(state, strike.targetNationId) ? true : undefined,
       }),
     ],
   };
@@ -2227,7 +2247,7 @@ function applyRaid(state: GameState, strike: PendingStrike, city: City | undefin
     };
   }
 
-  const coverId = laserCoverFor(state, strike.targetNationId);
+  const coverId = laserCoverFor(state, strike.targetNationId, strike.cityId);
   if (coverId) {
     const guard = state.nations[coverId];
     const battery = guard.cities.find((c) => !c.destroyed && c.hasLaser);
@@ -2438,7 +2458,7 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
       cover: city.isUnderground ? 'bunker' : city.hasShield ? 'shield' : undefined,
       sharedWith: partners.length > 0 ? partners : undefined,
       laserDown:
-        magnetic && laserNetwork(state, strike.targetNationId) ? true : undefined,
+        magnetic && laserStandsBehind(state, strike.targetNationId) ? true : undefined,
     });
   }
 

@@ -40,7 +40,7 @@ const WEAPON_LABEL: Record<StrikeWeapon, string> = {
   commando: 'Heliborne',
 };
 
-const UNITLESS = new Set(['--n', '--i', '--shake']);
+const UNITLESS = new Set(['--n', '--i', '--p', '--shake']);
 
 /** CSS custom properties are not in CSSProperties; one cast keeps the call sites tidy. */
 function vars(values: Record<string, string | number>): CSSProperties {
@@ -179,20 +179,33 @@ function LaunchShot({ strike, ms, sfx }: { strike: StrikeShow; ms: number; sfx: 
               aria-hidden
             >
               {[0, 1, 2].map((n) => (
-                <div key={n} className="mv-pad" style={vars({
+                <div
+                  key={n}
+                  className="mv-pad"
+                  style={vars({
                     '--i': n,
                     '--at': padStart + n * PAD_GAP,
                     '--dur': Math.max(700, PAD_END - (padStart + n * PAD_GAP)),
-                  })}>
+                    '--truck': `url(${ART.mv.launcher})`,
+                  })}
+                >
                   <img className="mv-pad__truck" src={ART.mv.launcher} alt="" draggable={false} />
-                  <span className="mv-pad__smoke">
+                  <i className="mv-pad__tint" />
+                  <i className="mv-pad__glow" />
+                  <span className="mv-pad__blast">
                     {[0, 1, 2].map((p) => (
-                      <i key={p} style={vars({ '--p': p })} />
+                      <img key={p} src={ART.mv.fx.plume} alt="" draggable={false} style={vars({ '--p': p })} />
                     ))}
                   </span>
                   <span className="mv-pad__drone">
-                    <i className="mv-pad__flame" />
-                    <img src={ART.mv.droneSide} alt="" draggable={false} />
+                    <img className="mv-pad__flame" src={ART.mv.fx.booster} alt="" draggable={false} />
+                    <i className="mv-pad__flash" />
+                    <img className="mv-pad__body" src={ART.mv.droneSide} alt="" draggable={false} />
+                  </span>
+                  <span className="mv-pad__trail">
+                    {[0, 1, 2, 3, 4].map((p) => (
+                      <img key={p} src={ART.mv.fx.plume} alt="" draggable={false} style={vars({ '--p': p })} />
+                    ))}
                   </span>
                 </div>
               ))}

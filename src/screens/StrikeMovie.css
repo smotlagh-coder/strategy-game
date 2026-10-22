@@ -1738,11 +1738,11 @@
 /* ───── Drone launchers: truck rails, a booster ignites, the drone leaves the rail and climbs ───── */
 
 .mv-pads {
-  --W: min(52vmin, 44vw);
+  --W: min(76vmin, 58vw);
   position: absolute;
   left: 3vw;
   right: 0;
-  bottom: calc(var(--bar) + 5%);
+  bottom: calc(var(--bar) + 4%);
   height: calc(var(--W) * 0.5);
   pointer-events: none;
   z-index: 2;
@@ -1750,7 +1750,7 @@
 
 .mv-pads.has-rockets,
 .mv-pads.has-squad {
-  --W: min(34vmin, 30vw);
+  --W: min(36vmin, 30vw);
 }
 
 .mv-pad {
@@ -1758,94 +1758,195 @@
   position: absolute;
   bottom: 0;
   width: calc(var(--W) * var(--k));
-  aspect-ratio: 1000 / 416;
+  aspect-ratio: 1100 / 450;
 }
 
 /* Three launchers in depth: the nearest is largest, the others stand further back and higher */
 .mv-pad:nth-child(1) { --k: 1; left: 0; z-index: 3; }
-.mv-pad:nth-child(2) { --k: 0.8; left: calc(var(--W) * 0.82); bottom: calc(var(--W) * 0.05); z-index: 2; opacity: 0.94; }
-.mv-pad:nth-child(3) { --k: 0.64; left: calc(var(--W) * 1.46); bottom: calc(var(--W) * 0.1); z-index: 1; opacity: 0.88; }
+.mv-pad:nth-child(2) { --k: 0.66; left: calc(var(--W) * 0.74); bottom: calc(var(--W) * 0.05); z-index: 2; }
+.mv-pad:nth-child(3) { --k: 0.5; left: calc(var(--W) * 1.2); bottom: calc(var(--W) * 0.09); z-index: 1; }
+
+/* Where the tyres meet the ground */
+.mv-pad::before {
+  content: '';
+  position: absolute;
+  left: -3%;
+  right: -2%;
+  bottom: -4%;
+  height: 10%;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at 50% 50%, rgba(0, 0, 0, 0.7), rgba(0, 0, 0, 0.35) 45%, transparent 72%);
+}
 
 .mv-pad__truck {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
-  filter: brightness(1.35) contrast(1.05) drop-shadow(0 1vmin 1.4vmin rgba(0, 0, 0, 0.55));
+  filter: brightness(0.8) saturate(0.82) contrast(1.06);
+  transform-origin: 40% 95%;
+  animation: mvPadRecoil 520ms ease-out calc(var(--at) + var(--dur) * 0.14) both;
 }
 
-/* The drone rests in the rail and leaves along it, nose up the slope */
+.mv-pad:nth-child(n + 2) .mv-pad__truck { filter: brightness(0.64) saturate(0.7) contrast(1.02) blur(0.5px); }
+
+/* Moonlit grade over the paint, only where the truck is */
+.mv-pad__tint,
+.mv-pad__glow {
+  position: absolute;
+  inset: 0;
+  -webkit-mask-image: var(--truck);
+  mask-image: var(--truck);
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  pointer-events: none;
+}
+
+.mv-pad__tint { background: linear-gradient(180deg, rgba(40, 70, 130, 0.34), rgba(14, 24, 50, 0.1) 70%); }
+
+/* The booster lights the rail and the truck bed orange while it burns */
+.mv-pad__glow {
+  opacity: 0;
+  background: radial-gradient(ellipse 30% 46% at 16% 40%, rgba(255, 180, 80, 0.7), rgba(255, 110, 30, 0.22) 55%, transparent 80%);
+  mix-blend-mode: screen;
+  animation: mvPadGlow calc(var(--dur) * 0.62) linear calc(var(--at) + var(--dur) * 0.14) both;
+}
+
+@keyframes mvPadGlow {
+  0% { opacity: 0; }
+  8% { opacity: 1; }
+  30% { opacity: 0.8; }
+  50% { opacity: 0.95; }
+  100% { opacity: 0; }
+}
+
+@keyframes mvPadRecoil {
+  0% { transform: translateY(0) rotate(0); }
+  18% { transform: translateY(0.7%) rotate(0.35deg); }
+  42% { transform: translateY(-0.3%) rotate(-0.12deg); }
+  100% { transform: translateY(0) rotate(0); }
+}
+
+/* The drone sits on the rail's top chord and leaves along it, nose up the slope */
 .mv-pad__drone {
   position: absolute;
-  left: 6%;
-  top: 1%;
-  width: 52%;
-  aspect-ratio: 700 / 120;
-  transform-origin: 50% 70%;
-  transform: rotate(-11deg);
-  animation: mvPadLaunch var(--dur) cubic-bezier(0.55, 0.02, 0.95, 0.6) var(--at) both;
+  left: 11.2%;
+  top: -7.2%;
+  width: 50%;
+  aspect-ratio: 760 / 183;
+  transform-origin: 30% 95%;
+  transform: rotate(-14deg);
+  animation: mvPadLaunch var(--dur) linear var(--at) both;
 }
 
-.mv-pad__drone img {
+.mv-pad__body {
+  position: absolute;
+  inset: 0;
   display: block;
   width: 100%;
-  filter: brightness(1.45) contrast(1.05) drop-shadow(0 0.6vmin 0.8vmin rgba(0, 0, 0, 0.5));
+  height: 100%;
+  filter: brightness(0.9) contrast(1.05) drop-shadow(0 0.5vmin 0.7vmin rgba(0, 0, 0, 0.55));
 }
 
 @keyframes mvPadLaunch {
-  0%   { transform: translate(0, 0) rotate(-11deg) scale(1); opacity: 1; }
-  14%  { transform: translate(0, 0) rotate(-11deg) scale(1); opacity: 1; }
-  38%  { transform: translate(52%, -10%) rotate(-11deg) scale(1); opacity: 1; }
-  62%  { transform: translate(170%, -48%) rotate(-17deg) scale(0.9); opacity: 1; }
-  100% { transform: translate(620%, -330%) rotate(-27deg) scale(0.45); opacity: 0; }
+  0% { transform: translate(0.0%, 0.0%) rotate(-14.0deg) scale(1.00); opacity: 1.00; }
+  14% { transform: translate(0.0%, 0.0%) rotate(-14.0deg) scale(1.00); opacity: 1.00; }
+  24% { transform: translate(9.0%, -9.3%) rotate(-14.0deg) scale(1.00); opacity: 1.00; }
+  34% { transform: translate(36.0%, -37.3%) rotate(-14.0deg) scale(1.00); opacity: 1.00; }
+  44% { transform: translate(82.0%, -84.9%) rotate(-14.0deg) scale(1.00); opacity: 1.00; }
+  52% { transform: translate(128.0%, -132.5%) rotate(-14.0deg) scale(1.00); opacity: 1.00; }
+  62% { transform: translate(196.0%, -205.6%) rotate(-15.0deg) scale(0.94); opacity: 1.00; }
+  76% { transform: translate(330.0%, -366.2%) rotate(-17.2deg) scale(0.81); opacity: 1.00; }
+  100% { transform: translate(700.0%, -928.5%) rotate(-23.0deg) scale(0.45); opacity: 0.00; }
 }
 
-/* Booster flame out of the tail */
+/* Booster jet out of the bottle nozzle under the tail */
 .mv-pad__flame {
   position: absolute;
-  right: 97%;
-  top: 50%;
-  width: 60%;
-  height: 120%;
-  translate: 0 -48%;
+  right: 87%;
+  top: 86%;
+  width: 84%;
+  translate: 0 -50%;
   transform-origin: 100% 50%;
-  background: radial-gradient(ellipse at 100% 50%, #fffbe6 0%, #ffd986 10%, #ff9a30 30%, rgba(255, 90, 20, 0.55) 52%, transparent 74%);
-  mix-blend-mode: screen;
-  filter: blur(0.25vmin);
   opacity: 0;
+  mix-blend-mode: screen;
   animation:
-    mvPadBurn calc(var(--dur) * 0.8) linear calc(var(--at) + var(--dur) * 0.12) both,
-    mvPadFlicker 70ms linear calc(var(--at) + var(--dur) * 0.12) infinite alternate;
+    mvPadBurn calc(var(--dur) * 0.62) linear calc(var(--at) + var(--dur) * 0.14) both,
+    mvPadFlicker 62ms steps(2, end) calc(var(--at) + var(--dur) * 0.14) infinite alternate;
 }
 
 @keyframes mvPadBurn {
-  0%   { opacity: 0; scale: 0.2 0.6; }
-  10%  { opacity: 1; scale: 1.1 1; }
-  70%  { opacity: 1; scale: 1 1; }
-  100% { opacity: 0; scale: 0.6 0.8; }
+  0% { opacity: 0; scale: 0.15 0.5; }
+  6% { opacity: 1; scale: 1.15 1.25; }
+  16% { scale: 1 1; }
+  80% { opacity: 1; scale: 1.05 1; }
+  100% { opacity: 0; scale: 0.55 0.7; }
 }
 
 @keyframes mvPadFlicker {
-  from { transform: scaleX(0.88); }
-  to { transform: scaleX(1.12); }
+  from { transform: scale(0.9, 0.92); filter: brightness(1); }
+  to { transform: scale(1.1, 1.06); filter: brightness(1.25); }
 }
 
-/* Smoke and dust the booster blows out behind the rail */
-.mv-pad__smoke i {
+/* The bright flash the instant the booster catches */
+.mv-pad__flash {
   position: absolute;
-  left: calc(2% + var(--p) * 7%);
-  bottom: 30%;
-  width: 24%;
+  left: 2%;
+  top: 86%;
+  width: 20%;
   aspect-ratio: 1;
+  translate: -50% -50%;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(225, 215, 205, 0.85), rgba(130, 122, 115, 0.5) 55%, transparent 72%);
-  filter: blur(0.9vmin);
+  background: radial-gradient(circle, #fff 0%, rgba(255, 240, 190, 0.95) 22%, rgba(255, 160, 60, 0.5) 50%, transparent 72%);
   opacity: 0;
-  animation: mvPadPuff 1400ms ease-out calc(var(--at) + var(--dur) * 0.14 + var(--p) * 90) both;
+  animation: mvPadFlash 320ms ease-out calc(var(--at) + var(--dur) * 0.14) both;
 }
 
-@keyframes mvPadPuff {
-  0%   { opacity: 0; transform: translate(0, 0) scale(0.3); }
-  18%  { opacity: 0.95; }
-  100% { opacity: 0; transform: translate(-40%, -70%) scale(2.3); }
+@keyframes mvPadFlash {
+  0% { opacity: 0; transform: scale(0.3); }
+  25% { opacity: 1; transform: scale(1.6); }
+  100% { opacity: 0; transform: scale(2.6); }
+}
+
+/* Smoke and dust the booster blows out behind the rail, and the trail it leaves in the air */
+.mv-pad__blast img,
+.mv-pad__trail img {
+  position: absolute;
+  height: auto;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.mv-pad__blast img {
+  left: calc(-8% + var(--p) * 5%);
+  top: calc(18% + var(--p) * 7%);
+  width: 38%;
+  transform-origin: 70% 70%;
+  animation: mvPadBlast 1500ms ease-out calc(var(--at) + var(--dur) * 0.14 + var(--p) * 110ms) both;
+}
+
+@keyframes mvPadBlast {
+  0% { opacity: 0; transform: translate(10%, 12%) scale(0.2); }
+  16% { opacity: 0.92; }
+  100% { opacity: 0; transform: translate(-34%, -20%) scale(1.5); }
+}
+
+.mv-pad__trail img {
+  --d: 0.2;
+  width: 11%;
+  filter: blur(1.2px) saturate(0.8);
+  left: calc(26% + var(--d) * 97% - 5.5%);
+  top: calc(21% - var(--d) * 59% - 8%);
+  animation: mvPadTrail 1100ms ease-out calc(var(--at) + var(--dur) * var(--f)) both;
+}
+.mv-pad__trail img:nth-child(1) { --d: 0.22; --f: 0.36; }
+.mv-pad__trail img:nth-child(2) { --d: 0.5; --f: 0.46; top: calc(21% - 0.5 * 60% - 8%); }
+.mv-pad__trail img:nth-child(3) { --d: 0.9; --f: 0.56; top: calc(21% - 0.9 * 63% - 8%); }
+.mv-pad__trail img:nth-child(4) { --d: 1.45; --f: 0.68; top: calc(21% - 1.45 * 67% - 8%); width: 10%; }
+.mv-pad__trail img:nth-child(5) { --d: 2.1; --f: 0.8; top: calc(21% - 2.1 * 72% - 8%); width: 9%; }
+
+@keyframes mvPadTrail {
+  0% { opacity: 0; transform: scale(0.3, 0.2); }
+  18% { opacity: 0.5; }
+  100% { opacity: 0; transform: translate(-60%, -30%) scale(2.6, 1.5); }
 }

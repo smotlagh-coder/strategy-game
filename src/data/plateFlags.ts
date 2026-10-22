@@ -64,8 +64,8 @@ const FLAG_H_PER_W = (1280 * 0.66) / 720;
 
 function clothFor(p: PolePlace): ClothSpec {
   const pole = p.base - p.top;
-  // Proportionate to the pole it flies from, never a speck and never a banner
-  const w = Math.max(8, Math.min(13, pole * 0.17));
+  // Proportionate to the pole it flies from, sized to match the compact flags on the city plates
+  const w = Math.max(4.5, Math.min(7.5, pole * 0.095));
   const h = w * FLAG_H_PER_W;
   const top = p.top + 0.8;
   return {

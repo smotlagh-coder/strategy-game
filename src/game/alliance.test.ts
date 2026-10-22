@@ -29,6 +29,7 @@ import {
   applyIncome,
   applyQueuedStrike,
   buyLaser,
+  buyShield,
   canBuyBombs,
   canBuySpyNetwork,
   createInitialState,
@@ -248,6 +249,66 @@ describe('laser cover', () => {
     const spied = { ...s, nations: { ...s.nations, russia: { ...s.nations.russia, hasSpyNetwork: true } } };
     expect(laserShotsKnownTo(spied, 'russia', 'uk')).toBeGreaterThan(0);
     expect(laserShotsKnownTo(spied, 'russia', 'france')).toBe(0);
+  });
+});
+
+describe('a magnetic bomb over an ally’s laser', () => {
+  const combo = (weapons: ('drone' | 'commando' | 'magnetic')[]) => {
+    let s = table({
+      us: { hasAerospaceTech: true, aerospaceTechUnlockedRound: 0 },
+      russia: {
+        money: 0,
+        bombs: 0,
+        drones: 1,
+        magneticBombs: 1,
+        commandos: 1,
+        hasAerospaceTech: true,
+        aerospaceTechUnlockedRound: 0,
+        hasNuclearTech: true,
+        nuclearTechUnlockedRound: 0,
+        hasSpyNetwork: true,
+      },
+    });
+    s = buyLaser(s, s.nations.us.cities[0].id, 'us');
+    const target = s.nations.uk.cities[0];
+    s = buyShield(s, target.id, 'uk');
+    s = allied(s);
+    for (const w of weapons) s = queueStrike(s, 'uk', target.id, 'russia', w);
+    return { s, target };
+  };
+
+  it('puts no laser over the city, not even the ally’s', () => {
+    const { s, target } = combo(['magnetic', 'commando']);
+    expect(laserCoverFor(s, 'uk', target.id)).toBeNull();
+    // The ally's laser still covers the ally's other cities
+    expect(laserCoverFor(s, 'uk', s.nations.uk.cities[1].id)).toBe('us');
+  });
+
+  it('scatters the shield and lets the squad take the city', () => {
+    const { s: queued, target } = combo(['magnetic', 'commando']);
+    const s = resolveAll(queued);
+    const kinds = s.roundEvents.map((e) => e.kind);
+    expect(kinds).toContain('shieldDestroyed');
+    expect(kinds).toContain('cityCaptured');
+    expect(kinds).not.toContain('raidRepelled');
+    expect(s.nations.russia.cities.some((c) => c.id === target.id)).toBe(true);
+    // The film is told the lasers went dark
+    expect(s.roundEvents.find((e) => e.kind === 'shieldDestroyed')?.laserDown).toBe(true);
+  });
+
+  it('lets the swarm through too', () => {
+    const s = resolveAll(combo(['magnetic', 'drone']).s);
+    const kinds = s.roundEvents.map((e) => e.kind);
+    expect(kinds).not.toContain('dronesIntercepted');
+    expect(s.nations.us.dronesInterceptedThisRound).toBe(0);
+    // Nothing shot the swarm down, so it reached the city
+    expect(s.nations.uk.cities[0].destroyed || (s.nations.uk.pendingDroneDamage ?? 0) > 0).toBe(true);
+  });
+
+  it('leaves the ally’s laser working on a city with no magnetic bomb over it', () => {
+    const { s } = combo(['commando']);
+    const done = resolveAll(s);
+    expect(done.roundEvents.map((e) => e.kind)).toContain('raidRepelled');
   });
 });
 
