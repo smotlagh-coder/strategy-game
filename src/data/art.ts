@@ -88,6 +88,9 @@ export const ART = {
   mv: {
     heli: '/art/mv-real-heli.webp',
     drone: '/art/mv-real-drone.webp',
+    /** Truck-mounted rail launcher (empty rail rising to the right) and a drone in side profile, nose right */
+    launcher: '/art/mv-launcher.webp',
+    droneSide: '/art/mv-drone-side.webp',
     /** Three photographed operators fast-roping, hands on the rope at the image's centre line */
     commando: ['/art/mv-commando-a.webp', '/art/mv-commando-b.webp', '/art/mv-commando-c.webp'],
     missile: {

@@ -188,3 +188,22 @@ describe('whose battles the cinema films', () => {
     expect(filterVolleysForViewer(volleys, null)).toBe(volleys);
   });
 });
+
+describe('a magnetic bomb leading a squad on screen', () => {
+  it('plays the bomb, then the swarm, then the squad', () => {
+    const t = targetTimeline(['magnetic', 'drone', 'commando']);
+    expect(t.warheadAt).toBeLessThan(t.droneAt);
+    expect(t.droneAt).toBeLessThan(t.raidAt);
+    expect(t.needs).toBeGreaterThanOrEqual(t.raidAt + 4_900);
+  });
+
+  it('keeps the usual swarm-first order for other warheads', () => {
+    const t = targetTimeline(['nuke', 'drone', 'commando']);
+    expect(t.droneAt).toBeLessThan(t.warheadAt);
+  });
+
+  it('names what the bomb did when the squad takes the city', () => {
+    const t = target({ weapons: ['magnetic', 'drone', 'commando'], raid: 'captured', hadShield: true });
+    expect(cinemaCaption(t, true)).toBe('Lasers dark, shield scattered — city taken over');
+  });
+});

@@ -55,6 +55,7 @@ import {
   SELECTION_IDLE_MS,
 } from '../lib/onlineConstants';
 import type {
+  CityAsset,
   City,
   GameMode,
   GameState,
@@ -104,6 +105,16 @@ function worldEvent(
   partial: Omit<RoundWorldEvent, 'id'>,
 ): RoundWorldEvent {
   return { id: `evt-${++eventSeq}`, ...partial };
+}
+
+/** What stood on a city, for the aftermath: the assets a strike or a takeover removes. */
+function assetsOf(city: City, { research = true }: { research?: boolean } = {}): CityAsset[] | undefined {
+  const lost: CityAsset[] = [];
+  if (city.hasShield) lost.push('shield');
+  if (city.isUnderground) lost.push('bunker');
+  if (city.hasLaser) lost.push('laser');
+  if (research && city.hasResearch) lost.push('research');
+  return lost.length > 0 ? lost : undefined;
 }
 
 /**
@@ -1814,6 +1825,12 @@ export function laserNetwork(state: GameState, nationId: NationId): boolean {
 export function laserInterceptsLeft(state: GameState, nationId: NationId): number {
   if (!laserNetwork(state, nationId)) return 0;
   if (state.nations[nationId].laserOfflineThisRound) return 0;
+  // A magnetic bomb locked on this nation darkens its lasers for the whole round.
+  // Read it from the orders themselves, so a flag lost in an online merge cannot
+  // put the beams back before the bomb has gone off.
+  if (state.pendingStrikes.some((p) => p.weapon === 'magnetic' && p.targetNationId === nationId)) {
+    return 0;
+  }
   const fired = state.nations[nationId].dronesInterceptedThisRound;
   return Math.max(0, LASER_INTERCEPTS_PER_ROUND - fired);
 }
@@ -1997,6 +2014,7 @@ function raidFollows(state: GameState, strike: PendingStrike): boolean {
 }
 
 function breachForRaid(state: GameState, strike: PendingStrike, city: City): GameState {
+  const magnetic = strike.weapon === 'magnetic';
   const attackerName = nationDef(strike.attackerId).name;
   const targetName = nationDef(strike.targetNationId).name;
   const defender = state.nations[strike.targetNationId];
@@ -2016,7 +2034,9 @@ function breachForRaid(state: GameState, strike: PendingStrike, city: City): Gam
     log: [
       ...seen.log,
       log(
-        `${attackerName}'s hydrogen bomb tore the ${cover} off ${city.name} (${targetName}) and left the city standing for the squad.`,
+        magnetic
+          ? `${attackerName}'s magnetic bomb scattered the shield over ${city.name} (${targetName}) and blacked out its lasers — the city stands open for the squad.`
+          : `${attackerName}'s hydrogen bomb tore the ${cover} off ${city.name} (${targetName}) and left the city standing for the squad.`,
         'attack',
       ),
     ],
@@ -2030,7 +2050,25 @@ function breachForRaid(state: GameState, strike: PendingStrike, city: City): Gam
         attackerId: strike.attackerId,
         amount: cover === 'bunker' ? COSTS.underground : COSTS.shield,
         cover,
+        lost: assetsOf({ ...city, hasLaser: false, hasResearch: false }),
+        laserDown: magnetic && laserNetwork(state, strike.targetNationId) ? true : undefined,
       }),
+    ],
+  };
+}
+
+/** A magnetic bomb with nothing to scatter: the lasers go dark and the city is left for the squad. */
+function blackoutForRaid(state: GameState, strike: PendingStrike, city: City): GameState {
+  const attackerName = nationDef(strike.attackerId).name;
+  const targetName = nationDef(strike.targetNationId).name;
+  return {
+    ...state,
+    log: [
+      ...state.log,
+      log(
+        `${attackerName}'s magnetic bomb blacked out the lasers over ${city.name} (${targetName}) — the city stands open for the squad.`,
+        'attack',
+      ),
     ],
   };
 }
@@ -2156,6 +2194,8 @@ function captureCity(state: GameState, strike: PendingStrike, city: City): GameS
         cityName: city.name,
         attackerId: attacker.id,
         amount: cityAssetValue(city),
+        // The lab comes with the city; the defences do not
+        lost: assetsOf(city, { research: false }),
         points: points > 0 ? points : undefined,
         clean: clean ? true : undefined,
       }),
@@ -2286,6 +2326,20 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
   ) {
     return breachForRaid(state, strikeNorm, city);
   }
+  // A magnetic bomb that leads a squad in blacks out the lasers and scatters the
+  // shield; it does not level the city the squad is about to take. A bunker still
+  // turns it away (below).
+  if (
+    magnetic &&
+    city &&
+    !city.destroyed &&
+    !city.isUnderground &&
+    raidFollows(state, strikeNorm)
+  ) {
+    return city.hasShield
+      ? breachForRaid(state, strikeNorm, city)
+      : blackoutForRaid(state, strikeNorm, city);
+  }
 
   // A player can bunker a city in the same round a warhead was aimed at it —
   // only a hydrogen bomb cracks the rock.
@@ -2350,6 +2404,7 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
       attackerId: strike.attackerId,
       amount: COSTS.shield,
       cover: 'shield',
+      lost: assetsOf({ ...city, hasLaser: false, hasResearch: false }),
     });
   } else {
     cities = cities.map((c) =>
@@ -2379,6 +2434,7 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
       cityName: city.name,
       attackerId: strike.attackerId,
       amount: cityAssetValue(city),
+      lost: assetsOf(city),
       cover: city.isUnderground ? 'bunker' : city.hasShield ? 'shield' : undefined,
       sharedWith: partners.length > 0 ? partners : undefined,
       laserDown:
@@ -2497,10 +2553,22 @@ export function finishStrikeResolution(state: GameState): GameState {
 
 /** Drones go in first; every client resolves the round in this same order. */
 export function orderStrikesForResolution(strikes: PendingStrike[]): PendingStrike[] {
-  // Drones and warheads clear the way first; the squads land on whatever is left
+  // A magnetic bomb that leads a squad in goes first: it blacks out the lasers and
+  // scatters the shield, so the swarm and the squad that follow meet an open city.
+  const leadsRaid = (s: PendingStrike) =>
+    s.weapon === 'magnetic' &&
+    strikes.some(
+      (c) =>
+        c.weapon === 'commando' &&
+        c.attackerId === s.attackerId &&
+        c.targetNationId === s.targetNationId &&
+        c.cityId === s.cityId,
+    );
+  // Otherwise drones and warheads clear the way first; the squads land on whatever is left
   return [
+    ...strikes.filter(leadsRaid),
     ...strikes.filter((s) => s.weapon === 'drone'),
-    ...strikes.filter((s) => s.weapon !== 'drone' && s.weapon !== 'commando'),
+    ...strikes.filter((s) => s.weapon !== 'drone' && s.weapon !== 'commando' && !leadsRaid(s)),
     ...strikes.filter((s) => s.weapon === 'commando'),
   ];
 }

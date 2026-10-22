@@ -1,10 +1,9 @@
 import './App.css';
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { ART, SFX } from './data/art';
 import {
   NATIONS,
   nationDef,
-  COSTS,
   DRONE_DAMAGE,
   LASER_INTERCEPTS_PER_ROUND,
   SCORE_CAPTURE,
@@ -66,6 +65,7 @@ import type {
 } from './game/briefing';
 import type {
   City,
+  CityAsset,
   GameMode,
   GameState,
   GameSyncEvent,
@@ -132,6 +132,7 @@ import {
   type StrikeShow,
   type StrikeTarget,
 } from './game/movie';
+import { ASSET_ORDER, buildRecapTable, type RecapRow, type RecapWinKind } from './game/recap';
 import { CommandDashboard } from './screens/CommandDashboard';
 import { useFitToWindow } from './lib/useFitToWindow';
 import { LobbyScreen } from './screens/Lobby';
@@ -287,7 +288,7 @@ function CinemaScopeToggle({ className = '' }: { className?: string }) {
       aria-label={`Battle films: ${scope === 'mine' ? 'my battles' : 'all battles'}. Tap to switch.`}
     >
       <span aria-hidden>🎬</span>
-      Battle films: <b>{scope === 'mine' ? 'My battles' : 'All battles'}</b>
+      <span className="cinema-scope__label">Battle films:</span> <b>{scope === 'mine' ? 'My battles' : 'All battles'}</b>
     </button>
   );
 }
@@ -386,60 +387,6 @@ function OutcomeTheme({ victory }: { victory: boolean }) {
       {on ? 'Music on' : 'Music off'}
     </button>
   );
-}
-
-function formatRoundEvent(e: RoundWorldEvent): string {
-  const nation = nationDef(e.nationId).name;
-  const attacker = e.attackerId ? nationDef(e.attackerId).name : null;
-  if (e.kind === 'cityCaptured') {
-    const bonus = e.points ? ` +${e.points} points${e.clean ? ' for a clean takeover' : ''}.` : '';
-    return attacker
-      ? `${attacker}'s Heliborne took over ${e.cityName} from ${nation}.${bonus}`
-      : `${e.cityName} (${nation}) was taken over.`;
-  }
-  if (e.kind === 'raidRepelled') {
-    const stop =
-      e.cover === 'laser'
-        ? 'the laser network shot the helicopters down'
-        : e.cover === 'bunker'
-          ? 'the bunkers sealed the city'
-          : 'the shield kept the helicopters out';
-    return attacker
-      ? `${attacker}'s Heliborne was turned back over ${e.cityName} (${nation}) — ${stop}.`
-      : `A raid on ${e.cityName} (${nation}) was turned back — ${stop}.`;
-  }
-  if (e.kind === 'nationEliminated') return `${nation} is out — all cities destroyed.`;
-  if (e.kind === 'droneDamage') {
-    const bill = `$${e.amount ?? DRONE_DAMAGE}M in damages`;
-    return attacker
-      ? `${attacker}'s drones swarmed ${e.cityName} (${nation}) — ${bill}.`
-      : `Drones swarmed ${e.cityName} (${nation}) — ${bill}.`;
-  }
-  if (e.kind === 'dronesIntercepted') {
-    return attacker
-      ? `${nation}'s lasers over ${e.cityName} shot down ${attacker}'s drone swarm.`
-      : `Lasers over ${e.cityName} (${nation}) shot down a drone swarm.`;
-  }
-  if (e.kind === 'cityRebuilt') {
-    return e.automatic
-      ? `${nation} rebuilt ${e.cityName} with its last $${e.amount ?? COSTS.rebuild}M — the nation survives.`
-      : `${nation} rebuilt ${e.cityName} from the rubble.`;
-  }
-  if (e.kind === 'strikeAbsorbed') {
-    // The whole table watched it bounce, so the bunker is public from here on
-    const now = `${e.cityName} (${nation}) — the bunker is on every map now.`;
-    return attacker
-      ? `${attacker}'s warhead broke against the bunkers under ${now}`
-      : `A warhead broke against the bunkers under ${now}`;
-  }
-  if (e.kind === 'shieldDestroyed') {
-    return attacker
-      ? `${attacker} shattered the shield over ${e.cityName} (${nation}).`
-      : `Shield lost over ${e.cityName} (${nation}).`;
-  }
-  return attacker
-    ? `${attacker} destroyed ${e.cityName} (${nation}).`
-    : `${e.cityName} (${nation}) was destroyed.`;
 }
 
 /** Round 1, or any round we have nothing personal to report. */
@@ -1033,134 +980,145 @@ function DropoutOverlay({
   );
 }
 
-/** One line of the aftermath, told in pictures: who hit what, and how it ended. */
-const RECAP_KIND: Record<
-  RoundWorldEvent['kind'],
-  { tag: string; weapon?: string; badge?: string; tone: string }
-> = {
-  cityDestroyed: { tag: 'Destroyed', weapon: ART.missile, badge: ART.explosion, tone: 'bad' },
-  shieldDestroyed: { tag: 'Shield down', weapon: ART.missile, badge: ART.shield, tone: 'warn' },
-  strikeAbsorbed: { tag: 'Bunker held', weapon: ART.missile, badge: ART.cop.bunker, tone: 'gold' },
-  droneDamage: { tag: 'Drone hit', weapon: ART.drone, tone: 'drone' },
-  dronesIntercepted: { tag: 'Swarm shot down', weapon: ART.drone, badge: ART.laserIcon, tone: 'good' },
-  cityRebuilt: { tag: 'Rebuilt', badge: ART.cop.rebuild, tone: 'good' },
-  cityCaptured: { tag: 'Taken over', weapon: ART.cop.commando, badge: ART.cop.commando, tone: 'bad' },
-  raidRepelled: { tag: 'Raid turned back', weapon: ART.cop.commando, badge: ART.shield, tone: 'good' },
-  nationEliminated: { tag: 'Out of the war', badge: ART.explosion, tone: 'bad' },
+/** Icons for the recap table: one picture per kind of gain, loss or asset. */
+const RECAP_WIN: Record<RecapWinKind, { icon: string; label: string }> = {
+  taken: { icon: ART.cop.commando, label: 'Took over' },
+  razed: { icon: ART.explosion, label: 'Razed' },
+  drone: { icon: ART.drone, label: 'Drones hit' },
+  laser: { icon: ART.laserIcon, label: 'Lasers held' },
+  shield: { icon: ART.shield, label: 'Shield held' },
+  bunker: { icon: ART.cop.bunker, label: 'Bunker held' },
+  rebuilt: { icon: ART.cop.rebuild, label: 'Rebuilt' },
+};
+const RECAP_LOSS: Record<'razed' | 'taken', { icon: string; label: string }> = {
+  razed: { icon: ART.explosion, label: 'Destroyed' },
+  taken: { icon: ART.cop.commando, label: 'Taken over' },
+};
+const RECAP_ASSET: Record<CityAsset, { icon: string; label: string }> = {
+  shield: { icon: ART.shield, label: 'Shield' },
+  bunker: { icon: ART.cop.bunker, label: 'Bunker' },
+  laser: { icon: ART.laserIcon, label: 'Laser' },
+  research: { icon: ART.researchIcon, label: 'Research' },
 };
 
-function RecapEvent({ e, state }: { e: RoundWorldEvent; state: GameState }) {
-  const meta = { ...RECAP_KIND[e.kind] };
-  const nation = nationDef(e.nationId);
-
-  if (e.kind === 'nationEliminated') {
-    return (
-      <li
-        className="recap-card recap-card--out"
-        aria-label={formatRoundEvent(e)}
-        style={{ backgroundImage: `linear-gradient(90deg, rgba(70,10,10,0.9), rgba(30,6,8,0.85)), url(${ART.flags[e.nationId]})` }}
-      >
-        <span className="recap-card__who recap-card__who--big">
-          <img src={leaderArt(state, e.nationId)} alt="" draggable={false} />
-        </span>
-        <span className="recap-card__copy">
-          <b className="recap-card__tag is-bad">{nation.shortName} is out</b>
-          <span className="recap-card__place">All cities destroyed</span>
-        </span>
-        <img className="recap-card__stamp" src={ART.explosion} alt="" draggable={false} />
-      </li>
-    );
-  }
-
-  if (e.kind === 'raidRepelled') {
-    meta.badge = e.cover === 'laser' ? ART.laserIcon : e.cover === 'bunker' ? ART.cop.bunker : ART.shield;
-  }
-  const cover = e.kind === 'strikeAbsorbed' || e.cover === 'bunker';
-  const cityImg = e.cityId
-    ? (cover ? ART.citiesUnderground[e.cityId] : ART.cities[e.cityId]) ?? ART.cities[e.cityId]
-    : undefined;
-  const money =
-    e.kind === 'droneDamage'
-      ? (e.amount ?? DRONE_DAMAGE)
-      : e.kind === 'cityRebuilt' && e.automatic
-        ? (e.amount ?? COSTS.rebuild)
-        : 0;
-  const tag = e.kind === 'cityRebuilt' && e.automatic ? 'Saved by rebuild' : meta.tag;
-  const shared = e.sharedWith?.length ?? 0;
-  // Attacks show the attacker; a rebuilt city shows the leader who paid to rebuild it
-  const whoId = e.attackerId ?? (e.kind === 'cityRebuilt' ? e.nationId : undefined);
-
+function RecapChip({
+  icon,
+  label,
+  title,
+  tone,
+}: {
+  icon: string;
+  label?: string;
+  title: string;
+  tone: string;
+}) {
   return (
-    <li
-      className={`recap-card recap-card--${meta.tone}${e.kind === 'cityDestroyed' ? ' recap-card--ruin' : ''}`}
-      aria-label={formatRoundEvent(e)}
-    >
-      {whoId ? (
-        <span
-          className="recap-card__who"
-          style={{ backgroundImage: `url(${ART.flags[whoId]})` }}
-          title={nationDef(whoId).name}
-        >
-          <img src={leaderArt(state, whoId)} alt="" draggable={false} />
-          {shared > 0 && <i className="recap-card__more">+{shared}</i>}
-        </span>
-      ) : (
-        <span className="recap-card__who recap-card__who--none" aria-hidden />
-      )}
-      {meta.weapon ? (
-        <span className="recap-card__weapon" aria-hidden>
-          <img src={meta.weapon} alt="" draggable={false} />
-          <em>→</em>
-        </span>
-      ) : (
-        <span className="recap-card__weapon recap-card__weapon--none" aria-hidden />
-      )}
-      {e.kind === 'cityDestroyed' ? (
-        // The blast and, beside it, what is left: the city greyed out under a red cross
-        <span className="recap-card__city is-ruined">
-          {meta.badge && <img className="recap-card__blast" src={meta.badge} alt="" draggable={false} />}
-          {cityImg && (
-            <span className="recap-card__ruin">
-              <img className="recap-card__city-art" src={cityImg} alt="" draggable={false} />
-            </span>
-          )}
-        </span>
-      ) : (
-        <span className="recap-card__city">
-          {cityImg && <img className="recap-card__city-art" src={cityImg} alt="" draggable={false} />}
-          {meta.badge && <img className="recap-card__badge" src={meta.badge} alt="" draggable={false} />}
-        </span>
-      )}
-      <span className="recap-card__copy">
-        <b className={`recap-card__tag is-${meta.tone}`}>{tag}</b>
-        <span className="recap-card__place">
-          {e.cityName}
-          <i style={{ backgroundImage: `url(${ART.flags[e.nationId]})` }} aria-hidden />
-          {nation.shortName}
-        </span>
-      </span>
-      {money > 0 && <span className="recap-card__amount">−${formatMoney(money)}</span>}
-      {e.kind === 'cityCaptured' && e.points ? (
-        <span className="recap-card__points" title={e.clean ? 'Clean takeover: no warhead used' : 'Conquest bonus'}>
-          +{e.points}
-          <small>{e.clean ? 'clean' : 'pts'}</small>
-        </span>
-      ) : null}
-    </li>
+    <span className={`rt-chip rt-chip--${tone}`} title={title}>
+      <img src={icon} alt="" draggable={false} />
+      {label && <b>{label}</b>}
+    </span>
+  );
+}
+
+function RecapTableRow({
+  row,
+  rank,
+  you,
+  state,
+}: {
+  row: RecapRow;
+  rank: number;
+  you: boolean;
+  state: GameState;
+}) {
+  const nation = nationDef(row.nationId);
+  const assets = ASSET_ORDER.filter((a) => (row.assets[a] ?? 0) > 0);
+  const out = row.lost.some((l) => l.kind === 'out');
+  return (
+    <tr className={`rt-row${you ? ' is-you' : ''}${out || state.nations[row.nationId]?.eliminated ? ' is-out' : ''}`}>
+      <th scope="row">
+        <div className="rt-country">
+          <span className="rt-rank">{rank}</span>
+          <span className="rt-flag" style={{ backgroundImage: `url(${ART.flags[row.nationId]})` }} aria-hidden />
+          <span className="rt-name">
+            {nation.name}
+            {you && <i>You</i>}
+          </span>
+        </div>
+      </th>
+      <td className="rt-cell rt-cell--won">
+        {row.won.length === 0 ? (
+          <span className="rt-none">—</span>
+        ) : (
+          row.won.map((w) => (
+            <RecapChip
+              key={`${w.kind}:${w.city}`}
+              icon={RECAP_WIN[w.kind].icon}
+              label={w.city}
+              title={`${RECAP_WIN[w.kind].label} ${w.city}`}
+              tone={w.kind}
+            />
+          ))
+        )}
+      </td>
+      <td className="rt-cell rt-cell--lost">
+        {row.lost.length === 0 && row.repairs === 0 && assets.length === 0 ? (
+          <span className="rt-none">—</span>
+        ) : (
+          <>
+            {row.lost.map((l) =>
+              l.kind === 'out' ? (
+                <RecapChip key="out" icon={ART.explosion} label="Out of the war" title="Every city lost" tone="out" />
+              ) : (
+                <RecapChip
+                  key={`${l.kind}:${l.city}`}
+                  icon={RECAP_LOSS[l.kind].icon}
+                  label={l.city}
+                  title={`${RECAP_LOSS[l.kind].label}: ${l.city}`}
+                  tone={`lost-${l.kind}`}
+                />
+              ),
+            )}
+            {assets.length > 0 && (
+              <span className="rt-assets">
+                {row.lost.length > 0 && <em aria-hidden>+</em>}
+                {assets.map((a) => {
+                  const n = row.assets[a] ?? 0;
+                  return (
+                    <span key={a} className="rt-asset" title={`${RECAP_ASSET[a].label}${n > 1 ? ` ×${n}` : ''} lost`}>
+                      <img src={RECAP_ASSET[a].icon} alt="" draggable={false} />
+                      {n > 1 && <b>×{n}</b>}
+                    </span>
+                  );
+                })}
+              </span>
+            )}
+            {row.repairs > 0 && (
+              <RecapChip
+                icon={ART.drone}
+                label={`−$${formatMoney(row.repairs)}`}
+                title={`Drone repairs $${formatMoney(row.repairs)}M`}
+                tone="repairs"
+              />
+            )}
+          </>
+        )}
+      </td>
+    </tr>
   );
 }
 
 function StrikeRecap({
   events,
   state,
+  viewerIds,
   onContinue,
 }: {
   events: RoundWorldEvent[];
   state: GameState;
+  viewerIds: NationId[] | null;
   onContinue: () => void;
 }) {
-  const strikes = events.filter((e) => e.kind !== 'nationEliminated');
-  const eliminated = events.filter((e) => e.kind === 'nationEliminated');
   const continueRef = useRef(onContinue);
   continueRef.current = onContinue;
 
@@ -1170,25 +1128,45 @@ function StrikeRecap({
     return () => window.clearTimeout(t);
   }, []);
 
+  // Ranked the way the scoreboard ranks the nations; every nation gets a row
+  const rows = useMemo(() => {
+    const order = rankNationIds(state, [...state.turnOrder]);
+    return buildRecapTable(events, order);
+  }, [events, state]);
+
   return (
-    <div className="strike-cinema" role="dialog" aria-modal="true" aria-label="Strike aftermath">
+    <div className="strike-cinema" role="dialog" aria-modal="true" aria-label="Round summary">
       <div className="strike-cinema__veil" />
       <div className="strike-cinema__panel strike-cinema__panel--recap enter-pop">
-        <header className="strike-cinema__title">WHAT HAPPENED</header>
+        <header className="strike-cinema__title">ROUND SUMMARY</header>
         {events.length === 0 ? (
           <div className="strike-recap__empty">
             <img src={ART.shield} alt="" draggable={false} />
             <b>The board stands</b>
           </div>
         ) : (
-          <ul className="strike-recap__list">
-            {strikes.map((e) => (
-              <RecapEvent key={e.id} e={e} state={state} />
-            ))}
-            {eliminated.map((e) => (
-              <RecapEvent key={e.id} e={e} state={state} />
-            ))}
-          </ul>
+          <div className="rt-scroll">
+            <table className="rt">
+              <thead>
+                <tr>
+                  <th scope="col">Country</th>
+                  <th scope="col">Won</th>
+                  <th scope="col">Lost</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row, i) => (
+                  <RecapTableRow
+                    key={row.nationId}
+                    row={row}
+                    rank={i + 1}
+                    you={Boolean(viewerIds?.includes(row.nationId))}
+                    state={state}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
         <div className="strike-recap__actions">
           <button type="button" className="btn btn--xl btn--primary" onClick={onContinue}>
@@ -1279,6 +1257,9 @@ function StrikeTheater({
   sessionUid?: string | null;
 }) {
   const [cinema, setCinema] = useState<StrikeShow | null>(null);
+  /** Films still queued behind the one on screen */
+  const [filmsLeft, setFilmsLeft] = useState(0);
+  const skipAllRef = useRef(false);
   const [recap, setRecap] = useState<RoundWorldEvent[] | null>(null);
   const cinemaResolveRef = useRef<(() => void) | null>(null);
   const recapResolveRef = useRef<(() => void) | null>(null);
@@ -1296,6 +1277,11 @@ function StrikeTheater({
     cinemaResolveRef.current = null;
     resolve?.();
   }, []);
+
+  const onSkipAll = useCallback(() => {
+    skipAllRef.current = true;
+    onCinemaComplete();
+  }, [onCinemaComplete]);
 
   const onRecapContinue = useCallback(() => {
     setRecap(null);
@@ -1329,6 +1315,7 @@ function StrikeTheater({
     if (!job.pending) return;
 
     const session = ++sessionRef.current;
+    skipAllRef.current = false;
     let cancelled = false;
     let reportTimer = 0;
     let watchdog = 0;
@@ -1385,8 +1372,8 @@ function StrikeTheater({
 
       try {
         const razedOnScreen = new Set<string>();
-        for (const volley of volleys) {
-          if (!alive()) break;
+        for (const [volleyIndex, volley] of volleys.entries()) {
+          if (!alive() || skipAllRef.current) break;
           const targets: StrikeTarget[] = [];
           for (const strike of volley.strikes) {
             const weapon: StrikeWeapon =
@@ -1495,6 +1482,7 @@ function StrikeTheater({
               return;
             }
             cinemaResolveRef.current = resolve;
+            setFilmsLeft(volleys.length - volleyIndex - 1);
             setCinema({ from: volley.attackerId, targets });
           });
         }
@@ -1585,9 +1573,17 @@ function StrikeTheater({
           leaderSrc={(id) => leaderArt(state, id)}
           sfx={playSfx}
           onComplete={onCinemaComplete}
+          onSkipAll={filmsLeft > 0 ? onSkipAll : undefined}
         />
       )}
-      {recap && <StrikeRecap events={recap} state={state} onContinue={onRecapContinue} />}
+      {recap && (
+        <StrikeRecap
+          events={recap}
+          state={state}
+          viewerIds={viewerNationsFor(state, sessionUid)}
+          onContinue={onRecapContinue}
+        />
+      )}
     </>
   );
 }

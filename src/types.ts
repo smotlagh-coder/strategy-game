@@ -208,6 +208,9 @@ export interface LogEntry {
   tone?: 'neutral' | 'attack' | 'money' | 'sanction';
 }
 
+/** The things a city can carry that a strike can take away */
+export type CityAsset = 'shield' | 'laser' | 'research' | 'bunker';
+
 /** What happened during the round just completed (shown on aftermath board) */
 export interface RoundWorldEvent {
   id: string;
@@ -237,6 +240,8 @@ export interface RoundWorldEvent {
   laserDown?: boolean;
   /** An ally's laser network covered the city (its own network was spent or absent) */
   coveredBy?: NationId;
+  /** Assets the city lost in this event (shield, laser, research lab, bunker) */
+  lost?: CityAsset[];
   /** Score banked by the captor for a takeover */
   points?: number;
   /** The takeover needed no warhead */

@@ -28,6 +28,8 @@ interface MovieProps {
   leaderSrc: (id: NationId) => string;
   sfx: Sfx;
   onComplete: () => void;
+  /** Present when more films wait behind this one: drop them all and go to the summary */
+  onSkipAll?: () => void;
 }
 
 const WEAPON_LABEL: Record<StrikeWeapon, string> = {
@@ -118,11 +120,21 @@ function LaunchShot({ strike, ms, sfx }: { strike: StrikeShow; ms: number; sfx: 
   const squad = arsenal.some((a) => a.weapon === 'commando');
   const swarm = arsenal.some((a) => a.weapon === 'drone');
   const airfield = rockets.length === 0;
-  const ignite = airfield ? 900 : 1000;
+  // A swarm and nothing else: the drones go up from truck launchers, not a runway
+  const dronesOnly = airfield && swarm && !squad;
+  const ignite = dronesOnly ? 500 : airfield ? 900 : 1000;
+  // Each launcher fires its drone a beat after the one before. The shot is short, so the
+  // last launchers get a shorter climb and every drone is away before the cut.
+  const PAD_GAP = 200;
+  const padStart = Math.min(ignite, 750);
+  const PAD_END = 1750;
 
   useCues([
     { at: ignite - 50, run: () => sfx(SFX.launch, 0.95) },
     ...(airfield ? [] : [{ at: ignite + 250, run: () => sfx(SFX.launch, 0.5, 1.25) }]),
+    ...(swarm
+      ? [0, 1, 2].map((n) => ({ at: padStart + n * PAD_GAP + 150, run: () => sfx(SFX.launch, 0.4, 1.6 + n * 0.1) }))
+      : []),
   ]);
 
   return (
@@ -162,9 +174,27 @@ function LaunchShot({ strike, ms, sfx }: { strike: StrikeShow; ms: number; sfx: 
             </div>
           )}
           {swarm && (
-            <div className="mv-sky-swarm" style={vars({ '--delay': ignite + 150 })} aria-hidden>
-              {[0, 1, 2, 3, 4].map((n) => (
-                <img key={n} src={ART.mv.drone} alt="" draggable={false} style={vars({ '--n': n })} />
+            <div
+              className={`mv-pads${rockets.length > 0 ? ' has-rockets' : ''}${squad ? ' has-squad' : ''}`}
+              aria-hidden
+            >
+              {[0, 1, 2].map((n) => (
+                <div key={n} className="mv-pad" style={vars({
+                    '--i': n,
+                    '--at': padStart + n * PAD_GAP,
+                    '--dur': Math.max(700, PAD_END - (padStart + n * PAD_GAP)),
+                  })}>
+                  <img className="mv-pad__truck" src={ART.mv.launcher} alt="" draggable={false} />
+                  <span className="mv-pad__smoke">
+                    {[0, 1, 2].map((p) => (
+                      <i key={p} style={vars({ '--p': p })} />
+                    ))}
+                  </span>
+                  <span className="mv-pad__drone">
+                    <i className="mv-pad__flame" />
+                    <img src={ART.mv.droneSide} alt="" draggable={false} />
+                  </span>
+                </div>
               ))}
             </div>
           )}
@@ -172,7 +202,7 @@ function LaunchShot({ strike, ms, sfx }: { strike: StrikeShow; ms: number; sfx: 
       </div>
       <div className="mv-countdown" aria-hidden>
         {airfield ? (
-          <span className="mv-countdown__text">Rotors spinning up</span>
+          <span className="mv-countdown__text">{dronesOnly ? 'Launchers armed' : 'Rotors spinning up'}</span>
         ) : (
           <>
             <span style={vars({ '--d': 0 })}>3</span>
@@ -182,7 +212,7 @@ function LaunchShot({ strike, ms, sfx }: { strike: StrikeShow; ms: number; sfx: 
         )}
       </div>
       <p className="mv-launch__word" style={vars({ '--d': ignite })}>
-        {airfield ? 'Wheels up' : 'Launch'}
+        {airfield && !dronesOnly ? 'Wheels up' : 'Launch'}
       </p>
     </section>
   );
@@ -642,7 +672,7 @@ function TollShot({ strike, ms }: { strike: StrikeShow; ms: number }) {
 
 /* ───────────────────────── The projector ───────────────────────── */
 
-export default function StrikeMovie({ strike, leaderSrc, sfx, onComplete }: MovieProps) {
+export default function StrikeMovie({ strike, leaderSrc, sfx, onComplete, onSkipAll }: MovieProps) {
   const shots = useMemo(() => buildShots(strike), [strike]);
   const total = useMemo(() => shots.reduce((sum, s) => sum + s.ms, 0), [shots]);
   const [index, setIndex] = useState(0);
@@ -657,6 +687,17 @@ export default function StrikeMovie({ strike, leaderSrc, sfx, onComplete }: Movi
     finished.current = true;
     doneRef.current();
   };
+
+  // Escape skips the film too
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') finish();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // finish only touches refs
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const id = window.setTimeout(() => {
@@ -718,7 +759,17 @@ export default function StrikeMovie({ strike, leaderSrc, sfx, onComplete }: Movi
           ))}
         </span>
       </div>
-      <div className="movie__bar movie__bar--bottom" />
+      <div className="movie__bar movie__bar--bottom">
+        {onSkipAll && (
+          <button type="button" className="movie__skip movie__skip--all" onClick={onSkipAll}>
+            Skip all films
+          </button>
+        )}
+        <button type="button" className="movie__skip" onClick={finish}>
+          Skip
+          <span aria-hidden>▸▸</span>
+        </button>
+      </div>
     </div>
   );
 }

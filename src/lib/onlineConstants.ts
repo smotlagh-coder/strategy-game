@@ -15,7 +15,7 @@ export const DISCONNECT_MS = 20_000;
 export const AFTERMATH_THINK_MS = 5_000;
 
 /** Aftermath recap dismisses itself so nobody stalls the table. */
-export const RECAP_AUTO_MS = 6_000;
+export const RECAP_AUTO_MS = 8_000;
 
 /** A client may enter the summary before the strike report syncs — wait this long for it. */
 export const REPORT_WAIT_MS = 4_000;

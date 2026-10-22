@@ -84,6 +84,11 @@ export function cinemaCaption(target: StrikeTarget, impacted: boolean): string |
       return 'Heliborne inbound';
     }
     if (target.raid === 'captured') {
+      if (target.weapons.includes('magnetic')) {
+        return target.hadShield
+          ? 'Lasers dark, shield scattered — city taken over'
+          : 'Lasers dark — city taken over';
+      }
       if (target.hadBunker) return 'Bunker breached — city taken over';
       if (target.hadShield && swarm) return 'Shield tied up — city taken over';
       if (target.hadShield) return 'Shield stripped — city taken over';
@@ -198,6 +203,15 @@ export function targetTimeline(weapons: readonly string[]): TargetTimeline {
   const swarm = weapons.includes('drone');
   const squad = weapons.includes('commando');
   const warhead = weapons.some((w) => w !== 'drone' && w !== 'commando');
+  // A magnetic bomb leading a squad goes first: lasers dark, shield scattered,
+  // then the swarm and the squad meet an open city (the engine's order too)
+  if (warhead && squad && weapons.includes('magnetic')) {
+    const warheadAt = 750;
+    const droneAt = swarm ? warheadAt + 900 : 0;
+    const raidAt = (swarm ? droneAt + 800 : warheadAt + 800);
+    const needs = Math.max(warheadAt + 1_700, swarm ? droneAt + 2_100 : 0, raidAt + 4_900);
+    return { droneAt, warheadAt, raidAt, needs };
+  }
   const lead = swarm && (warhead || squad) ? 700 : 0;
   const warheadAt = lead + 750;
   const raidAt = lead + (warhead ? 800 : 0);

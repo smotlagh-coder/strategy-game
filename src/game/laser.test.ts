@@ -315,3 +315,65 @@ describe('AI and laser defence', () => {
     expect(runAiBuyPhase(s).nations.uk.cities.some((c) => c.hasLaser)).toBe(false);
   });
 });
+
+describe('a magnetic bomb leading a swarm and a Heliborne squad', () => {
+  function combo() {
+    let s = table({
+      us: { money: 0, drones: 1, bombs: 0, magneticBombs: 1, commandos: 1, hasSpyNetwork: true },
+    });
+    const target = s.nations.uk.cities[0];
+    s = buyShield(s, target.id, 'uk');
+    s = buyLaser(s, s.nations.uk.cities[2].id, 'uk');
+    for (const w of ['drone', 'commando', 'magnetic'] as const) {
+      s = queueStrike(s, 'uk', target.id, 'us', w);
+    }
+    return { s, target };
+  }
+
+  it('resolves the bomb first, then the swarm, then the squad', () => {
+    const { s } = combo();
+    expect(orderStrikesForResolution(s.pendingStrikes).map((p) => p.weapon)).toEqual([
+      'magnetic',
+      'drone',
+      'commando',
+    ]);
+  });
+
+  it('blacks out the laser, scatters the shield, lets the swarm hurt the city and the squad take it', () => {
+    const { s: queued, target } = combo();
+    const s = resolveAll(queued);
+    const kinds = s.roundEvents.map((e) => e.kind);
+    expect(kinds).not.toContain('dronesIntercepted');
+    expect(kinds).not.toContain('raidRepelled');
+    expect(kinds).not.toContain('cityDestroyed');
+    expect(kinds).toContain('shieldDestroyed');
+    expect(kinds).toContain('droneDamage');
+    expect(kinds).toContain('cityCaptured');
+    // The shield was gone before the swarm landed, so the full repair bill
+    const bill = s.roundEvents.find((e) => e.kind === 'droneDamage')!;
+    expect(bill.amount).toBe(DRONE_DAMAGE);
+    expect(s.nations.us.cities.some((c) => c.id === target.id)).toBe(true);
+  });
+
+  it('keeps the lasers dark even when the defender flag was lost in a sync', () => {
+    const { s: queued, target } = combo();
+    const lost = {
+      ...queued,
+      nations: { ...queued.nations, uk: { ...queued.nations.uk, laserOfflineThisRound: false } },
+    };
+    expect(laserInterceptsLeft(lost, 'uk')).toBe(0);
+    const s = resolveAll(lost);
+    expect(s.roundEvents.map((e) => e.kind)).not.toContain('dronesIntercepted');
+    expect(s.nations.us.cities.some((c) => c.id === target.id)).toBe(true);
+  });
+
+  it('leaves a bare city standing for the squad too', () => {
+    let s = table({ us: { money: 0, drones: 0, bombs: 0, magneticBombs: 1, commandos: 1, hasSpyNetwork: true } });
+    const target = s.nations.uk.cities[1];
+    s = buyLaser(s, s.nations.uk.cities[2].id, 'uk');
+    for (const w of ['magnetic', 'commando'] as const) s = queueStrike(s, 'uk', target.id, 'us', w);
+    s = resolveAll(s);
+    expect(s.roundEvents.map((e) => e.kind)).toContain('cityCaptured');
+    expect(s.roundEvents.map((e) => e.kind)).not.toContain('cityDestroyed');
+  });
+});
