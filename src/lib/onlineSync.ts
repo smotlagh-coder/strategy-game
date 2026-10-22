@@ -145,7 +145,7 @@ function mergeAlliance(remote: NationState, local: NationState): Pick<NationStat
 }
 
 /** Union city upgrades so a stale push cannot wipe research/shields. */
-/** Same monotonic reasoning again, for Invisible Force squads. */
+/** Same monotonic reasoning again, for Heliborne squads. */
 export function mergeCommandoStock(remote: NationState, local: NationState): number {
   const atStart = (n: NationState) =>
     counter(n.commandos) - counter(n.commandosBoughtThisRound) + counter(n.commandosUsed);

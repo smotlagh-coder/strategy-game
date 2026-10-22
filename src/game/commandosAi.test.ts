@@ -58,7 +58,7 @@ function coverAllBut(state: GameState, open: number): GameState {
   return s;
 }
 
-describe('AI Invisible Force', () => {
+describe('AI Heliborne', () => {
   it('walks into the one open city it can see', () => {
     const s = coverAllBut(table(), 1);
     const target = pickRaidTarget(s, 'us');

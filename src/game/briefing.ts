@@ -98,7 +98,7 @@ export interface BriefingCity {
   heldFrom?: NationId;
 }
 
-/** A city of ours that another nation holds after an Invisible Force takeover. */
+/** A city of ours that another nation holds after an Heliborne takeover. */
 export interface BriefingLostCity {
   id: string;
   name: string;
@@ -112,7 +112,7 @@ export interface BriefingRaider {
   id: NationId;
   nukes: number;
   swarms: number;
-  /** Invisible Force squads sent at us, whether they landed or were turned back */
+  /** Heliborne squads sent at us, whether they landed or were turned back */
   raids: number;
   cities: string[];
 }
@@ -127,7 +127,7 @@ export interface BriefingAssets {
   lasers: number;
   bombs: number;
   drones: number;
-  /** Invisible Force squads in stock */
+  /** Heliborne squads in stock */
   commandos: number;
   spyNetwork: boolean;
   /** Warheads / packs can actually be bought and fired this round */

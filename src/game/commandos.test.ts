@@ -87,7 +87,7 @@ function resolveAll(state: GameState): GameState {
 
 const ukCity = (s: GameState, i = 0) => s.nations.uk.cities[i];
 
-describe('Invisible Force economy', () => {
+describe('Heliborne economy', () => {
   it('costs $45M, more than a nuke and less than the hydrogen bomb', () => {
     expect(COSTS.commando).toBe(45);
     expect(COSTS.commando).toBeGreaterThan(COSTS.bomb);

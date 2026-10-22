@@ -581,16 +581,16 @@
 /* Lower third and caption */
 .mv-lower {
   position: absolute;
-  left: 4vmin;
+  left: 3vmin;
   bottom: calc(var(--bar) + 3vmin);
   z-index: 2;
-  display: flex;
-  align-items: center;
-  gap: 1.6vmin;
-  padding: 1.2vmin 3vmin 1.2vmin 1.4vmin;
-  border-radius: 1.4vmin;
-  background: linear-gradient(90deg, rgba(0, 0, 0, 0.82), rgba(0, 0, 0, 0.55));
-  border-left: 0.8vmin solid #ff5b3a;
+  display: grid;
+  gap: 1vmin;
+  max-width: calc(100% - 6vmin);
+  padding: 1.2vmin 2.4vmin 1.4vmin 1.8vmin;
+  border-radius: 1.2vmin;
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.86), rgba(0, 0, 0, 0.6));
+  border-left: 0.7vmin solid #ff5b3a;
   animation: mvSlideIn 500ms ease-out 250ms both;
 }
 
@@ -599,48 +599,134 @@
   to { opacity: 1; transform: none; }
 }
 
-.mv-lower__flag {
-  position: relative;
-  flex: none;
-  width: 9vmin;
-  height: 6vmin;
-  border-radius: 0.6vmin;
-  overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.5);
+.mv-lower__city {
+  font-family: var(--display);
+  font-size: clamp(16px, 3.8vmin, 32px);
+  line-height: 1.05;
 }
 
-.mv-lower__flag i {
-  position: absolute;
-  inset: 0;
-  background-size: cover;
-  background-position: center;
+/* Who is hitting whom: attacker, the weapons on their way, the defender */
+.mv-lower__duel {
+  display: flex;
+  align-items: center;
+  gap: 1.8vmin;
+}
+
+.mv-lower__side {
+  display: flex;
+  align-items: center;
+  gap: 1.2vmin;
+  min-width: 0;
 }
 
 .mv-lower__who {
   position: relative;
-  width: 8vmin;
-  height: 8vmin;
+  flex: none;
+  width: 7.2vmin;
+  height: 7.2vmin;
   border-radius: 50%;
-  overflow: hidden;
-  border: 0.4vmin solid rgba(255, 255, 255, 0.85);
+  border: 0.35vmin solid rgba(255, 255, 255, 0.85);
   background: #111;
+}
+
+.mv-lower__who img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+  display: block;
+}
+
+.mv-lower__badge {
+  position: absolute;
+  right: -1.6vmin;
+  bottom: -0.6vmin;
+  width: 4.6vmin;
+  height: 3.1vmin;
+  border-radius: 0.4vmin;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  background-size: cover;
+  background-position: center;
+  box-shadow: 0 0.3vmin 0.8vmin rgba(0, 0, 0, 0.6);
+}
+
+.mv-lower__name {
+  display: grid;
+  gap: 0.2vmin;
+  margin-left: 1.2vmin;
+  min-width: 0;
+}
+
+.mv-lower__name small {
+  font-family: var(--stencil);
+  font-size: clamp(9px, 1.5vmin, 13px);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.mv-lower__name em {
+  font-style: normal;
+  font-weight: 700;
+  font-size: clamp(12px, 2.5vmin, 21px);
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.mv-lower__arrow {
+  display: flex;
+  align-items: center;
+  gap: 0.6vmin;
   flex: none;
 }
 
-.mv-lower__who img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.mv-lower__arrow img {
+  height: 4.6vmin;
+  width: auto;
+  max-width: 6vmin;
+  object-fit: contain;
+  filter: brightness(1.7) drop-shadow(0 0.3vmin 0.5vmin rgba(0, 0, 0, 0.7));
+}
 
-.is-in { animation: mvSwapIn 450ms ease-out var(--at) both; }
-.is-out { animation: mvSwapOut 450ms ease-out var(--at) both; }
-.mv-lower__flag .is-in,
-.mv-lower__flag .is-out { --at: inherit; }
+.mv-lower__arrow img.is-commando { height: 3.2vmin; max-width: 6.4vmin; }
+.mv-lower__arrow img.is-drone { height: 3.4vmin; max-width: 5vmin; }
+
+/* A long arrow head, drawn rather than a glyph */
+.mv-lower__arrow i {
+  width: 4vmin;
+  height: 0.5vmin;
+  margin-left: 0.4vmin;
+  background: linear-gradient(90deg, rgba(255, 91, 58, 0), #ff5b3a);
+  position: relative;
+}
+
+.mv-lower__arrow i::after {
+  content: '';
+  position: absolute;
+  right: -0.2vmin;
+  top: 50%;
+  translate: 0 -50%;
+  border: 1vmin solid transparent;
+  border-left: 1.5vmin solid #ff5b3a;
+  border-right: 0;
+}
+
+/* The city changes hands: the defender's side dims and says so */
+.mv-lower__side.is-defender.is-lost .mv-lower__who,
+.mv-lower__side.is-defender.is-lost em { animation: mvLost 450ms ease-out var(--at) both; }
+.mv-lower__role { grid-area: auto; }
+.mv-lower__name small.is-lost { display: none; color: #ff8a70; }
+.mv-lower__side.is-defender.is-lost .mv-lower__role:not(.is-lost) { display: none; }
+.mv-lower__side.is-defender.is-lost .mv-lower__name small.is-lost { display: block; animation: mvSwapIn 450ms ease-out var(--at) both; }
+
+@keyframes mvLost {
+  from { filter: none; }
+  to { filter: grayscale(1) brightness(0.65); }
+}
 
 @keyframes mvSwapIn { from { opacity: 0; } to { opacity: 1; } }
-@keyframes mvSwapOut { from { opacity: 1; } to { opacity: 0; } }
-
-.mv-lower__text { display: grid; gap: 0.2vmin; }
-.mv-lower__text b { font-family: var(--display); font-size: clamp(16px, 4vmin, 34px); line-height: 1.05; }
-.mv-lower__sub { position: relative; display: grid; }
-.mv-lower__sub small { grid-area: 1 / 1; font-size: clamp(11px, 2.2vmin, 18px); color: rgba(255, 255, 255, 0.72); white-space: nowrap; }
 
 .mv-caption {
   position: absolute;
@@ -1296,9 +1382,38 @@
 .mv-drone__burst {
   left: 50%;
   top: 50%;
-  width: 190%;
+  width: 95%;
   translate: -50% -50%;
-  animation: mvBurst 1000ms ease-out var(--shot-at) both;
+  animation: mvBurst 700ms ease-out calc(var(--shot-at) + 150ms) both;
+}
+
+/* A drone under the beam glows hot, then comes apart trailing smoke */
+.mv-drone.is-shot .mv-drone__body {
+  animation: mvHeat 700ms ease-in calc(var(--shot-at) - 250ms) both;
+}
+
+.mv-drone.is-shot::after {
+  content: '';
+  position: absolute;
+  left: 38%;
+  bottom: 60%;
+  width: 24%;
+  height: 160%;
+  opacity: 0;
+  background: linear-gradient(to top, rgba(55, 55, 60, 0.75), rgba(55, 55, 60, 0));
+  filter: blur(0.7vmin);
+  animation: mvDroneSmoke 1000ms ease-out calc(var(--shot-at) + 100ms) both;
+}
+
+@keyframes mvHeat {
+  from { filter: brightness(1.25) drop-shadow(0 1vmin 1.2vmin rgba(0, 0, 0, 0.6)); }
+  to { filter: brightness(1.9) sepia(1) saturate(5) hue-rotate(-32deg) drop-shadow(0 0 1.4vmin rgba(255, 120, 40, 0.95)); }
+}
+
+@keyframes mvDroneSmoke {
+  0% { opacity: 0; transform: scaleY(0.3); }
+  25% { opacity: 1; }
+  100% { opacity: 0; transform: scaleY(1.2) translateY(-20%); }
 }
 
 .mv-hit {
@@ -1335,25 +1450,80 @@
 }
 
 /* Lasers */
+/*
+ * A defence laser as a camera sees one: a thin white-hot line that the haze
+ * scatters into a faint warm halo, a hot spot where it dwells on its target and
+ * a little ground glow at the emitter. No neon colour, no flare, and it flickers
+ * with the beam's power rather than growing like a tracer.
+ */
 .mv-beam {
   position: absolute;
   z-index: 6;
-  width: calc(var(--city) * 0.16);
-  margin-left: calc(var(--city) * -0.08);
-  max-width: none;
-  object-fit: fill;
+  width: calc(var(--city) * 0.034);
+  margin-left: calc(var(--city) * -0.017);
   transform-origin: 50% 100%;
+  transform: rotate(var(--ang));
   opacity: 0;
   pointer-events: none;
-  animation: mvBeamFx 700ms linear var(--at) both;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 150, 110, 0) 0%,
+    rgba(255, 150, 110, 0.14) 24%,
+    rgba(255, 228, 210, 0.78) 41%,
+    #fff 50%,
+    rgba(255, 228, 210, 0.78) 59%,
+    rgba(255, 150, 110, 0.14) 76%,
+    rgba(255, 150, 110, 0) 100%
+  );
+  mix-blend-mode: screen;
+  filter: drop-shadow(0 0 0.7vmin rgba(255, 160, 120, 0.5));
+  animation: mvBeamFx 900ms linear var(--at) both;
+}
+
+/* Where the beam dwells on its target: the metal heats white, then orange */
+.mv-beam::after {
+  content: '';
+  position: absolute;
+  top: calc(var(--city) * -0.028);
+  left: 50%;
+  width: calc(var(--city) * 0.06);
+  aspect-ratio: 1;
+  translate: -50% 0;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff 0 16%, rgba(255, 205, 150, 0.85) 34%, rgba(255, 120, 60, 0.3) 60%, rgba(255, 90, 40, 0) 72%);
+  animation: mvBeamSpot 900ms linear var(--at) both;
+}
+
+/* Scatter on the ground at the emitter */
+.mv-beam::before {
+  content: '';
+  position: absolute;
+  bottom: calc(var(--city) * -0.02);
+  left: 50%;
+  width: calc(var(--city) * 0.07);
+  height: calc(var(--city) * 0.025);
+  translate: -50% 0;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(255, 235, 215, 0.8), rgba(255, 150, 110, 0) 70%);
 }
 
 @keyframes mvBeamFx {
-  0% { opacity: 0; transform: rotate(var(--ang)) scaleY(0.05); }
-  12% { opacity: 1; transform: rotate(var(--ang)) scaleY(1); }
-  34% { opacity: 0.7; transform: rotate(var(--ang)) scaleY(1); }
-  50% { opacity: 1; transform: rotate(var(--ang)) scaleY(1); }
-  100% { opacity: 0; transform: rotate(var(--ang)) scaleY(1); }
+  0% { opacity: 0; }
+  3% { opacity: 1; }
+  14% { opacity: 0.82; }
+  27% { opacity: 1; }
+  43% { opacity: 0.78; }
+  58% { opacity: 1; }
+  74% { opacity: 0.88; }
+  90% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes mvBeamSpot {
+  0% { transform: scale(0.5); }
+  30% { transform: scale(1); }
+  70% { transform: scale(1.35); }
+  100% { transform: scale(1.7); }
 }
 
 /* Squad */
@@ -1510,8 +1680,8 @@
   filter: brightness(0.88) saturate(1.05);
   clip-path: polygon(0 0, 24% 4%, 50% 0, 76% 5%, 100% 1%, 100% 99%, 76% 95%, 50% 100%, 24% 96%, 0 100%);
   animation:
-    mvClothRaise 900ms cubic-bezier(0.2, 0.8, 0.3, 1) var(--at) forwards,
-    mvClothWave 1500ms ease-in-out calc(var(--at) + 900ms) infinite alternate;
+    mvClothRaise 1700ms cubic-bezier(0.35, 0.1, 0.3, 1) var(--at) forwards,
+    mvClothWave 1500ms ease-in-out calc(var(--at) + 1700ms) infinite alternate;
 }
 
 .mv-plate__cloth.is-left { transform-origin: 0 50%; }
@@ -1527,8 +1697,8 @@
 }
 
 @keyframes mvClothRaise {
-  from { opacity: 0; transform: translateY(70%) scale(0.85); }
-  30% { opacity: 1; }
+  from { opacity: 0; transform: translateY(calc(var(--rise) * 1%)); }
+  6% { opacity: 1; }
   to { opacity: 1; transform: none; }
 }
 

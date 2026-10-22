@@ -124,7 +124,7 @@ import { NameGate } from './screens/NameGate';
 import StrikeMovie from './screens/StrikeMovie';
 import {
   craftArt,
-  orderVolleysForFilm,
+  reconcileWithFilm,
   volleyMovieMs,
   volleyWeapons,
   type StrikeShow,
@@ -335,7 +335,7 @@ function formatRoundEvent(e: RoundWorldEvent): string {
   if (e.kind === 'cityCaptured') {
     const bonus = e.points ? ` +${e.points} points${e.clean ? ' for a clean takeover' : ''}.` : '';
     return attacker
-      ? `${attacker}'s Invisible Force took over ${e.cityName} from ${nation}.${bonus}`
+      ? `${attacker}'s Heliborne took over ${e.cityName} from ${nation}.${bonus}`
       : `${e.cityName} (${nation}) was taken over.`;
   }
   if (e.kind === 'raidRepelled') {
@@ -346,7 +346,7 @@ function formatRoundEvent(e: RoundWorldEvent): string {
           ? 'the bunkers sealed the city'
           : 'the shield kept the helicopters out';
     return attacker
-      ? `${attacker}'s Invisible Force was turned back over ${e.cityName} (${nation}) — ${stop}.`
+      ? `${attacker}'s Heliborne was turned back over ${e.cityName} (${nation}) — ${stop}.`
       : `A raid on ${e.cityName} (${nation}) was turned back — ${stop}.`;
   }
   if (e.kind === 'nationEliminated') return `${nation} is out — all cities destroyed.`;
@@ -860,7 +860,7 @@ function RoundBriefingOverlay({
                   {briefing.assets.drones}
                 </li>
                 {briefing.assets.commandos > 0 && (
-                  <li title="Invisible Force">
+                  <li title="Heliborne">
                     <img src={ART.cop.commando} alt="" draggable={false} />
                     {briefing.assets.commandos}
                   </li>
@@ -1316,7 +1316,8 @@ function StrikeTheater({
       }, runtimeMs + 6_000);
 
       try {
-        const volleys = orderVolleysForFilm(groupStrikesByAttacker(strikes), events);
+        const volleys = groupStrikesByAttacker(strikes);
+        const razedOnScreen = new Set<string>();
         for (const volley of volleys) {
           if (!alive()) break;
           const targets: StrikeTarget[] = [];
@@ -1376,7 +1377,33 @@ function StrikeTheater({
                 ? 'repelled'
                 : 'empty';
             const takenEvent = mine.find((e) => e.kind === 'cityCaptured');
+            // Someone else's warhead razed it in the round's true order; the film
+            // decides below whether this volley plays the razing or hits the rubble
+            const razer =
+              mine.length === 0
+                ? events.find(
+                    (e) =>
+                      e.kind === 'cityDestroyed' &&
+                      e.cityId === strike.cityId &&
+                      e.attackerId &&
+                      e.attackerId !== volley.attackerId,
+                  )
+                : undefined;
+            const holder =
+              mine.length === 0 && !razer && weapon === 'commando'
+                ? events.find(
+                    (e) =>
+                      e.kind === 'cityCaptured' &&
+                      e.cityId === strike.cityId &&
+                      e.attackerId &&
+                      e.attackerId !== volley.attackerId,
+                  )
+                : undefined;
             targets.push({
+              heldBy: holder?.attackerId ? nationDef(holder.attackerId).name : undefined,
+              // Rubble from an earlier round has no event this round; it simply is rubble
+              rubble: mine.length === 0 && !razer && city?.destroyed ? true : undefined,
+              razedBy: razer?.attackerId ? nationDef(razer.attackerId).name : undefined,
               raid,
               points: takenEvent?.points,
               clean: takenEvent?.clean,
@@ -1394,21 +1421,7 @@ function StrikeTheater({
               laserDown,
             });
           }
-          for (const target of targets) {
-            const escort =
-              target.weapons.includes('drone') &&
-              target.weapons.some((w) => w === 'nuke' || w === 'magnetic' || w === 'hydrogen');
-            const hydrogen = target.weapons.includes('hydrogen');
-            // The engine already says whether a warhead razed or only breached the city
-            if (target.weapons.includes('commando')) continue;
-            // A shield only stops a lone warhead. Hydrogen ignores it, and a swarm
-            // that gets through (magnetic has already darkened a laser) lets the
-            // warhead level the city. The cinema must show rubble, not a bare shield pop.
-            if (target.absorbed || target.lasered) continue;
-            if (hydrogen || (escort && (target.hadShield || target.laserDown))) {
-              target.leveled = true;
-            }
-          }
+          reconcileWithFilm(targets, razedOnScreen);
           await new Promise<void>((resolve) => {
             if (!alive()) {
               resolve();
@@ -1694,7 +1707,7 @@ function NationPod({
   pendingBombCityIds?: string[];
   /** Cities with locked drone swarms inbound */
   pendingDroneCityIds?: string[];
-  /** Cities with a locked Invisible Force squad inbound */
+  /** Cities with a locked Heliborne squad inbound */
   pendingRaidCityIds?: string[];
   /** Cities an ally has already aimed bombs / drones at, to pair with */
   allyBombCityIds?: string[];
@@ -1825,7 +1838,7 @@ function NationPod({
               ? `${c.name} — underground city, hydrogen can crack it`
               : `${c.name} — underground city, cannot be destroyed`
             : raidLocked || raidSelected
-            ? `${c.name} — Invisible Force ${raidLocked ? 'inbound' : 'selected'}`
+            ? `${c.name} — Heliborne ${raidLocked ? 'inbound' : 'selected'}`
             : c.originId
             ? `${c.name} — taken from ${nationDef(c.originId).name}`
             : bombLocked
@@ -1889,8 +1902,8 @@ function NationPod({
               {(raidLocked || raidSelected) && (
                 <span
                   className={`city-tile__raid-lock ${raidSelected && !raidLocked ? 'is-pending' : ''}`}
-                  title={raidLocked ? 'Invisible Force inbound' : 'Selected for the Invisible Force'}
-                  aria-label={raidLocked ? 'Invisible Force inbound' : 'Selected for the Invisible Force'}
+                  title={raidLocked ? 'Heliborne inbound' : 'Selected for the Heliborne'}
+                  aria-label={raidLocked ? 'Heliborne inbound' : 'Selected for the Heliborne'}
                 >
                   <img src={ART.cop.commando} alt="" draggable={false} />
                 </span>
@@ -2224,9 +2237,9 @@ function GameBoard({
   const [wizardStep, setWizardStep] = useState<WizardStep | null>(null);
   /** Targeting picks drone swarms instead of a warhead type (the fourth choice). */
   const [aimDrones, setAimDrones] = useState(false);
-  /** Cities the Invisible Force is aimed at (one squad each) */
+  /** Cities the Heliborne is aimed at (one squad each) */
   const [forceTargets, setForceTargets] = useState<{ nationId: NationId; cityId: string }[]>([]);
-  /** Targeting picks Invisible Force squads (the fifth choice). */
+  /** Targeting picks Heliborne squads (the fifth choice). */
   const [aimForce, setAimForce] = useState(false);
   /** When the timed purchasing window on the command map closes. */
   const [purchaseDeadline, setPurchaseDeadline] = useState(0);
@@ -2271,7 +2284,7 @@ function GameBoard({
   const hasWarheads = totalWarheads(turn) > 0;
   const hasDrones = turn.drones > 0;
   const hasForce = commandoStock(turn) > 0;
-  // The Invisible Force is the fifth choice, drones the fourth; with nothing else armed each is the only one
+  // The Heliborne is the fifth choice, drones the fourth; with nothing else armed each is the only one
   const aimingForce = hasForce && (aimForce || (!hasWarheads && !hasDrones));
   const aimingDrones = hasDrones && !aimingForce && (aimDrones || !hasWarheads);
   const strikeSelectMode = isMyHumanTurn && wizardStep === 'strike';
@@ -2782,13 +2795,14 @@ function GameBoard({
         aiRunningRef.current = true;
         setBusy(true);
         try {
-          setState((s) => runAiTurn(s));
+          // Orders were placed at round start, so the table hands over at once
+          setState((s) => (s.aiPlanningComplete ? runAllAiUntilHumanOrSummary(s) : runAiTurn(s)));
         } finally {
           aiRunningRef.current = false;
           setBusy(false);
         }
       })();
-    }, 700);
+    }, state.aiPlanningComplete ? 120 : 700);
 
     return () => {
       cancelled = true;
@@ -2801,6 +2815,7 @@ function GameBoard({
     state.onlineGameId,
     state.humanReady,
     state.planningComplete,
+    state.aiPlanningComplete,
     isOnline,
     sessionUid,
     setState,
@@ -3106,7 +3121,7 @@ function GameBoard({
             </div>
             <h3 className="turn-wizard__q">
               {aimingForce
-                ? 'Send in the Invisible Force?'
+                ? 'Send in the Heliborne?'
                 : aimingDrones
                   ? 'Send your drone swarms?'
                   : 'Hit enemy cities with your warheads?'}
@@ -3176,7 +3191,7 @@ function GameBoard({
                 >
                   <img src={ART.cop.commando} alt="" draggable={false} />
                   <span>
-                    Invisible Force
+                    Heliborne
                     <small>
                       {forceTargets.length}/{squads}
                     </small>

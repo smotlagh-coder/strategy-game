@@ -304,7 +304,7 @@ export function pickDroneTarget(
 }
 
 /**
- * A city the Invisible Force can take this round, or null. The squad only walks
+ * A city the Heliborne can take this round, or null. The squad only walks
  * into a city nothing covers, so the AI needs eyes on the defences — or a good
  * reason to gamble: a city that was taken from it, or one just taken from someone
  * else (a takeover strips every defence, and nobody has rebuilt them yet).
@@ -734,11 +734,11 @@ export function runAiNationTurn(state: GameState, nationId: NationId): GameState
 }
 
 /**
- * Online: AI selects at round start (same window as humans), so the board shows
- * their research/shields/tech while players are still choosing.
+ * AI selects at round start (same window as humans), so the board shows their
+ * research/shields/tech while players are still choosing — a spy service reads
+ * real orders, not a table that has yet to move.
  */
-export function runOnlineAiPlanning(state: GameState): GameState {
-  if (state.mode !== 'online') return state;
+export function runAiPlanning(state: GameState): GameState {
   if (state.aiPlanningComplete) return state;
   if (state.phase !== 'buy' && state.phase !== 'action') return state;
 
@@ -756,6 +756,12 @@ export function runOnlineAiPlanning(state: GameState): GameState {
   };
 }
 
+/** Online: every client plans the AI at round start. */
+export function runOnlineAiPlanning(state: GameState): GameState {
+  if (state.mode !== 'online') return state;
+  return runAiPlanning(state);
+}
+
 /** Queue AI strikes for fair end-of-round resolution, then end turn */
 export function runAiTurn(state: GameState): GameState {
   // Once the last battle has resolved the standings are settled: the AI never
@@ -769,12 +775,14 @@ export function runAiTurn(state: GameState): GameState {
     return endTurn(s);
   }
 
-  s = runAiNationTurn(s, id);
+  // Orders were placed at round start; the AI's turn only hands over
+  if (!s.aiPlanningComplete) s = runAiNationTurn(s, id);
   return endTurn(s);
 }
 
 export function runAllAiUntilHumanOrSummary(state: GameState): GameState {
-  let s = state;
+  // Offline too, the AI places its orders before the first human acts
+  let s = state.mode === 'online' ? state : runAiPlanning(state);
   let guard = 0;
   while (
     guard++ < 20 &&

@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type { PendingStrike, RoundWorldEvent } from '../types';
 import {
   arsenalOf,
   buildShots,
-  orderVolleysForFilm,
+  cinemaCaption,
+  outcomeLine,
+  reconcileWithFilm,
   targetOutcome,
   targetShotMs,
   targetTimeline,
@@ -88,23 +89,75 @@ describe('strike movie', () => {
   });
 });
 
-describe('volley order', () => {
-  const strike = (attackerId: string, weapon: string): PendingStrike =>
-    ({ attackerId, targetNationId: 'russia', cityId: 'ru-1', weapon }) as unknown as PendingStrike;
-  const ev = (kind: string, attackerId: string): RoundWorldEvent =>
-    ({ id: kind + attackerId, kind, nationId: 'russia', cityId: 'ru-1', attackerId }) as unknown as RoundWorldEvent;
+describe('a city already razed this round', () => {
+  it('reads as an empty hit on rubble, not a second razing', () => {
+    const t = target({ rubble: true });
+    expect(targetOutcome(t)).toBe('empty');
+    expect(targetOutcome(target({ leveled: true }))).toBe('razed');
+  });
+});
 
-  it('plays the volley that razed a city before the squad that found it empty', () => {
-    const squad = { attackerId: 'us', strikes: [strike('us', 'commando')] } as any;
-    const bomber = { attackerId: 'china', strikes: [strike('china', 'nuke')] } as any;
-    const out = orderVolleysForFilm([squad, bomber], [ev('cityDestroyed', 'china')]);
-    expect(out.map((v) => v.attackerId)).toEqual(['china', 'us']);
+describe('the film razes a city before anything hits its rubble', () => {
+  it('plays the razing in the first volley with a warhead, then hits rubble', () => {
+    const razed = new Set<string>();
+    const first = [target({ razedBy: 'China' })];
+    const second = [target({ razedBy: 'China' })];
+    reconcileWithFilm(first, razed);
+    expect(first[0].leveled).toBe(true);
+    expect(first[0].rubble).toBeFalsy();
+    reconcileWithFilm(second, razed);
+    expect(second[0].rubble).toBe(true);
+    expect(second[0].leveled).toBe(false);
+    expect(targetOutcome(second[0])).toBe('empty');
   });
 
-  it('leaves a squad that took the city in its place', () => {
-    const squad = { attackerId: 'us', strikes: [strike('us', 'commando')] } as any;
-    const bomber = { attackerId: 'china', strikes: [strike('china', 'nuke')] } as any;
-    const out = orderVolleysForFilm([bomber, squad], [ev('cityCaptured', 'us')]);
-    expect(out).toHaveLength(2);
+  it('turns a volley that razed it in truth into a rubble hit once the film has razed it', () => {
+    const razed = new Set<string>(['ru-1']);
+    const own = [target({ cityId: 'ru-1', leveled: true })];
+    reconcileWithFilm(own, razed);
+    expect(own[0].rubble).toBe(true);
+    expect(own[0].leveled).toBe(false);
+  });
+
+  it('names the razer when a squad or swarm arrives before the film has razed the city', () => {
+    const squad = [target({ weapons: ['commando'], raid: 'empty', razedBy: 'China' })];
+    reconcileWithFilm(squad, new Set());
+    expect(squad[0].rubble).toBe(true);
+    expect(cinemaCaption(squad[0], true)).toBe('China razed it first');
+    const swarm = [target({ weapons: ['drone'], razedBy: 'China' })];
+    reconcileWithFilm(swarm, new Set());
+    expect(cinemaCaption(swarm[0], true)).toBe('China razed it first');
+  });
+
+  it('never says nothing is left for a city the film has not razed', () => {
+    const t = target({ weapons: ['nuke'], razedBy: 'China' });
+    reconcileWithFilm([t], new Set());
+    expect(cinemaCaption(t, true)).toBe('City in rubble');
+  });
+
+  it('razes through a hydrogen or escorted hit as before', () => {
+    const t = target({ weapons: ['hydrogen'] });
+    const razed = new Set<string>();
+    reconcileWithFilm([t], razed);
+    expect(t.leveled).toBe(true);
+    expect(razed.has(t.cityId)).toBe(true);
+  });
+
+  it('a squad whose own warhead razed the city shows the razing, then rubble', () => {
+    const t = target({ weapons: ['nuke', 'commando'], raid: 'empty', leveled: true });
+    expect(targetOutcome(t)).toBe('razed');
+    expect(cinemaCaption(t, true)).toBe('City in rubble');
+  });
+
+  it('never says nothing is left to take', () => {
+    const rubble = target({ weapons: ['commando'], raid: 'empty', rubble: true });
+    const held = target({ weapons: ['commando'], raid: 'empty', heldBy: 'Brazil' });
+    const gone = target({ weapons: ['commando'], raid: 'empty' });
+    for (const t of [rubble, held, gone]) {
+      expect(cinemaCaption(t, true)).not.toMatch(/nothing left/i);
+      expect(outcomeLine(t)).not.toMatch(/nothing left/i);
+    }
+    expect(cinemaCaption(held, true)).toBe('Brazil took it first');
+    expect(cinemaCaption(rubble, true)).toBe('City in rubble');
   });
 });

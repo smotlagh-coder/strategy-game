@@ -1281,12 +1281,12 @@ export function buyDrones(state: GameState, count: number, nationId?: NationId):
   return s;
 }
 
-/** Invisible Force squads in stock (older saves have no such field). */
+/** Heliborne squads in stock (older saves have no such field). */
 export function commandoStock(n: Pick<NationState, 'commandos'>): number {
   return n.commandos ?? 0;
 }
 
-/** Helicopters are aerospace: the Invisible Force needs the same tech as drones. */
+/** Helicopters are aerospace: the Heliborne needs the same tech as drones. */
 export function canBuyCommandos(state: GameState, nationId?: NationId): boolean {
   return canBuyDrones(state, nationId);
 }
@@ -1317,7 +1317,7 @@ export function buyCommando(state: GameState, nationId?: NationId): GameState {
     },
     log: [
       ...state.log,
-      log(`${nationDef(id).name} readied an Invisible Force squad.`, 'attack'),
+      log(`${nationDef(id).name} readied an Heliborne squad.`, 'attack'),
     ],
   };
 }
@@ -1777,7 +1777,7 @@ export function queueStrike(
       ...state.log,
       log(
         commando
-          ? `${nationDef(attackerId).name} put an Invisible Force squad in the air.`
+          ? `${nationDef(attackerId).name} put an Heliborne squad in the air.`
           : drone
           ? `${nationDef(attackerId).name} launched a drone swarm.`
           : warhead === 'magnetic'
@@ -2064,7 +2064,7 @@ function raidRepelled(
     ...seen,
     log: [
       ...seen.log,
-      log(`${attackerName}'s Invisible Force was turned back — ${what} (${targetName}).`, 'attack'),
+      log(`${attackerName}'s Heliborne was turned back — ${what} (${targetName}).`, 'attack'),
     ],
     roundEvents: [
       ...seen.roundEvents,
@@ -2142,8 +2142,8 @@ function captureCity(state: GameState, strike: PendingStrike, city: City): GameS
       ...state.log,
       log(
         homecoming
-          ? `${attackerName}'s Invisible Force took ${city.name} back from ${defenderName} — the city is home again.`
-          : `${attackerName}'s Invisible Force took over ${city.name} from ${defenderName} — the city is theirs now.`,
+          ? `${attackerName}'s Heliborne took ${city.name} back from ${defenderName} — the city is home again.`
+          : `${attackerName}'s Heliborne took over ${city.name} from ${defenderName} — the city is theirs now.`,
         'attack',
       ),
     ],
@@ -2178,7 +2178,9 @@ function applyRaid(state: GameState, strike: PendingStrike, city: City | undefin
       log: [
         ...state.log,
         log(
-          `${attackerName}'s Invisible Force found nothing left to take at ${city?.name ?? strike.cityId}.`,
+          city?.destroyed
+            ? `${attackerName}'s Heliborne found ${city.name} already in rubble.`
+            : `${attackerName}'s Heliborne found ${city?.name ?? strike.cityId} already taken.`,
           'attack',
         ),
       ],
@@ -2318,7 +2320,7 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
       log: [
         ...state.log,
         log(
-          `${nationDef(strike.attackerId).name}'s strike on ${strike.cityId} found nothing left to hit.`,
+          `${nationDef(strike.attackerId).name}'s strike on ${strike.cityId} found the city already in rubble.`,
           'attack',
         ),
       ],

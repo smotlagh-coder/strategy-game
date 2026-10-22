@@ -22,7 +22,7 @@ export type CostTable = {
   /** Magnetic warhead — kills laser for the round, 2/game */
   bombMagnetic: number;
   drone: number;
-  /** Invisible Force squad — takes a city over, 1/round */
+  /** Heliborne squad — takes a city over, 1/round */
   commando: number;
   research: number;
 };
@@ -44,7 +44,7 @@ export type BalanceProfile = {
   scoreBunker: number;
   /** Points banked by the attacker when a city is destroyed */
   scoreKill: number;
-  /** Banked by the attacker for taking a city over with the Invisible Force */
+  /** Banked by the attacker for taking a city over with the Heliborne */
   scoreCapture: number;
   /** Extra for a bloodless takeover: no warhead of the attacker's touched the city */
   scoreCaptureClean: number;

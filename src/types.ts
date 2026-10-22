@@ -32,8 +32,8 @@ export type Phase =
 export type WarheadKind = 'nuke' | 'hydrogen' | 'magnetic';
 
 /**
- * Everything a nation can send at an enemy city. 'commando' is the Invisible
- * Force: an airborne squad that takes a city over instead of destroying it.
+ * Everything a nation can send at an enemy city. 'commando' is the
+ * Heliborne: an airborne squad that takes a city over instead of destroying it.
  */
 export type StrikeWeapon = WarheadKind | 'drone' | 'commando';
 
@@ -63,7 +63,7 @@ export interface City {
   rebuiltRound?: number;
   /** Set while the city is held by a nation other than the one it was founded for */
   originId?: NationId;
-  /** Round the Invisible Force took this city over (drives the "held" badge) */
+  /** Round the Heliborne took this city over (drives the "held" badge) */
   capturedRound?: number;
 }
 
@@ -120,7 +120,7 @@ export interface NationState {
   /** Round when aerospace tech was unlocked; drones require a later round */
   aerospaceTechUnlockedRound: number | null;
   drones: number;
-  /** Invisible Force squads in stock (helicopter-borne commandos). Absent on older saves. */
+  /** Heliborne squads in stock (helicopter-borne commandos). Absent on older saves. */
   commandos?: number;
   /** Squads sent in this game (online merge) */
   commandosUsed?: number;

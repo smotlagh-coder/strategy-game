@@ -5,7 +5,7 @@
  */
 import { DRONE_DAMAGE } from '../data/nations';
 import { ART } from '../data/art';
-import type { NationId, PendingStrike, RoundWorldEvent, StrikeWeapon } from '../types';
+import type { NationId, PendingStrike, StrikeWeapon } from '../types';
 
 /** The photoreal sprite of a weapon, upright (missiles point up, helicopters face right). */
 export function movieCraft(weapon: StrikeWeapon): string {
@@ -40,7 +40,7 @@ export interface StrikeTarget {
   hadBunker?: boolean;
   /** This attacker's warhead leveled the city */
   leveled?: boolean;
-  /** How the Invisible Force squad fared: it took the city, turned back, or found nothing */
+  /** How the Heliborne squad fared: it took the city, turned back, or found nothing */
   raid?: 'captured' | 'repelled' | 'empty';
   /** What turned the squad back */
   raidCover?: 'laser' | 'shield' | 'bunker';
@@ -50,6 +50,12 @@ export interface StrikeTarget {
   points?: number;
   /** The takeover needed no warhead */
   clean?: boolean;
+  /** The city is rubble when this volley's missiles arrive on screen */
+  rubble?: boolean;
+  /** Who razed this city in the round's true order, when this volley found nothing left */
+  razedBy?: string;
+  /** Who took this city over before a squad of this volley arrived */
+  heldBy?: string;
 }
 
 /** One attacker's whole volley — every missile flies in the same panel. */
@@ -75,7 +81,7 @@ export function cinemaCaption(target: StrikeTarget, impacted: boolean): string |
       if (target.hadBunker) return 'Underground bunker';
       if (target.hadShield && opened) return 'Shielded — squad follows the opening';
       if (target.hadShield) return 'City shield';
-      return 'Invisible Force inbound';
+      return 'Heliborne inbound';
     }
     if (target.raid === 'captured') {
       if (target.hadBunker) return 'Bunker breached — city taken over';
@@ -89,7 +95,17 @@ export function cinemaCaption(target: StrikeTarget, impacted: boolean): string |
       if (target.raidCover === 'bunker') return 'Bunker sealed — squad turned back';
       return 'Shield held — squad turned back';
     }
-    return 'Nothing left to take';
+    if (target.rubble && target.razedBy) return `${target.razedBy} razed it first`;
+    if (target.rubble) return 'City in rubble';
+    // The squad's own warhead levelled it a moment earlier
+    if (target.leveled) return 'City in rubble';
+    if (target.heldBy) return `${target.heldBy} took it first`;
+    return 'City already gone';
+  }
+  if (target.rubble) {
+    if (!impacted) return target.razedBy ? `${target.razedBy} razed it first` : 'Already in rubble';
+    if (warhead) return 'Already rubble — the ruins take the hit';
+    return target.razedBy ? `${target.razedBy} razed it first` : 'Already in rubble';
   }
   if (!impacted) {
     if (target.hadBunker) return 'Underground bunker';
@@ -129,9 +145,9 @@ export function strikeTitle(flightPlan: { weapon: StrikeWeapon }[], targetCount:
   const squads = flightPlan.filter((f) => f.weapon === 'commando').length;
   const warheads = nukes + hydro + mag;
   if (squads > 0 && warheads === 0 && drones === 0) {
-    return squads > 1 ? `INVISIBLE FORCE — ${squads} SQUADS` : 'INVISIBLE FORCE';
+    return squads > 1 ? `HELIBORNE — ${squads} SQUADS` : 'HELIBORNE';
   }
-  if (squads > 0) return 'INVISIBLE FORCE — COMBINED ARMS';
+  if (squads > 0) return 'HELIBORNE — COMBINED ARMS';
   if (warheads === 0) {
     return drones > 1 ? `DRONE SWARMS — ${drones} PACKS` : 'DRONE SWARM';
   }
@@ -188,7 +204,7 @@ export function targetTimeline(weapons: readonly string[]): TargetTimeline {
   const needs = Math.max(
     swarm ? 2_100 : 0,
     warhead ? warheadAt + 1_700 : 0,
-    squad ? raidAt + 3_800 : 0,
+    squad ? raidAt + 4_900 : 0,
   );
   return { droneAt: 0, warheadAt, raidAt, needs };
 }
@@ -228,8 +244,12 @@ export type TargetOutcome =
 /** What happened to one city, in the one word the shot and the toll card both use. */
 export function targetOutcome(t: StrikeTarget): TargetOutcome {
   if (t.weapons.includes('commando')) {
-    return t.raid === 'captured' ? 'captured' : t.raid === 'repelled' ? 'repelled' : 'empty';
+    if (t.raid === 'captured') return 'captured';
+    if (t.raid === 'repelled') return 'repelled';
+    // The squad's own warhead razed it first: the film shows that razing, then the ruins
+    return t.leveled && !t.rubble ? 'razed' : 'empty';
   }
+  if (t.rubble && !t.leveled) return 'empty';
   if (t.absorbed) return 'bunker';
   if (t.leveled) return 'razed';
   if (t.lasered && !t.weapons.some(isBallisticWeapon)) return 'swarmShot';
@@ -256,7 +276,8 @@ export function outcomeLine(t: StrikeTarget): string {
     case 'swarmShot':
       return `${t.cityName}: swarm shot down`;
     default:
-      return `${t.cityName}: nothing left to take`;
+      if (t.rubble) return `${t.cityName}: already rubble`;
+      return t.heldBy ? `${t.cityName}: ${t.heldBy} took it first` : `${t.cityName}: already gone`;
   }
 }
 
@@ -314,59 +335,36 @@ export function volleyWeapons(
 }
 
 /**
- * The order the volleys play in. Quiet strikes go first and the round's big
- * moments last, but the film never contradicts the round's own order of events:
- * warheads resolve before squads, so a squad that "found nothing left to take"
- * only makes sense after the volley that turned that city to rubble. Showing the
- * squad flying home first and the rubble after reads as the wrong cause.
+ * Makes one volley's targets agree with what the film has already shown.
+ * Volleys play in the round's own order, so a city can be razed in the true
+ * resolution by a volley the film reaches later. The first volley on screen
+ * with a warhead on that city plays the razing, and every later hit lands on
+ * the rubble. A raid or swarm that arrives first sees the city as rubble with
+ * the razer named, never a bare "nothing left" for a city the film has not razed.
+ * `razed` carries the city ids already razed on screen from earlier volleys.
  */
-export function orderVolleysForFilm<V extends { attackerId: NationId; strikes: PendingStrike[] }>(
-  volleys: V[],
-  events: RoundWorldEvent[],
-): V[] {
-  const rank = (v: V) => {
-    let score = 0;
-    for (const strike of v.strikes) {
-      const mine = events.filter((e) => e.attackerId === v.attackerId && e.cityId === strike.cityId);
-      if (mine.some((e) => e.kind === 'cityDestroyed' || e.kind === 'cityCaptured')) {
-        score = Math.max(score, 2);
-      } else if (mine.some((e) => e.kind === 'shieldDestroyed' || e.kind === 'strikeAbsorbed')) {
-        score = Math.max(score, 1);
+export function reconcileWithFilm(targets: StrikeTarget[], razed: Set<string>): void {
+  for (const t of targets) {
+    const squad = t.weapons.includes('commando');
+    if (razed.has(t.cityId)) {
+      t.rubble = true;
+      if (!squad) {
+        t.leveled = false;
+        t.absorbed = false;
+      }
+    } else if (t.razedBy && !t.leveled) {
+      if (!squad && t.weapons.some(isBallisticWeapon)) {
+        t.leveled = true;
+        t.rubble = false;
+      } else {
+        t.rubble = true;
       }
     }
-    return score;
-  };
-  const base = volleys.slice().sort((a, b) => rank(a) - rank(b));
-
-  // Who must already have played: whoever razed a city this volley's squad found empty
-  const mustFollow = (v: V): NationId[] => {
-    const after = new Set<NationId>();
-    for (const strike of v.strikes) {
-      if (strike.weapon !== 'commando') continue;
-      const own = events.some(
-        (e) =>
-          e.attackerId === v.attackerId &&
-          e.cityId === strike.cityId &&
-          (e.kind === 'cityCaptured' || e.kind === 'raidRepelled'),
-      );
-      if (own) continue;
-      for (const e of events) {
-        if (e.kind === 'cityDestroyed' && e.cityId === strike.cityId && e.attackerId && e.attackerId !== v.attackerId) {
-          after.add(e.attackerId);
-        }
-      }
-    }
-    return [...after];
-  };
-
-  const ordered: V[] = [];
-  const left = base.slice();
-  while (left.length > 0) {
-    const waiting = new Set(left.map((v) => v.attackerId));
-    const next =
-      left.find((v) => mustFollow(v).every((id) => !waiting.has(id) || id === v.attackerId)) ?? left[0];
-    ordered.push(next);
-    left.splice(left.indexOf(next), 1);
   }
-  return ordered;
+  for (const t of targets) {
+    if (t.weapons.includes('commando') || t.rubble || t.absorbed || t.lasered) continue;
+    const escort = t.weapons.includes('drone') && t.weapons.some(isBallisticWeapon);
+    if (t.weapons.includes('hydrogen') || (escort && (t.hadShield || t.laserDown))) t.leveled = true;
+  }
+  for (const t of targets) if (t.leveled) razed.add(t.cityId);
 }

@@ -608,7 +608,7 @@ describe('round briefing', () => {
   });
 });
 
-describe('Invisible Force in the briefing', () => {
+describe('Heliborne in the briefing', () => {
   function raided(): GameState {
     let s = table();
     s = {

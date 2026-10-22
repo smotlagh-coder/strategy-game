@@ -202,7 +202,7 @@ export const MAX_HYDROGEN_PER_GAME = 1;
 export const MAX_MAGNETIC_PER_GAME = 2;
 /** Max drone packs a nation may purchase in a single round */
 export const MAX_DRONES_PER_ROUND = 3;
-/** Invisible Force squads a nation may assemble in a single round */
+/** Heliborne squads a nation may assemble in a single round */
 export const MAX_COMMANDOS_PER_ROUND = 1;
 /**
  * Shields a nation may install in a single round. One keeps a city exposed

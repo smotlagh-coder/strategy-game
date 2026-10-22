@@ -69,7 +69,7 @@ export const ART = {
   },
   missileMagnetic: '/art/missile-magnetic.webp',
   drone: '/art/drone.webp',
-  /** Black transport helicopter, side view — the Invisible Force's ride */
+  /** Black transport helicopter, side view — the Heliborne's ride */
   heli: '/art/invisible-force-heli.webp',
   /**
    * Full-frame photoreal plates for the strike movie: one per city (intact and razed,
@@ -80,7 +80,7 @@ export const ART = {
     city: (cityId: string) => `/art/city/${cityId}.webp`,
     cityRuin: (cityId: string) => `/art/city/${cityId}-ruin.webp`,
     /** The intact city with its flagpole bare: the flag has been taken down */
-    cityPole: (cityId: string) => `/art/city/${cityId}-pole.webp`,
+    cityTaken: (cityId: string) => `/art/city/${cityId}-taken.webp`,
     launch: (nationId: NationId) => `/art/launch/${nationId}.webp`,
     airfield: (nationId: NationId) => `/art/airfield/${nationId}.webp`,
   },
@@ -100,7 +100,6 @@ export const ART = {
       mushroom: '/art/mv-fx-mushroom.webp',
       shield: '/art/mv-fx-shield.webp',
       shieldBreak: '/art/mv-fx-shield-break.webp',
-      laser: '/art/mv-fx-laser.webp',
       dust: '/art/mv-fx-dust.webp',
       airburst: '/art/mv-fx-airburst.webp',
       emp: '/art/mv-fx-emp.webp',

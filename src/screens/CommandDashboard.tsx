@@ -1027,8 +1027,8 @@ export function CommandDashboard({
         {
           key: 'commando',
           art: ART.cop.commando,
-          short: 'Invisible',
-          label: 'Invisible Force',
+          short: 'Heliborne',
+          label: 'Heliborne',
           info: 'Helicopter squad takes a city over. Shields, lasers and bunkers turn it back.',
           lit: squads > 0,
           count: squads,
@@ -1039,7 +1039,7 @@ export function CommandDashboard({
           tone: stockTone(commandoMax, commandoCost),
           advised: advisedOffence.has('commando'),
           locked: commandoMax < 1,
-          onPress: () => onOrder((s) => buyCommandosBundled(s, 1, actorId), '+1 Invisible Force'),
+          onPress: () => onOrder((s) => buyCommandosBundled(s, 1, actorId), '+1 Heliborne'),
         },
       ],
     },
@@ -1383,7 +1383,7 @@ export function CommandDashboard({
               {hasStrike
                 ? `Ready to fire: ${warheads} warhead${warheads === 1 ? '' : 's'} · ${me.drones} drone pack${
                     me.drones === 1 ? '' : 's'
-                  }${squads > 0 ? ` · ${squads} Invisible Force` : ''}`
+                  }${squads > 0 ? ` · ${squads} Heliborne` : ''}`
                 : 'Nothing armed yet'}
             </p>
             {othersPending != null && othersPending > 0 && (

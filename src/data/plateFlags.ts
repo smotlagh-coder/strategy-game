@@ -1,50 +1,80 @@
 /**
- * Where the flag flies in each city plate, measured on the finished render.
- * The plate already carries the defender's flag; when a squad takes the city the
- * movie swaps to the same plate with a bare pole and raises the attacker's cloth
- * inside this box. `box` is [left, top, right, bottom] in % of the plate; `side`
- * is the edge of the cloth that sits on the pole.
+ * Where the takeover flag goes in each city plate. The `-taken` plate shows the
+ * city with a bare flagpole planted on its ground; the movie fades to it when the
+ * squad lands and runs the attacker's cloth up that pole. Positions are read off
+ * the finished renders, in % of the plate (origin top-left): the pole's x, the top
+ * of the pole and its foot.
  */
-export interface ClothSpec {
-  box: [number, number, number, number];
-  side: 'left' | 'right';
+export interface PolePlace {
+  x: number;
+  top: number;
+  base: number;
 }
 
-export const PLATE_FLAGS: Record<string, ClothSpec> = {
-  'uk-1': { box: [50.1, 9.9, 63.8, 28.6], side: 'left' },
-  'uk-2': { box: [47.4, 21.2, 56.6, 35.2], side: 'left' },
-  'uk-3': { box: [49.5, 10.9, 60.3, 26.0], side: 'left' },
-  'cn-1': { box: [50.2, 20.5, 61.9, 36.8], side: 'left' },
-  'cn-2': { box: [49.1, 14.2, 60.6, 30.2], side: 'left' },
-  'cn-3': { box: [50.2, 26.0, 57.6, 36.5], side: 'left' },
-  'us-1': { box: [50.3, 18.2, 58.4, 32.3], side: 'left' },
-  'us-2': { box: [50.4, 9.0, 59.1, 21.7], side: 'left' },
-  'us-3': { box: [48.5, 40.4, 56.9, 53.1], side: 'left' },
-  'pk-1': { box: [49.8, 30.9, 60.7, 47.0], side: 'left' },
-  'pk-2': { box: [50.1, 14.9, 61.0, 31.6], side: 'left' },
-  'pk-3': { box: [53.1, 28.8, 66.6, 48.6], side: 'left' },
-  'fr-1': { box: [50.2, 11.3, 57.7, 23.1], side: 'left' },
-  'fr-2': { box: [51.5, 14.8, 58.1, 25.7], side: 'left' },
-  'fr-3': { box: [50.4, 10.8, 58.2, 23.4], side: 'left' },
-  'ru-1': { box: [50.6, 21.0, 59.3, 32.9], side: 'left' },
-  'ru-2': { box: [49.5, 35.8, 57.0, 47.1], side: 'left' },
-  'ru-3': { box: [49.8, 32.5, 61.0, 48.1], side: 'left' },
-  'in-1': { box: [49.8, 31.0, 57.7, 44.0], side: 'left' },
-  'in-2': { box: [50.0, 25.7, 59.6, 40.6], side: 'left' },
-  'in-3': { box: [49.9, 31.5, 59.5, 46.8], side: 'left' },
-  'ca-1': { box: [50.1, 16.8, 59.8, 28.8], side: 'left' },
-  'ca-2': { box: [50.4, 22.7, 59.3, 34.2], side: 'left' },
-  'ca-3': { box: [48.6, 21.2, 57.5, 33.2], side: 'left' },
-  'kp-1': { box: [50.3, 10.1, 60.4, 23.1], side: 'left' },
-  'kp-2': { box: [50.2, 38.5, 60.8, 52.6], side: 'left' },
-  'kp-3': { box: [50.2, 10.9, 60.9, 24.7], side: 'left' },
-  'au-1': { box: [50.1, 38.2, 58.8, 49.1], side: 'left' },
-  'au-2': { box: [50.4, 36.6, 61.3, 51.0], side: 'left' },
-  'au-3': { box: [50.1, 7.5, 61.5, 22.0], side: 'left' },
-  'br-1': { box: [49.2, 21, 57.8, 34.5], side: 'left' },
-  'br-2': { box: [54.6, 15.6, 62.8, 29.7], side: 'left' },
-  'br-3': { box: [51.2, 30.6, 61.1, 46.7], side: 'left' },
-  'ir-1': { box: [50.2, 28.0, 60.6, 43.9], side: 'left' },
-  'ir-2': { box: [49.5, 15.7, 63.0, 37.6], side: 'left' },
-  'ir-3': { box: [50.2, 39.3, 60.5, 53.1], side: 'left' },
+export interface ClothSpec {
+  /** [left, top, right, bottom] of the flown cloth, in % of the plate */
+  box: [number, number, number, number];
+  /** The edge of the cloth that sits on the pole */
+  side: 'left' | 'right';
+  /** How far the cloth starts below its flown position, as % of its own height */
+  rise: number;
+}
+
+export const PLATE_POLES: Record<string, PolePlace> = {
+  'us-1': { x: 39, top: 19, base: 94 },
+  'us-2': { x: 40, top: 7, base: 94 },
+  'us-3': { x: 38, top: 16, base: 96 },
+  'ru-1': { x: 38.4, top: 11, base: 91 },
+  'ru-2': { x: 33.4, top: 18.6, base: 91.5 },
+  'ru-3': { x: 49.7, top: 21.7, base: 94 },
+  'uk-1': { x: 43.6, top: 7.6, base: 94.6 },
+  'uk-2': { x: 49.6, top: 11.8, base: 91.5 },
+  'uk-3': { x: 44.2, top: 18.2, base: 93.8 },
+  'fr-1': { x: 40.4, top: 21.7, base: 92.9 },
+  'fr-2': { x: 36.4, top: 13.4, base: 96.7 },
+  'fr-3': { x: 34.5, top: 27.8, base: 84 },
+  'in-1': { x: 40, top: 18, base: 93 },
+  'in-2': { x: 34.5, top: 16, base: 92 },
+  'in-3': { x: 38, top: 30, base: 92 },
+  'pk-1': { x: 33.4, top: 7.5, base: 92 },
+  'pk-2': { x: 38, top: 6, base: 90 },
+  'pk-3': { x: 49.8, top: 11, base: 93 },
+  'ca-1': { x: 47, top: 9.5, base: 93 },
+  'ca-2': { x: 27, top: 18, base: 94 },
+  'ca-3': { x: 38, top: 21, base: 94 },
+  'au-1': { x: 33.1, top: 4.9, base: 92 },
+  'au-2': { x: 33.2, top: 16.8, base: 92.5 },
+  'au-3': { x: 31.7, top: 7.6, base: 89.4 },
+  'br-1': { x: 39.7, top: 7.3, base: 85.4 },
+  'br-2': { x: 37.1, top: 5.6, base: 90.3 },
+  'br-3': { x: 35.9, top: 10.4, base: 92 },
+  'cn-1': { x: 42, top: 42, base: 93 },
+  'cn-2': { x: 37.2, top: 42.5, base: 89 },
+  'cn-3': { x: 38.7, top: 9.5, base: 86 },
+  'ir-1': { x: 43.1, top: 12.5, base: 87.7 },
+  'ir-2': { x: 45.9, top: 32.5, base: 83.5 },
+  'ir-3': { x: 45.4, top: 13.9, base: 92 },
+  'kp-1': { x: 39.3, top: 8.7, base: 91.5 },
+  'kp-2': { x: 37.8, top: 5.9, base: 89.9 },
+  'kp-3': { x: 41.4, top: 16.5, base: 90.6 },
 };
+
+/** A flag is 3:2 on a 16:9 plate: its height in % of the plate is 1.17 times its width. */
+const FLAG_H_PER_W = (1280 * 0.66) / 720;
+
+function clothFor(p: PolePlace): ClothSpec {
+  const pole = p.base - p.top;
+  // Proportionate to the pole it flies from, never a speck and never a banner
+  const w = Math.max(8, Math.min(13, pole * 0.17));
+  const h = w * FLAG_H_PER_W;
+  const top = p.top + 0.8;
+  return {
+    box: [p.x + 0.3, top, p.x + 0.3 + w, top + h],
+    side: 'left',
+    rise: ((p.base - 3 - top - h) / h) * 100,
+  };
+}
+
+export const PLATE_FLAGS: Record<string, ClothSpec> = Object.fromEntries(
+  Object.entries(PLATE_POLES).map(([id, p]) => [id, clothFor(p)]),
+);

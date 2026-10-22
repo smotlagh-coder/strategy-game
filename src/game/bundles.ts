@@ -130,7 +130,7 @@ export function buyDronesBundled(state: GameState, count: number, nationId?: Nat
   return k < 1 ? state : buyDrones(s, k, id);
 }
 
-/** Invisible Force squads; the first one also unlocks Aerospace Tech. */
+/** Heliborne squads; the first one also unlocks Aerospace Tech. */
 export function buyCommandosBundled(state: GameState, count: number, nationId?: NationId): GameState {
   const id = idOf(state, nationId);
   const s = withAerospace(state, id);

@@ -35,7 +35,7 @@ const WEAPON_LABEL: Record<StrikeWeapon, string> = {
   hydrogen: 'Hydrogen',
   magnetic: 'Magnetic',
   drone: 'Drone swarm',
-  commando: 'Invisible Force',
+  commando: 'Heliborne',
 };
 
 const UNITLESS = new Set(['--n', '--i', '--shake']);
@@ -215,11 +215,8 @@ function beamTo(x0: number, y0: number, x1: number, y1: number) {
 function Beam({ x0, y0, x1, y1, at, n }: { x0: number; y0: number; x1: number; y1: number; at: number; n: number }) {
   const g = beamTo(x0, y0, x1, y1);
   return (
-    <img
+    <span
       className="mv-beam"
-      src={ART.mv.fx.laser}
-      alt=""
-      draggable={false}
       aria-hidden
       style={{
         left: `${g.left}%`,
@@ -267,7 +264,7 @@ function TargetShot({
   // The squad's moments: arrive, ropes, team down, flag, leave
   const arrive = line.raidAt + 900;
   const flagAt = arrive + 1500;
-  const leaveAt = outcome === 'captured' ? arrive + 2050 : arrive + 1250;
+  const leaveAt = outcome === 'captured' ? arrive + 3100 : arrive + 1250;
   const hitAt = arrive + 420;
   const crashAt = hitAt + 900;
   const laserSquad = outcome === 'repelled' && target.raidCover === 'laser';
@@ -287,7 +284,9 @@ function TargetShot({
   const domeFlashAt = shieldSquad ? arrive + 350 : swarm && target.hadShield && !warhead && !squad ? droneHitAt : null;
 
   const razed = outcome === 'razed';
-  const preRuined = outcome === 'empty' && squad;
+  // A city someone else already razed is shown as rubble from the first frame
+  const preRuined = outcome === 'empty' && (squad || Boolean(target.rubble));
+  const rubbleHit = Boolean(warhead) && Boolean(target.rubble) && outcome === 'empty';
   const razedAt = line.warheadAt + 160;
   const boomAt = line.warheadAt;
   const captionAt = squad
@@ -300,7 +299,7 @@ function TargetShot({
   const caption = cinemaCaption(target, true) ?? outcomeLine(target);
 
   const shakeAt = warhead ? line.warheadAt : null;
-  const shakeStrong = warhead === 'hydrogen' || (warhead != null && razed);
+  const shakeStrong = warhead === 'hydrogen' || (warhead != null && (razed || rubbleHit));
   const takenFlag = outcome === 'captured';
   const fireWarhead = warhead === 'nuke' || warhead === 'hydrogen';
 
@@ -367,10 +366,10 @@ function TargetShot({
             {takenFlag && (
               <img
                 className="mv-plate__img mv-plate__img--pole"
-                src={ART.moviePlate.cityPole(target.cityId)}
+                src={ART.moviePlate.cityTaken(target.cityId)}
                 alt=""
                 draggable={false}
-                style={vars({ '--at': flagAt - 250 })}
+                style={vars({ '--at': flagAt - 350 })}
               />
             )}
             {takenFlag && PLATE_FLAGS[target.cityId] && (
@@ -382,7 +381,7 @@ function TargetShot({
                   width: `${PLATE_FLAGS[target.cityId].box[2] - PLATE_FLAGS[target.cityId].box[0]}%`,
                   height: `${PLATE_FLAGS[target.cityId].box[3] - PLATE_FLAGS[target.cityId].box[1]}%`,
                   backgroundImage: `url(${ART.flags[strike.from]})`,
-                  ...vars({ '--at': flagAt + 350 }),
+                  ...vars({ '--at': flagAt - 100, '--rise': PLATE_FLAGS[target.cityId].rise }),
                 }}
                 aria-hidden
               />
@@ -435,7 +434,7 @@ function TargetShot({
             )}
 
             {/* Impact: the ground burst, the cloud, the dust */}
-            {warhead && razed && (
+            {warhead && (razed || rubbleHit) && (
               <>
                 <span className="mv-flash" style={vars({ '--at': boomAt })} aria-hidden />
                 <span className={`mv-shock is-${warhead}`} style={vars({ '--at': boomAt })} aria-hidden />
@@ -492,7 +491,7 @@ function TargetShot({
               [0, 1, 2, 3, 4].map((n) => (
                 <Beam key={n} n={n} x0={50 + (n - 2) * 7} y0={70} x1={droneX(n)} y1={droneY(n)} at={droneHitAt - 120 + n * 90} />
               ))}
-            {swarm && !target.lasered && !warhead && !squad &&
+            {swarm && !target.lasered && !warhead && !squad && !target.rubble &&
               [
                 [32, 46],
                 [58, 34],
@@ -511,11 +510,11 @@ function TargetShot({
             {/* The squad */}
             {squad && (
               <div
-                className={`mv-heli${laserSquad ? ' is-hit' : ''}${outcome === 'captured' || outcome === 'empty' ? '' : ' is-turned'}`}
+                className={`mv-heli${laserSquad ? ' is-hit' : ''}${outcome === 'captured' || outcome === 'empty' || outcome === 'razed' ? '' : ' is-turned'}`}
                 style={vars({ '--arrive': line.raidAt, '--leave': leaveAt, '--hit': hitAt })}
               >
                 <HeliSprite />
-                {(outcome === 'captured' || outcome === 'empty') && (
+                {(outcome === 'captured' || outcome === 'empty' || outcome === 'razed') && (
                   <span className="mv-spot" style={vars({ '--at': arrive })} aria-hidden />
                 )}
                 {laserSquad && (
@@ -553,32 +552,42 @@ function TargetShot({
             )}
           </div>
           {squad && outcome === 'captured' && <div className="mv-taken-glow" style={vars({ '--at': flagAt })} aria-hidden />}
-          {warhead && razed && <span className="mv-flash mv-flash--screen" style={vars({ '--at': boomAt })} aria-hidden />}
+          {warhead && (razed || rubbleHit) && <span className="mv-flash mv-flash--screen" style={vars({ '--at': boomAt })} aria-hidden />}
         </div>
         <span className="mv-haze" aria-hidden />
       </div>
 
       <div className="mv-lower">
-        <span className="mv-lower__flag" aria-hidden>
-          <i style={{ backgroundImage: `url(${ART.flags[target.to]})` }} className={takenFlag ? 'is-out' : ''} />
-          {takenFlag && (
-            <i
-              className="is-in"
-              style={{ backgroundImage: `url(${ART.flags[strike.from]})`, ...vars({ '--at': flagAt }) }}
-            />
-          )}
-        </span>
-        <span className="mv-lower__who" style={vars({ '--at': flagAt })}>
-          <img src={leaderSrc(target.to)} alt="" draggable={false} className={takenFlag ? 'is-out' : ''} />
-          {takenFlag && <img src={leaderSrc(strike.from)} alt="" draggable={false} className="is-in" />}
-        </span>
-        <span className="mv-lower__text" style={vars({ '--at': flagAt })}>
-          <b>{target.cityName}</b>
-          <span className="mv-lower__sub">
-            <small className={takenFlag ? 'is-out' : ''}>{defender.name}</small>
-            {takenFlag && <small className="is-in">{attacker.name} · taken from {defender.name}</small>}
+        <b className="mv-lower__city">{target.cityName}</b>
+        <div className="mv-lower__duel">
+          <span className="mv-lower__side">
+            <span className="mv-lower__who">
+              <img src={leaderSrc(strike.from)} alt="" draggable={false} />
+              <i className="mv-lower__badge" style={{ backgroundImage: `url(${ART.flags[strike.from]})` }} />
+            </span>
+            <span className="mv-lower__name">
+              <small>Attacker</small>
+              <em>{attacker.name}</em>
+            </span>
           </span>
-        </span>
+          <span className="mv-lower__arrow" aria-hidden>
+            {[...new Set(target.weapons)].map((w) => (
+              <img key={w} src={movieCraft(w)} alt="" draggable={false} className={`is-${w}`} />
+            ))}
+            <i />
+          </span>
+          <span className={`mv-lower__side is-defender${takenFlag ? ' is-lost' : ''}`} style={vars({ '--at': flagAt })}>
+            <span className="mv-lower__who">
+              <img src={leaderSrc(target.to)} alt="" draggable={false} />
+              <i className="mv-lower__badge" style={{ backgroundImage: `url(${ART.flags[target.to]})` }} />
+            </span>
+            <span className="mv-lower__name">
+              <small className="mv-lower__role">Defender</small>
+              {takenFlag && <small className="mv-lower__role is-lost">City taken</small>}
+              <em>{defender.name}</em>
+            </span>
+          </span>
+        </div>
       </div>
       <p className={`mv-caption is-${outcome}`} style={vars({ '--at': captionAt })}>
         {caption}

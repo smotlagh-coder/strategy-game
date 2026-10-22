@@ -103,3 +103,24 @@ describe('online AI planning', () => {
     }
   });
 });
+
+describe('offline AI planning', () => {
+  it('the AI places its orders before the human acts, and hands over afterwards', async () => {
+    const { createInitialState, pickCountry } = await import('./engine');
+    const { runAllAiUntilHumanOrSummary, runAiTurn } = await import('./ai');
+    let s = createInitialState();
+    s = { ...s, mode: 'single', selectingFor: 1 } as typeof s;
+    s = pickCountry(s, s.turnOrder[0]);
+    s = runAllAiUntilHumanOrSummary(s);
+    expect(s.aiPlanningComplete).toBe(true);
+    const human = s.turnOrder.find((id) => s.nations[id].isHuman)!;
+    expect(s.currentTurnIndex).toBe(s.turnOrder.indexOf(human));
+    const aiIds = s.turnOrder.filter((id) => !s.nations[id].isHuman);
+    expect(aiIds.some((id) => s.nations[id].cities.some((c) => c.hasShield || c.hasResearch))).toBe(true);
+    // The AI's own turn later spends nothing more
+    const before = JSON.stringify(aiIds.map((id) => s.nations[id].money));
+    let t = { ...s, currentTurnIndex: s.turnOrder.indexOf(aiIds[0]) };
+    t = runAiTurn(t);
+    expect(JSON.stringify(aiIds.map((id) => t.nations[id].money))).toBe(before);
+  });
+});
