@@ -48,12 +48,11 @@ import {
   tributeFrom,
 } from './alliance';
 import { displayNameOnly } from '../lib/session';
+import { volleyMovieMs, volleyWeapons } from './movie';
 import {
   AFTERMATH_THINK_MS,
   RECAP_AUTO_MS,
   SELECTION_IDLE_MS,
-  RAID_CINEMA_EXTRA_MS,
-  STRIKE_CINEMA_MS,
 } from '../lib/onlineConstants';
 import type {
   City,
@@ -2523,11 +2522,14 @@ export function groupStrikesByAttacker(
 /** How long the launch cinema plus aftermath recap runs on every client. */
 export function cinemaDurationMs(state: GameState): number {
   const groups = groupStrikesByAttacker(state.resolvedStrikes ?? []);
-  const volleys = groups.length;
-  if (volleys === 0) return state.previousRoundEvents?.length ? RECAP_AUTO_MS : 0;
-  // A squad in the volley adds the hover and the drop
-  const raids = groups.filter((v) => v.strikes.some((s) => s.weapon === 'commando')).length;
-  return volleys * STRIKE_CINEMA_MS + raids * RAID_CINEMA_EXTRA_MS + RECAP_AUTO_MS;
+  if (groups.length === 0) return state.previousRoundEvents?.length ? RECAP_AUTO_MS : 0;
+  // Each attacker gets a full movie: title, launch, radar, a shot per city, toll card
+  const movies = groups.reduce(
+    (sum, v) =>
+      sum + volleyMovieMs(volleyWeapons(v.strikes).map((weapons) => ({ weapons }))),
+    0,
+  );
+  return movies + RECAP_AUTO_MS;
 }
 
 /**

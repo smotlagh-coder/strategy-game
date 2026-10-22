@@ -115,14 +115,21 @@ import {
   SELECTION_IDLE_MS,
   HEARTBEAT_MS,
   DISCONNECT_MS,
-  STRIKE_CINEMA_MS,
-  RAID_CINEMA_EXTRA_MS,
   TARGET_CONFIRM_MS,
   ALLIANCE_PHASE_MS,
   PURCHASE_WINDOW_MS,
 } from './lib/onlineConstants';
 import { aftermathMyCityIds, aftermathWorldIds } from './lib/lobbyInvite';
 import { NameGate } from './screens/NameGate';
+import StrikeMovie from './screens/StrikeMovie';
+import {
+  craftArt,
+  orderVolleysForFilm,
+  volleyMovieMs,
+  volleyWeapons,
+  type StrikeShow,
+  type StrikeTarget,
+} from './game/movie';
 import { CommandDashboard } from './screens/CommandDashboard';
 import { useFitToWindow } from './lib/useFitToWindow';
 import { LobbyScreen } from './screens/Lobby';
@@ -319,733 +326,6 @@ function OutcomeTheme({ victory }: { victory: boolean }) {
     >
       {on ? 'Music on' : 'Music off'}
     </button>
-  );
-}
-
-interface StrikeTarget {
-  to: NationId;
-  cityId: string;
-  cityName: string;
-  /** A city can catch a warhead and a drone swarm in the same volley */
-  weapons: StrikeWeapon[];
-  /** Repair bill per drone pack — halved when the city has a shield or bunker */
-  droneBill?: number;
-  /** The city's lasers downed the swarm, so it never reaches the skyline */
-  lasered?: boolean;
-  /** The warhead broke against the bunker: the ground shakes, nothing burns */
-  absorbed?: boolean;
-  /** A shield was up when this volley left the pad */
-  hadShield?: boolean;
-  /** The city was dug in when this volley left the pad */
-  hadBunker?: boolean;
-  /** This attacker's warhead leveled the city */
-  leveled?: boolean;
-  /** How the Invisible Force squad fared: it took the city, turned back, or found nothing */
-  raid?: 'captured' | 'repelled' | 'empty';
-  /** What turned the squad back */
-  raidCover?: 'laser' | 'shield' | 'bunker';
-  /** A magnetic bomb had darkened this nation's lasers before the hit */
-  laserDown?: boolean;
-}
-
-/** One attacker's whole volley — every missile flies in the same panel. */
-interface StrikeShow {
-  from: NationId;
-  targets: StrikeTarget[];
-}
-
-const STRIKE_FLIGHT_MS = 1750;
-const STRIKE_IMPACT_MS = 1600;
-/** How far along its run a swarm gets before the lasers catch it */
-const LASER_INTERCEPT_AT = 0.6;
-
-function isBallisticWeapon(weapon: StrikeWeapon | undefined): boolean {
-  return weapon !== 'drone' && weapon !== 'commando';
-}
-
-function craftArt(weapon: StrikeWeapon): string {
-  if (weapon === 'commando') return ART.heli;
-  if (weapon === 'drone') return ART.drone;
-  if (weapon === 'hydrogen') return ART.missileHydrogen;
-  if (weapon === 'magnetic') return ART.missileMagnetic;
-  return ART.missile;
-}
-
-function boomArt(weapon: StrikeWeapon): string {
-  if (weapon === 'hydrogen') return ART.explosionHydrogen;
-  if (weapon === 'magnetic') return ART.explosionMagnetic;
-  return ART.explosion;
-}
-
-function cinemaCaption(target: StrikeTarget, impacted: boolean): string | null {
-  const warhead = target.weapons.some(isBallisticWeapon);
-  const swarm = target.weapons.includes('drone');
-  const escorted = swarm && warhead;
-  if (target.weapons.includes('commando')) {
-    const opened = swarm || warhead;
-    if (!impacted) {
-      if (target.hadBunker && target.weapons.includes('hydrogen')) return 'Hydrogen opens the bunker — squad inbound';
-      if (target.hadBunker) return 'Underground bunker';
-      if (target.hadShield && opened) return 'Shielded — squad follows the opening';
-      if (target.hadShield) return 'City shield';
-      return 'Invisible Force inbound';
-    }
-    if (target.raid === 'captured') {
-      if (target.hadBunker) return 'Bunker breached — city taken over';
-      if (target.hadShield && swarm) return 'Shield tied up — city taken over';
-      if (target.hadShield) return 'Shield stripped — city taken over';
-      if (target.laserDown) return 'Lasers dark — city taken over';
-      return 'City taken over';
-    }
-    if (target.raid === 'repelled') {
-      if (target.raidCover === 'laser') return 'Lasers shot the helicopters down';
-      if (target.raidCover === 'bunker') return 'Bunker sealed — squad turned back';
-      return 'Shield held — squad turned back';
-    }
-    return 'Nothing left to take';
-  }
-  if (!impacted) {
-    if (target.hadBunker) return 'Underground bunker';
-    if (target.hadShield && escorted && target.laserDown) {
-      return 'Shield and laser — magnetic bomb inbound';
-    }
-    if (target.hadShield && escorted) return 'Shielded — swarm and warhead inbound';
-    if (target.hadShield) return 'City shield';
-    if (target.weapons.includes('hydrogen')) return 'Hydrogen warhead';
-    if (target.weapons.includes('magnetic')) return 'Magnetic EMP';
-    if (target.lasered) return 'Lasers tracking the swarm';
-    if (swarm) return 'Drone swarm';
-    return null;
-  }
-  if (target.absorbed) return 'Bunker held — no damage';
-  if (target.leveled && target.hadBunker) return 'Bunker cracked — city in rubble';
-  if (target.leveled && escorted && target.laserDown) {
-    return 'Laser down, swarm through — city in rubble';
-  }
-  if (target.leveled && escorted) return 'Swarm tied up the shield — city in rubble';
-  if (target.leveled && target.hadShield) return 'Shield failed — city in rubble';
-  if (target.hadShield && !target.leveled && warhead) return 'Shield shattered';
-  if (target.leveled) return 'City in rubble';
-  if (target.lasered) return 'Lasers shot the swarm down';
-  if (swarm) {
-    return warhead ? 'Shield swarmed' : `−$${target.droneBill ?? DRONE_DAMAGE}M damages`;
-  }
-  return null;
-}
-
-function strikeTitle(flightPlan: { weapon: StrikeWeapon }[], targetCount: number): string {
-  const nukes = flightPlan.filter((f) => f.weapon === 'nuke' || !f.weapon).length;
-  const hydro = flightPlan.filter((f) => f.weapon === 'hydrogen').length;
-  const mag = flightPlan.filter((f) => f.weapon === 'magnetic').length;
-  const drones = flightPlan.filter((f) => f.weapon === 'drone').length;
-  const squads = flightPlan.filter((f) => f.weapon === 'commando').length;
-  const warheads = nukes + hydro + mag;
-  if (squads > 0 && warheads === 0 && drones === 0) {
-    return squads > 1 ? `INVISIBLE FORCE — ${squads} SQUADS` : 'INVISIBLE FORCE';
-  }
-  if (squads > 0) return 'INVISIBLE FORCE — COMBINED ARMS';
-  if (warheads === 0) {
-    return drones > 1 ? `DRONE SWARMS — ${drones} PACKS` : 'DRONE SWARM';
-  }
-  const kinds: string[] = [];
-  if (hydro) kinds.push(hydro > 1 ? `${hydro} HYDROGEN` : 'HYDROGEN');
-  if (mag) kinds.push(mag > 1 ? `${mag} MAGNETIC` : 'MAGNETIC');
-  if (nukes) kinds.push(nukes > 1 ? `${nukes} NUCLEAR` : 'NUCLEAR');
-  const head =
-    kinds.length === 1
-      ? `${kinds[0].replace(/^\d+\s/, '')} LAUNCH`
-      : `MIXED WARHEADS — ${kinds.join(' · ')}`;
-  if (drones > 0) return `${head} — DRONES ESCORT`;
-  if (targetCount > 1 && kinds.length === 1) return `${head} — ${targetCount} MISSILES`;
-  return head;
-}
-
-/** One operator on the rope: helmet, night-vision goggles and kit, in silhouette. */
-function CommandoFigure() {
-  return (
-    <svg viewBox="0 0 20 40" width="20" height="40" focusable="false">
-      <path d="M6 12h8l2 9-1.5 7h-2.2L12 40H8l-.3-12H5.5L4 21z" fill="#10151f" stroke="#2b3647" strokeWidth="0.8" />
-      <rect x="5" y="19" width="10" height="3" rx="1" fill="#1b2433" />
-      <circle cx="10" cy="7" r="4.6" fill="#10151f" stroke="#2b3647" strokeWidth="0.8" />
-      <rect x="6.3" y="5.6" width="7.4" height="2.6" rx="1.1" fill="#59ff8a" opacity="0.95" />
-      <path d="M5 13l-2.6 8" stroke="#10151f" strokeWidth="2.4" strokeLinecap="round" />
-      <path d="M15 13l2.2 7" stroke="#10151f" strokeWidth="2.4" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function StrikeCinema({
-  state,
-  strike,
-  onComplete,
-}: {
-  state: GameState;
-  strike: StrikeShow;
-  onComplete: () => void;
-}) {
-  const flightRef = useRef<HTMLDivElement>(null);
-  const launcherRef = useRef<HTMLImageElement>(null);
-  const cityRefs = useRef<(HTMLImageElement | null)[]>([]);
-  const missileRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const pathRefs = useRef<(SVGPathElement | null)[]>([]);
-  const [booms, setBooms] = useState<
-    ({
-      x: number;
-      y: number;
-      weapon: StrikeWeapon;
-      absorbed?: boolean;
-      shieldBreak?: boolean;
-      leveled?: boolean;
-    } | null)[]
-  >([]);
-  /** Where a laser caught a swarm, and the beam that did it */
-  const [zaps, setZaps] = useState<
-    { x: number; y: number; beamX: number; beamY: number; length: number; angle: number }[]
-  >([]);
-  /** The helicopter has arrived over the city and the team is on the ropes */
-  const [raidLanded, setRaidLanded] = useState(false);
-  /** The team is on the ground: the city changes hands, or the squad pulls out */
-  const [raidDone, setRaidDone] = useState(false);
-  const onCompleteRef = useRef(onComplete);
-  onCompleteRef.current = onComplete;
-  const strikeRef = useRef(strike);
-  strikeRef.current = strike;
-
-  const volleyKey = `${strike.from}:${strike.targets
-    .map((t) => `${t.cityId}/${t.weapons.join('+')}`)
-    .join(',')}`;
-  const count = strike.targets.length;
-  const flightPlan = strike.targets.flatMap((target, targetIndex) =>
-    target.weapons.map((weapon) => ({
-      targetIndex,
-      weapon,
-      intercepted:
-        (weapon === 'drone' && Boolean(target.lasered)) ||
-        (weapon === 'commando' && target.raid === 'repelled' && target.raidCover === 'laser'),
-      absorbed: isBallisticWeapon(weapon) && Boolean(target.absorbed),
-      shieldBreak:
-        isBallisticWeapon(weapon) &&
-        // A hydrogen bomb that opens the way for a squad tears the cover off without razing it
-        (Boolean(target.hadShield) ||
-          (target.weapons.includes('commando') && Boolean(target.hadBunker))) &&
-        !target.leveled &&
-        !target.absorbed,
-      leveled: isBallisticWeapon(weapon) && Boolean(target.leveled),
-    })),
-  );
-  const title = strikeTitle(flightPlan, count);
-
-  const planRef = useRef(flightPlan);
-  planRef.current = flightPlan;
-  const hasRaid = flightPlan.some((leg) => leg.weapon === 'commando');
-  const impactMs = STRIKE_IMPACT_MS + (hasRaid ? RAID_CINEMA_EXTRA_MS : 0);
-  const impactMsRef = useRef(impactMs);
-  impactMsRef.current = impactMs;
-
-  useEffect(() => {
-    const plan = planRef.current;
-    setBooms([]);
-    setZaps([]);
-    setRaidLanded(false);
-    setRaidDone(false);
-    playSfx(SFX.launch, 0.9);
-    let raidTimer = 0;
-    let leaveTimer = 0;
-    let raf = 0;
-    let startTimer = 0;
-    let fallbackTimer = 0;
-    let frameTimer = 0;
-    let impactTimer = 0;
-    let safetyTimer = 0;
-    let finished = false;
-    // Mobile webviews routinely starve requestAnimationFrame, which used to
-    // leave the missile parked at opacity 0. Fall back to a timer so the
-    // strike always plays.
-    let sawFrame = false;
-    let usingTimer = false;
-
-    const finish = () => {
-      if (finished) return;
-      finished = true;
-      onCompleteRef.current();
-    };
-
-    // Absolute failsafe so a turn can never hang forever
-    safetyTimer = window.setTimeout(finish, STRIKE_FLIGHT_MS + impactMsRef.current + 800);
-
-    const start = () => {
-      const layer = flightRef.current;
-      const launcher = launcherRef.current;
-      // Every craft that actually rendered flies to the card of its own city
-      const flights = plan
-        .map((leg, i) => ({
-          missile: missileRefs.current[i],
-          city: cityRefs.current[leg.targetIndex],
-          path: pathRefs.current[i],
-          targetIndex: leg.targetIndex,
-          weapon: leg.weapon,
-          intercepted: leg.intercepted,
-          absorbed: leg.absorbed,
-          shieldBreak: leg.shieldBreak,
-          leveled: leg.leveled,
-        }))
-        .filter((f) => f.missile && f.city);
-      if (!layer || !launcher || flights.length === 0) {
-        impactTimer = window.setTimeout(finish, STRIKE_FLIGHT_MS + impactMsRef.current);
-        return;
-      }
-
-      // Fly between the real elements so each warhead lands on its city.
-      // The panel is mid enter-pop, so undo its scale to get layout pixels.
-      const layerBox = layer.getBoundingClientRect();
-      const scale = layer.offsetWidth ? layerBox.width / layer.offsetWidth : 1;
-      const center = (box: DOMRect) => ({
-        x: (box.left + box.width / 2 - layerBox.left) / scale,
-        y: (box.top + box.height / 2 - layerBox.top) / scale,
-      });
-      const p0 = center(launcher.getBoundingClientRect());
-
-      const arcs = flights.map((flight, i) => {
-        const cityBox = flight.city!.getBoundingClientRect();
-        const p2 = center(cityBox);
-        // The helicopter hovers over the rooftops rather than diving into them
-        if (flight.weapon === 'commando') p2.y -= (cityBox.height / scale) * 0.46;
-        const dx = p2.x - p0.x;
-        const dy = p2.y - p0.y;
-        // Fan the volley out so overlapping trails stay readable
-        const spread = flights.length > 1 ? 0.3 + (i / (flights.length - 1)) * 0.34 : 0.42;
-        const p1 =
-          Math.abs(dx) >= Math.abs(dy)
-            ? { x: (p0.x + p2.x) / 2, y: Math.min(p0.y, p2.y) - Math.abs(dx) * spread }
-            : { x: Math.max(p0.x, p2.x) + Math.abs(dy) * spread, y: (p0.y + p2.y) / 2 };
-        flight.path?.setAttribute('d', `M ${p0.x} ${p0.y} Q ${p1.x} ${p1.y} ${p2.x} ${p2.y}`);
-        return { ...flight, p1, p2 };
-      });
-
-      const t0 = performance.now();
-      const shotDown = new Set<number>();
-      const tick = (now: number) => {
-        if (finished) return;
-        sawFrame = true;
-        const u = Math.min(1, (now - t0) / STRIKE_FLIGHT_MS);
-        for (let i = 0; i < arcs.length; i += 1) {
-          const arc = arcs[i];
-          const el = arc.missile!;
-          // A swarm the lasers will catch stops short of the skyline
-          const stop = arc.intercepted ? LASER_INTERCEPT_AT : 1;
-          const capped = Math.min(u, stop);
-          const t = capped * capped * (3 - 2 * capped);
-          const omt = 1 - t;
-          const x = omt * omt * p0.x + 2 * omt * t * arc.p1.x + t * t * arc.p2.x;
-          const y = omt * omt * p0.y + 2 * omt * t * arc.p1.y + t * t * arc.p2.y;
-          const vx = 2 * omt * (arc.p1.x - p0.x) + 2 * t * (arc.p2.x - arc.p1.x);
-          const vy = 2 * omt * (arc.p1.y - p0.y) + 2 * t * (arc.p2.y - arc.p1.y);
-          // A warhead noses over onto its target; a quadcopter stays level
-          const level = arc.weapon === 'drone' || arc.weapon === 'commando';
-          const angle = level ? 0 : (Math.atan2(vy, vx) * 180) / Math.PI;
-          el.style.left = `${x}px`;
-          el.style.top = `${y}px`;
-          if (arc.weapon === 'commando') {
-            // Nose into the direction of travel, slightly tipped forward while it flies
-            const face = arc.p2.x < p0.x ? -1 : 1;
-            el.style.transform = `translate(-50%, -50%) scale(${face * (1 - t * 0.1)}, ${1 - t * 0.1}) rotate(${(1 - t) * 5}deg)`;
-          } else {
-            // Shrinks as it dives so it reads as falling onto the city
-            el.style.transform = `translate(-50%, -50%) rotate(${angle}deg) scale(${1 - t * 0.35})`;
-          }
-          el.style.opacity = u < 0.04 ? String(u / 0.04) : '1';
-
-          if (arc.intercepted && u >= stop && !shotDown.has(i)) {
-            shotDown.add(i);
-            el.style.opacity = '0';
-            // Beam runs from the defended city out to the doomed swarm
-            const dx = x - arc.p2.x;
-            const dy = y - arc.p2.y;
-            playSfx(SFX.explosion, 0.28, 2.6);
-            setZaps((prev) => [
-              ...prev,
-              {
-                x,
-                y,
-                beamX: arc.p2.x,
-                beamY: arc.p2.y,
-                length: Math.hypot(dx, dy),
-                angle: (Math.atan2(dy, dx) * 180) / Math.PI,
-              },
-            ]);
-          }
-        }
-
-        if (u < 1) {
-          if (!usingTimer) raf = requestAnimationFrame(tick);
-        } else {
-          window.clearInterval(frameTimer);
-          // Whole volley lands together, so one panel covers every target
-          const impacts: ({
-            x: number;
-            y: number;
-            weapon: StrikeWeapon;
-            absorbed?: boolean;
-            shieldBreak?: boolean;
-            leveled?: boolean;
-          } | null)[] = strikeRef.current.targets.map(() => null);
-          for (const arc of arcs) {
-            // A swarm the lasers burnt never reaches the city, so nothing lands
-            if (arc.intercepted) continue;
-            // The squad hovers and rappels; it leaves no crater
-            if (arc.weapon === 'commando') continue;
-            const landed = impacts[arc.targetIndex];
-            // A warhead outshines any swarm sharing the same city
-            if (landed && isBallisticWeapon(landed.weapon)) continue;
-            const doomed = Boolean(strikeRef.current.targets[arc.targetIndex]?.leveled);
-            impacts[arc.targetIndex] = {
-              ...arc.p2,
-              weapon: arc.weapon,
-              absorbed: arc.absorbed && !doomed,
-              shieldBreak: arc.shieldBreak && !doomed,
-              leveled: arc.leveled || doomed,
-            };
-          }
-          // A warhead that broke on rock gets a low, smothered thud rather than
-          // the airburst — the blast went into the ground, not the skyline.
-          // A shield that stops the shot cracks instead of burning the skyline.
-          const anyBlast = impacts.some(
-            (i) => i && isBallisticWeapon(i.weapon) && !i.absorbed && !i.shieldBreak,
-          );
-          const anyShield = impacts.some((i) => i?.shieldBreak);
-          const anyRock = impacts.some((i) => i && isBallisticWeapon(i.weapon) && i.absorbed);
-          const anyMagnetic = impacts.some((i) => i?.weapon === 'magnetic' && !i.absorbed);
-          const anyHydrogen = impacts.some((i) => i?.weapon === 'hydrogen' && !i.absorbed);
-          const anyImpact = impacts.some(Boolean);
-          if (anyHydrogen) playSfx(SFX.explosion, 1, 0.78);
-          else if (anyMagnetic) playSfx(SFX.explosion, 0.85, 1.55);
-          else if (anyBlast) playSfx(SFX.explosion, 0.95);
-          else if (anyShield) playSfx(SFX.explosion, 0.65, 1.35);
-          else if (anyRock) playSfx(SFX.explosion, 0.5, 0.6);
-          else if (anyImpact) playSfx(SFX.explosion, 0.3, 2.1);
-          setBooms(impacts);
-          // Helicopters stay on station while the team goes down the ropes
-          const hovering = arcs.filter((arc) => arc.weapon === 'commando' && !arc.intercepted);
-          for (const arc of arcs) {
-            if (!hovering.includes(arc)) arc.missile!.style.opacity = '0';
-          }
-          // A squad shot down still ends its leg: the caption reports what happened
-          if (arcs.some((arc) => arc.weapon === 'commando')) setRaidLanded(true);
-          if (hovering.length > 0) {
-            playSfx(SFX.launch, 0.4, 0.55);
-            raidTimer = window.setTimeout(() => setRaidDone(true), 1500);
-            // Job done (or turned back): the helicopters climb away
-            leaveTimer = window.setTimeout(() => {
-              for (const arc of hovering) {
-                const el = arc.missile!;
-                el.style.transition = 'top 0.7s ease-in, left 0.7s ease-in, opacity 0.6s ease-in';
-                el.style.top = `${arc.p2.y - 70}px`;
-                el.style.left = `${arc.p2.x + (arc.p2.x < p0.x ? -150 : 150)}px`;
-                el.style.opacity = '0';
-              }
-            }, 1950);
-          }
-          impactTimer = window.setTimeout(finish, impactMsRef.current);
-        }
-      };
-
-      raf = requestAnimationFrame(tick);
-      fallbackTimer = window.setTimeout(() => {
-        if (finished || sawFrame) return;
-        usingTimer = true;
-        cancelAnimationFrame(raf);
-        frameTimer = window.setInterval(() => tick(performance.now()), 33);
-      }, 250);
-    };
-
-    // Timer, not rAF: the panel must start flying even in a frame-starved view
-    startTimer = window.setTimeout(start, 32);
-
-    return () => {
-      finished = true;
-      cancelAnimationFrame(raf);
-      window.clearTimeout(startTimer);
-      window.clearTimeout(fallbackTimer);
-      window.clearInterval(frameTimer);
-      window.clearTimeout(impactTimer);
-      window.clearTimeout(safetyTimer);
-      window.clearTimeout(raidTimer);
-      window.clearTimeout(leaveTimer);
-    };
-  }, [volleyKey]);
-
-  const from = nationDef(strike.from);
-
-  return (
-    <div className="strike-cinema" role="dialog" aria-modal="true" aria-label="Nuclear strike">
-      <div className="strike-cinema__veil" />
-      <div className="strike-cinema__panel enter-pop">
-        <header className="strike-cinema__title">{title}</header>
-
-        <div className={`strike-cinema__row${count > 2 ? ' strike-cinema__row--volley' : ''}`}>
-          <div className="strike-cinema__side strike-cinema__side--from">
-            <div className="strike-cinema__flag">DEPARTING</div>
-            <img
-              ref={launcherRef}
-              className="strike-cinema__leader"
-              src={leaderArt(state, strike.from)}
-              alt=""
-            />
-            <strong>{from.name}</strong>
-            <span>{from.leader}</span>
-          </div>
-
-          <div
-            className={`strike-cinema__side strike-cinema__side--to${
-              count > 1 ? ' strike-cinema__side--many' : ''
-            }`}
-          >
-            <div className="strike-cinema__flag strike-cinema__flag--danger">
-              {count > 1 ? 'TARGETS' : 'TARGET'}
-            </div>
-            <div className="strike-cinema__targets">
-              {strike.targets.map((target, i) => {
-                const to = nationDef(target.to);
-                const impact = booms[i];
-                const ballistic = Boolean(impact && isBallisticWeapon(impact.weapon));
-                const showBunker = Boolean(target.hadBunker);
-                const ruined = Boolean(impact && target.leveled);
-                const shieldOnly = Boolean(impact && target.hadShield && impact.shieldBreak && !ruined);
-                const shieldShattered = Boolean(impact && target.hadShield && (shieldOnly || ruined));
-                const raidTarget = target.weapons.includes('commando');
-                const raidIntercepted = raidTarget && target.raid === 'repelled' && target.raidCover === 'laser';
-                const raidOn = raidTarget && raidLanded && !raidIntercepted;
-                const taken = raidOn && raidDone && target.raid === 'captured';
-                const turnedBack =
-                  raidOn && target.raid === 'repelled' && (target.raidCover === 'shield' || target.raidCover === 'bunker');
-                const artClass = [
-                  'strike-cinema__target-art',
-                  showBunker ? 'is-bunker' : '',
-                  shieldOnly ? 'is-shield-break' : '',
-                  impact?.absorbed && !ruined ? 'is-absorbed' : '',
-                  ruined ? 'is-rubble' : '',
-                  ruined && (impact?.weapon === 'hydrogen' || target.weapons.includes('hydrogen'))
-                    ? 'is-fusion'
-                    : '',
-                  ruined && impact?.weapon === 'magnetic' && !target.weapons.includes('hydrogen')
-                    ? 'is-emp'
-                    : '',
-                  ruined &&
-                  impact?.weapon !== 'hydrogen' &&
-                  impact?.weapon !== 'magnetic' &&
-                  !target.weapons.includes('hydrogen')
-                    ? 'is-burning'
-                    : '',
-                  impact && !ballistic && !ruined ? 'is-rattled' : '',
-                  raidOn ? 'is-raided' : '',
-                  taken ? 'is-taken' : '',
-                  turnedBack && target.raidCover === 'shield' ? 'is-raid-bounce' : '',
-                  turnedBack && target.raidCover === 'bunker' ? 'is-absorbed' : '',
-                ]
-                  .filter(Boolean)
-                  .join(' ');
-                const landed = Boolean(impact) || (raidTarget && raidLanded);
-                const caption = cinemaCaption(target, landed);
-                return (
-                  <div className="strike-cinema__target" key={`${target.to}-${target.cityId}`}>
-                    <div className={artClass}>
-                      <img
-                        ref={(el) => {
-                          cityRefs.current[i] = el;
-                        }}
-                        className="strike-cinema__city"
-                        src={
-                          showBunker
-                            ? ART.citiesUnderground[target.cityId]
-                            : ART.cities[target.cityId]
-                        }
-                        alt=""
-                      />
-                      {showBunker && (
-                        <span className="strike-cinema__bunker">Bunker</span>
-                      )}
-                      {target.hadShield && (
-                        <span
-                          className={`strike-cinema__dome${shieldShattered ? ' is-shattered' : ''}`}
-                          aria-hidden
-                        />
-                      )}
-                      {shieldShattered && (
-                        <span className="strike-cinema__shards" aria-hidden>
-                          {[0, 1, 2, 3, 4, 5].map((n) => (
-                            <i key={n} />
-                          ))}
-                        </span>
-                      )}
-                      <img
-                        className={`strike-cinema__leader-sm${taken ? ' is-swapped' : ''}`}
-                        src={leaderArt(state, taken ? strike.from : target.to)}
-                        alt=""
-                      />
-                      {raidOn && target.raid === 'captured' && (
-                        <span className="strike-cinema__raid" aria-hidden>
-                          <i className="strike-cinema__rope strike-cinema__rope--a" />
-                          <i className="strike-cinema__rope strike-cinema__rope--b" />
-                          <i className="strike-cinema__rope strike-cinema__rope--c" />
-                          {[0, 1, 2].map((n) => (
-                            <b key={n} className={`strike-cinema__operator strike-cinema__operator--${n}`}>
-                              <CommandoFigure />
-                            </b>
-                          ))}
-                        </span>
-                      )}
-                      {raidOn && <span className="strike-cinema__wash" aria-hidden />}
-                      {taken && (
-                        <span
-                          className="strike-cinema__takeover"
-                          style={{ backgroundImage: `url(${ART.flags[strike.from]})` }}
-                          aria-hidden
-                        />
-                      )}
-                      {turnedBack && (
-                        <span className="strike-cinema__blocked" aria-hidden>
-                          ✕
-                        </span>
-                      )}
-                      {ruined &&
-                        (impact?.weapon === 'magnetic' && !target.weapons.includes('hydrogen') ? (
-                          <span className="strike-cinema__emp" aria-hidden />
-                        ) : (
-                          <span className="strike-cinema__fire" aria-hidden />
-                        ))}
-                      {ruined && <span className="strike-cinema__ash" aria-hidden />}
-                      {ruined && <span className="strike-cinema__ruin" aria-hidden />}
-                      {ballistic && impact?.absorbed && (
-                        <span className="strike-cinema__rubble" aria-hidden />
-                      )}
-                      {impact?.weapon === 'drone' && (
-                        <span className="strike-cinema__dust" aria-hidden />
-                      )}
-                    </div>
-                    <strong>{to.name}</strong>
-                    <span>{target.cityName}</span>
-                    {caption && <span className="strike-cinema__tag">{caption}</span>}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Spans the whole row so the flight paths can cross between the cards */}
-          <div ref={flightRef} className="strike-cinema__flight" aria-hidden>
-            <svg className="strike-cinema__path">
-              {flightPlan.map((leg, i) => (
-                <path
-                  key={`leg-${i}-path`}
-                  className={
-                    leg.weapon === 'drone'
-                      ? 'is-drone'
-                      : leg.weapon === 'commando'
-                        ? 'is-heli'
-                        : leg.weapon === 'hydrogen'
-                        ? 'is-hydrogen'
-                        : leg.weapon === 'magnetic'
-                          ? 'is-magnetic'
-                          : undefined
-                  }
-                  ref={(el) => {
-                    pathRefs.current[i] = el;
-                  }}
-                  d=""
-                />
-              ))}
-            </svg>
-            {flightPlan.map((leg, i) => (
-              <div
-                key={`leg-${i}-craft`}
-                ref={(el) => {
-                  missileRefs.current[i] = el;
-                }}
-                className={`strike-cinema__missile${
-                  leg.weapon === 'drone'
-                    ? ' strike-cinema__missile--drone'
-                    : leg.weapon === 'commando'
-                      ? ` strike-cinema__missile--heli${raidLanded && !leg.intercepted ? ' is-hover' : ''}`
-                      : leg.weapon === 'hydrogen'
-                      ? ' strike-cinema__missile--hydrogen'
-                      : leg.weapon === 'magnetic'
-                        ? ' strike-cinema__missile--magnetic'
-                        : ''
-                }`}
-              >
-                <img src={craftArt(leg.weapon)} alt="" draggable={false} />
-                {isBallisticWeapon(leg.weapon) && (
-                  <span
-                    className={`strike-cinema__flame${
-                      leg.weapon === 'hydrogen'
-                        ? ' strike-cinema__flame--hydrogen'
-                        : leg.weapon === 'magnetic'
-                          ? ' strike-cinema__flame--magnetic'
-                          : ''
-                    }`}
-                  />
-                )}
-              </div>
-            ))}
-            {zaps.map((zap, i) => (
-              <span
-                key={`beam-${i}`}
-                className="strike-cinema__laser"
-                style={{
-                  left: zap.beamX,
-                  top: zap.beamY,
-                  width: zap.length,
-                  transform: `rotate(${zap.angle}deg)`,
-                }}
-              >
-                <i />
-              </span>
-            ))}
-            {zaps.map((zap, i) => (
-              <div
-                key={`zap-${i}`}
-                className="strike-cinema__boom strike-cinema__boom--drone"
-                style={{ left: zap.x, top: zap.y }}
-              >
-                <span className="strike-cinema__pop" />
-                {[0, 1, 2, 3, 4, 5].map((n) => (
-                  <span key={n} className={`strike-cinema__spark spark-${n}`} />
-                ))}
-              </div>
-            ))}
-            {booms.map((boom, i) =>
-              boom ? (
-                <div
-                  key={`${strike.targets[i]?.cityId ?? i}-boom`}
-                  className={`strike-cinema__boom${
-                    boom.weapon === 'drone' ? ' strike-cinema__boom--drone' : ''
-                  }${boom.weapon === 'hydrogen' ? ' strike-cinema__boom--hydrogen' : ''}${
-                    boom.weapon === 'magnetic' ? ' strike-cinema__boom--magnetic' : ''
-                  }${boom.absorbed ? ' strike-cinema__boom--rock' : ''}${
-                    boom.shieldBreak ? ' strike-cinema__boom--shield' : ''
-                  }`}
-                  style={{ left: boom.x, top: boom.y }}
-                >
-                  {boom.shieldBreak && !strike.targets[i]?.leveled ? (
-                    <span className="strike-cinema__pop" />
-                  ) : boom.weapon === 'drone' || boom.absorbed ? (
-                    // No fireball on rock: a grey shock ring and flying debris
-                    <>
-                      <span className="strike-cinema__pop" />
-                      {[0, 1, 2, 3, 4, 5].map((n) => (
-                        <span key={n} className={`strike-cinema__spark spark-${n}`} />
-                      ))}
-                    </>
-                  ) : (
-                    <img src={boomArt(boom.weapon)} alt="" />
-                  )}
-                </div>
-              ) : null,
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -2022,14 +1302,11 @@ function StrikeTheater({
     };
 
     const play = async (strikes: PendingStrike[], events: RoundWorldEvent[]) => {
-      const volleyCount = groupStrikesByAttacker(strikes).length;
-      const raidVolleys = groupStrikesByAttacker(strikes).filter((v) =>
-        v.strikes.some((x) => x.weapon === 'commando'),
-      ).length;
       const runtimeMs =
-        volleyCount * (STRIKE_CINEMA_MS + 1_500) +
-        raidVolleys * RAID_CINEMA_EXTRA_MS +
-        (events.length > 0 ? RECAP_AUTO_MS : 0);
+        groupStrikesByAttacker(strikes).reduce(
+          (sum, v) => sum + volleyMovieMs(volleyWeapons(v.strikes).map((weapons) => ({ weapons }))),
+          0,
+        ) + (events.length > 0 ? RECAP_AUTO_MS : 0);
       // Re-arm the watchdog with the real runtime of this report
       window.clearTimeout(watchdog);
       watchdog = window.setTimeout(() => {
@@ -2039,26 +1316,7 @@ function StrikeTheater({
       }, runtimeMs + 6_000);
 
       try {
-        const volleys = groupStrikesByAttacker(strikes).slice().sort((a, b) => {
-          const rank = (volley: { attackerId: NationId; strikes: PendingStrike[] }) => {
-            let score = 0;
-            for (const strike of volley.strikes) {
-              const mine = events.filter(
-                (e) => e.attackerId === volley.attackerId && e.cityId === strike.cityId,
-              );
-              if (mine.some((e) => e.kind === 'cityDestroyed' || e.kind === 'cityCaptured')) {
-                score = Math.max(score, 2);
-              }
-              else if (
-                mine.some((e) => e.kind === 'shieldDestroyed' || e.kind === 'strikeAbsorbed')
-              ) {
-                score = Math.max(score, 1);
-              }
-            }
-            return score;
-          };
-          return rank(a) - rank(b);
-        });
+        const volleys = orderVolleysForFilm(groupStrikesByAttacker(strikes), events);
         for (const volley of volleys) {
           if (!alive()) break;
           const targets: StrikeTarget[] = [];
@@ -2117,8 +1375,11 @@ function StrikeTheater({
               : repelledBy
                 ? 'repelled'
                 : 'empty';
+            const takenEvent = mine.find((e) => e.kind === 'cityCaptured');
             targets.push({
               raid,
+              points: takenEvent?.points,
+              clean: takenEvent?.clean,
               raidCover: repelledBy?.cover,
               to: strike.targetNationId,
               cityId: strike.cityId,
@@ -2234,7 +1495,17 @@ function StrikeTheater({
           </div>
         </div>
       )}
-      {cinema && <StrikeCinema state={state} strike={cinema} onComplete={onCinemaComplete} />}
+      {cinema && (
+        <StrikeMovie
+          // One fresh projector per attacker: the next volley must start at its
+          // title card, not inherit the previous movie's finished state.
+          key={`${cinema.from}:${cinema.targets.map((t) => t.cityId).join(',')}`}
+          strike={cinema}
+          leaderSrc={(id) => leaderArt(state, id)}
+          sfx={playSfx}
+          onComplete={onCinemaComplete}
+        />
+      )}
       {recap && <StrikeRecap events={recap} state={state} onContinue={onRecapContinue} />}
     </>
   );
@@ -3713,6 +2984,23 @@ function GameBoard({
     };
   }, [targetConfirmKey, closeHumanTurn]);
 
+  // On a phone the strike dock sits over the enemy list. Its height changes with the
+  // weapon (the raid brief is four lines), so measure it and keep the list clear.
+  const strikeDockRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const panel = strikeDockRef.current;
+    const screen = panel?.closest<HTMLElement>('.screen');
+    if (!panel || !screen) return;
+    const apply = () => screen.style.setProperty('--dock-h', `${Math.ceil(panel.getBoundingClientRect().height)}px`);
+    apply();
+    const watcher = new ResizeObserver(apply);
+    watcher.observe(panel);
+    return () => {
+      watcher.disconnect();
+      screen.style.removeProperty('--dock-h');
+    };
+  }, [strikeSelectMode]);
+
   const selectedCityIds = forceSelectMode
     ? forceTargets.map((t) => t.cityId)
     : droneSelectMode
@@ -3797,7 +3085,7 @@ function GameBoard({
 
       {strikeSelectMode && (
         <div className="turn-wizard turn-wizard--dock" role="dialog" aria-modal="true">
-          <div className="turn-wizard__panel turn-wizard__panel--strike enter-pop">
+          <div ref={strikeDockRef} className="turn-wizard__panel turn-wizard__panel--strike enter-pop">
             <WizardNationHeader
               state={state}
               nationId={actorId}

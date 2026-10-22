@@ -71,6 +71,41 @@ export const ART = {
   drone: '/art/drone.webp',
   /** Black transport helicopter, side view — the Invisible Force's ride */
   heli: '/art/invisible-force-heli.webp',
+  /**
+   * Full-frame photoreal plates for the strike movie: one per city (intact and razed,
+   * same camera), plus one launch site and one airbase per nation. Flags are not baked in;
+   * the movie flies them on a pole.
+   */
+  moviePlate: {
+    city: (cityId: string) => `/art/city/${cityId}.webp`,
+    cityRuin: (cityId: string) => `/art/city/${cityId}-ruin.webp`,
+    /** The intact city with its flagpole bare: the flag has been taken down */
+    cityPole: (cityId: string) => `/art/city/${cityId}-pole.webp`,
+    launch: (nationId: NationId) => `/art/launch/${nationId}.webp`,
+    airfield: (nationId: NationId) => `/art/airfield/${nationId}.webp`,
+  },
+  /** Photoreal cut-outs and light effects for the strike movie (effects are on black: blend with screen) */
+  mv: {
+    heli: '/art/mv-real-heli.webp',
+    drone: '/art/mv-real-drone.webp',
+    /** Three photographed operators fast-roping, hands on the rope at the image's centre line */
+    commando: ['/art/mv-commando-a.webp', '/art/mv-commando-b.webp', '/art/mv-commando-c.webp'],
+    missile: {
+      nuke: '/art/mv-real-missile-nuke.webp',
+      hydrogen: '/art/mv-real-missile-hydrogen.webp',
+      magnetic: '/art/mv-real-missile-magnetic.webp',
+    },
+    fx: {
+      fireball: '/art/mv-fx-fireball.webp',
+      mushroom: '/art/mv-fx-mushroom.webp',
+      shield: '/art/mv-fx-shield.webp',
+      shieldBreak: '/art/mv-fx-shield-break.webp',
+      laser: '/art/mv-fx-laser.webp',
+      dust: '/art/mv-fx-dust.webp',
+      airburst: '/art/mv-fx-airburst.webp',
+      emp: '/art/mv-fx-emp.webp',
+    },
+  },
   explosion: '/art/explosion.webp',
   explosionHydrogen: '/art/explosion-hydrogen.webp',
   explosionMagnetic: '/art/explosion-magnetic.webp',

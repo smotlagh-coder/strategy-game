@@ -1738,9 +1738,21 @@ img { max-width: 100%; display: block; }
 
 .turn-wizard__panel--strike .turn-wizard__q,
 .turn-wizard__panel--strike .turn-wizard__hint,
+.turn-wizard__panel--strike .raid-hint {
+  grid-column: 2;
+}
+
+/* The picker, the picked cities and the buttons run the full width under the art */
+.turn-wizard__panel--strike .warhead-picker,
 .turn-wizard__panel--strike .target-label,
 .turn-wizard__panel--strike .turn-wizard__actions {
-  grid-column: 2;
+  grid-column: 1 / -1;
+}
+
+.turn-wizard__panel--strike .raid-hint {
+  max-width: none;
+  margin: -0.1rem 0 0.4rem;
+  text-align: left;
 }
 
 .turn-wizard__panel .modal__head {
@@ -2096,6 +2108,8 @@ img { max-width: 100%; display: block; }
 
   .turn-wizard__panel--strike .turn-wizard__q,
   .turn-wizard__panel--strike .turn-wizard__hint,
+  .turn-wizard__panel--strike .raid-hint,
+  .turn-wizard__panel--strike .warhead-picker,
   .turn-wizard__panel--strike .target-label,
   .turn-wizard__panel--strike .turn-wizard__actions {
     grid-column: 1;
@@ -5411,6 +5425,8 @@ img { max-width: 100%; display: block; }
 
   .turn-wizard--dock .turn-wizard__panel--strike .turn-wizard__q,
   .turn-wizard--dock .turn-wizard__panel--strike .turn-wizard__hint,
+  .turn-wizard--dock .turn-wizard__panel--strike .raid-hint,
+  .turn-wizard--dock .turn-wizard__panel--strike .warhead-picker,
   .turn-wizard--dock .turn-wizard__panel--strike .target-label,
   .turn-wizard--dock .turn-wizard__panel--strike .turn-wizard__actions {
     grid-column: 1;
@@ -5457,7 +5473,7 @@ img { max-width: 100%; display: block; }
 
   .screen--board.is-striking .board-right {
     border-bottom: none;
-    padding-bottom: calc(8.75rem + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(var(--dock-h, 8.75rem) + 1.1rem + env(safe-area-inset-bottom, 0px));
   }
 
   .screen--board.is-striking .board-right__nations {
@@ -9463,8 +9479,9 @@ button.cx-tile:not(.is-off):hover .cx-tile__orb { filter: brightness(1.25); }
 
 .city-tile__raid-lock {
   position: absolute;
+  /* Opposite corner to the drone marker, so a city hit by both shows both */
   bottom: 1.15rem;
-  left: 0;
+  right: 0;
   z-index: 5;
   display: grid;
   place-items: center;
@@ -9818,4 +9835,22 @@ button.cx-tile:not(.is-off):hover .cx-tile__orb { filter: brightness(1.25); }
   font-family: var(--stencil);
   font-size: 1.1rem;
   letter-spacing: 0.1em;
+}
+
+/* Strike dock buttons sit side by side at every width, so the dock stays short */
+.turn-wizard--dock .turn-wizard__panel--strike .turn-wizard__actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+.turn-wizard--dock .turn-wizard__panel--strike .turn-wizard__actions .btn--xl {
+  min-width: 0;
+  white-space: normal;
+  line-height: 1.15;
+  padding-inline: 0.6rem;
+}
+
+/* Phones: the dock is a short bottom sheet like the missile and drone ones */
+@media (max-width: 720px) {
+  .turn-wizard--dock .turn-wizard__panel--strike .raid-hint { display: none; }
 }

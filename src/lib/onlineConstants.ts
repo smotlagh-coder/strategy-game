@@ -14,12 +14,6 @@ export const DISCONNECT_MS = 20_000;
 /** Aftermath think time before next round / final results. */
 export const AFTERMATH_THINK_MS = 5_000;
 
-/** One launch cinema: missile flight, impact, and the cut away. */
-export const STRIKE_CINEMA_MS = 3_400;
-
-/** A volley with an Invisible Force squad plays longer: the helicopter hovers and drops the team. */
-export const RAID_CINEMA_EXTRA_MS = 1_500;
-
 /** Aftermath recap dismisses itself so nobody stalls the table. */
 export const RECAP_AUTO_MS = 6_000;
 
