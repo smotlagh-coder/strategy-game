@@ -38,6 +38,19 @@ export function pickFurtherState(a: GameState, b: GameState): GameState {
   return a;
 }
 
+/** Last-activity stamps only move forward: whichever side saw a commander more recently wins. */
+export function mergeLastActive(
+  remote?: Partial<Record<NationId, number>>,
+  local?: Partial<Record<NationId, number>>,
+): Partial<Record<NationId, number>> {
+  const out: Partial<Record<NationId, number>> = {};
+  for (const key of new Set([...Object.keys(remote ?? {}), ...Object.keys(local ?? {})])) {
+    const id = key as NationId;
+    out[id] = Math.max(remote?.[id] ?? 0, local?.[id] ?? 0);
+  }
+  return out;
+}
+
 /** Once ready in a round, stay ready — stale pushes must not clear it. */
 export function mergeHumanReadyFlags(
   remote?: Partial<Record<NationId, boolean>>,
@@ -451,14 +464,7 @@ export function applyRemoteGameSnapshot(
       ),
       pendingStrikes: [...otherStrikes, ...myStrikes],
       humanReady: ready,
-      humanLastActive: {
-        ...remote.humanLastActive,
-        ...prev.humanLastActive,
-        [myNationId]: Math.max(
-          remote.humanLastActive?.[myNationId] ?? 0,
-          prev.humanLastActive?.[myNationId] ?? 0,
-        ),
-      },
+      humanLastActive: mergeLastActive(remote.humanLastActive, prev.humanLastActive),
       aiPlanningComplete: Boolean(remote.aiPlanningComplete || prev.aiPlanningComplete),
     };
     if (!next.aiPlanningComplete) next = runOnlineAiPlanning(next);

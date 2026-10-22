@@ -64,11 +64,18 @@ export function isPlayerOnline(p: PlayerDoc, now = Date.now()): boolean {
   return now - p.lastSeen < ONLINE_MS && p.status !== 'offline';
 }
 
-/** Presence tick — does not merge planning or change phase. */
-export async function touchGameHeartbeat(gameId: string, nationId: NationId) {
+/**
+ * Presence tick — does not merge planning or change phase. `holding` marks a
+ * commander who is still watching the launch films or the briefing: their idle
+ * clock stays at zero until their own ordering window opens, however late the
+ * table moved on from the summary.
+ */
+export async function touchGameHeartbeat(gameId: string, nationId: NationId, holding = false) {
+  const now = Date.now();
   await updateDoc(doc(getDb(), 'games', gameId), {
-    [`state.humanHeartbeat.${nationId}`]: Date.now(),
-    updatedAt: Date.now(),
+    [`state.humanHeartbeat.${nationId}`]: now,
+    ...(holding ? { [`state.humanLastActive.${nationId}`]: now } : {}),
+    updatedAt: now,
   });
 }
 

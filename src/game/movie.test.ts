@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import type { PendingStrike } from '../types';
 import {
   arsenalOf,
   buildShots,
   cinemaCaption,
+  filterVolleysForViewer,
   outcomeLine,
   reconcileWithFilm,
   targetOutcome,
@@ -159,5 +161,30 @@ describe('the film razes a city before anything hits its rubble', () => {
     }
     expect(cinemaCaption(held, true)).toBe('Brazil took it first');
     expect(cinemaCaption(rubble, true)).toBe('City in rubble');
+  });
+});
+
+describe('whose battles the cinema films', () => {
+  const strike = (attackerId: string, targetNationId: string, cityId: string) =>
+    ({ attackerId, targetNationId, cityId, weapon: 'nuke' }) as unknown as PendingStrike;
+  const volley = (attackerId: string, strikes: PendingStrike[]) => ({ attackerId, strikes }) as any;
+  const volleys = [
+    volley('us', [strike('us', 'china', 'cn-1')]),
+    volley('russia', [strike('russia', 'uk', 'uk-1'), strike('russia', 'us', 'us-2')]),
+    volley('china', [strike('china', 'uk', 'uk-2')]),
+  ];
+
+  it('keeps my launches whole and only the strikes that land on my cities from others', () => {
+    const out = filterVolleysForViewer(volleys, ['us']);
+    expect(out.map((v: any) => v.attackerId)).toEqual(['us', 'russia']);
+    expect(out[1].strikes.map((s: PendingStrike) => s.cityId)).toEqual(['us-2']);
+  });
+
+  it('shows nothing when the round never touched me', () => {
+    expect(filterVolleysForViewer(volleys, ['brazil'])).toEqual([]);
+  });
+
+  it('films everything for spectators and the all-battles setting', () => {
+    expect(filterVolleysForViewer(volleys, null)).toBe(volleys);
   });
 });

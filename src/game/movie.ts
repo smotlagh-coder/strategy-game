@@ -334,6 +334,32 @@ export function volleyWeapons(
   return stops.map((s) => s.weapons);
 }
 
+/** Which launches the cinema films. */
+export type CinemaScope = 'mine' | 'all';
+
+/**
+ * Cuts a round's volleys down to what concerns the viewer: every volley they
+ * launched, and the strikes of anyone else that landed on their cities. A null
+ * viewer list (spectators, or the "all battles" setting) keeps everything.
+ */
+export function filterVolleysForViewer<V extends { attackerId: NationId; strikes: PendingStrike[] }>(
+  volleys: V[],
+  viewers: readonly NationId[] | null,
+): V[] {
+  if (!viewers) return volleys;
+  const mine = new Set(viewers);
+  const out: V[] = [];
+  for (const v of volleys) {
+    if (mine.has(v.attackerId)) {
+      out.push(v);
+      continue;
+    }
+    const strikes = v.strikes.filter((s) => mine.has(s.targetNationId));
+    if (strikes.length > 0) out.push({ ...v, strikes });
+  }
+  return out;
+}
+
 /**
  * Makes one volley's targets agree with what the film has already shown.
  * Volleys play in the round's own order, so a city can be razed in the true

@@ -9854,3 +9854,26 @@ button.cx-tile:not(.is-off):hover .cx-tile__orb { filter: brightness(1.25); }
 @media (max-width: 720px) {
   .turn-wizard--dock .turn-wizard__panel--strike .raid-hint { display: none; }
 }
+
+/* Which battles the launch cinema films: mine (default) or all */
+.cinema-scope {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(4, 12, 24, 0.72);
+  color: #c9d8ee;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+}
+.cinema-scope b { color: #f5c542; font-weight: 800; }
+.cinema-scope--float {
+  position: fixed;
+  right: max(0.6rem, env(safe-area-inset-right));
+  bottom: max(0.6rem, env(safe-area-inset-bottom));
+  z-index: 95;
+}

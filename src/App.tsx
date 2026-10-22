@@ -125,6 +125,8 @@ import StrikeMovie from './screens/StrikeMovie';
 import {
   craftArt,
   reconcileWithFilm,
+  filterVolleysForViewer,
+  type CinemaScope,
   volleyMovieMs,
   volleyWeapons,
   type StrikeShow,
@@ -240,6 +242,63 @@ function useMusicToggle() {
     window.dispatchEvent(new Event('nw-music'));
   };
   return [on, toggle] as const;
+}
+
+const CINEMA_PREF = 'nw-cinema';
+
+/** "mine" (the default) films only your launches and the strikes on your cities. */
+function cinemaScope(): CinemaScope {
+  try {
+    return localStorage.getItem(CINEMA_PREF) === 'all' ? 'all' : 'mine';
+  } catch {
+    return 'mine';
+  }
+}
+
+function useCinemaScope() {
+  const [scope, setScope] = useState<CinemaScope>(cinemaScope);
+  useEffect(() => {
+    const sync = () => setScope(cinemaScope());
+    window.addEventListener('nw-cinema', sync);
+    return () => window.removeEventListener('nw-cinema', sync);
+  }, []);
+  const toggle = () => {
+    const next: CinemaScope = cinemaScope() === 'mine' ? 'all' : 'mine';
+    try {
+      localStorage.setItem(CINEMA_PREF, next);
+    } catch {
+      /* private browsing */
+    }
+    setScope(next);
+    window.dispatchEvent(new Event('nw-cinema'));
+  };
+  return [scope, toggle] as const;
+}
+
+/** Which battles the launch cinema films from the next round on. */
+function CinemaScopeToggle({ className = '' }: { className?: string }) {
+  const [scope, toggle] = useCinemaScope();
+  return (
+    <button
+      type="button"
+      className={`cinema-scope ${className}`.trim()}
+      onClick={toggle}
+      title="Applies from the next round"
+      aria-label={`Battle films: ${scope === 'mine' ? 'my battles' : 'all battles'}. Tap to switch.`}
+    >
+      <span aria-hidden>🎬</span>
+      Battle films: <b>{scope === 'mine' ? 'My battles' : 'All battles'}</b>
+    </button>
+  );
+}
+
+/** The nations whose battles this client films, or null to film everyone's. */
+function viewerNationsFor(state: GameState, sessionUid?: string | null): NationId[] | null {
+  if (state.mode === 'online') {
+    const mine = sessionUid ? state.uidToNation?.[sessionUid] : null;
+    return mine ? [mine] : null;
+  }
+  return state.humanNations.length > 0 ? state.humanNations : null;
 }
 
 /** Original heroic title cue. Plays on the opening screens until the match begins. */
@@ -726,6 +785,7 @@ function RoundBriefingOverlay({
       aria-label={`Round ${briefing.round} briefing`}
     >
       <div className="round-banner__veil" />
+      <CinemaScopeToggle className="cinema-scope--float" />
       <div className="brief__fit" ref={fitRef}>
       <div className="round-banner__panel round-brief__panel enter-pop">
         <header className="brief__top">
@@ -1211,10 +1271,12 @@ function StrikeTheater({
   state,
   setState,
   job,
+  sessionUid,
 }: {
   state: GameState;
   setState: React.Dispatch<React.SetStateAction<GameState>>;
   job: StrikeJob;
+  sessionUid?: string | null;
 }) {
   const [cinema, setCinema] = useState<StrikeShow | null>(null);
   const [recap, setRecap] = useState<RoundWorldEvent[] | null>(null);
@@ -1223,6 +1285,8 @@ function StrikeTheater({
   const sessionRef = useRef(0);
   const stateRef = useRef(state);
   stateRef.current = state;
+  const sessionUidRef = useRef(sessionUid);
+  sessionUidRef.current = sessionUid;
   const finishRef = useRef(job.finish);
   finishRef.current = job.finish;
 
@@ -1301,9 +1365,13 @@ function StrikeTheater({
       recapResolve?.();
     };
 
-    const play = async (strikes: PendingStrike[], events: RoundWorldEvent[]) => {
+    const play = async (allStrikes: PendingStrike[], events: RoundWorldEvent[]) => {
+      // Default: film my launches and the strikes on my cities; the setting opens it up
+      const viewers = cinemaScope() === 'mine' ? viewerNationsFor(stateRef.current, sessionUidRef.current) : null;
+      const volleys = filterVolleysForViewer(groupStrikesByAttacker(allStrikes), viewers);
+      // "What happened" always covers the whole world; only the films are narrowed
       const runtimeMs =
-        groupStrikesByAttacker(strikes).reduce(
+        volleys.reduce(
           (sum, v) => sum + volleyMovieMs(volleyWeapons(v.strikes).map((weapons) => ({ weapons }))),
           0,
         ) + (events.length > 0 ? RECAP_AUTO_MS : 0);
@@ -1316,7 +1384,6 @@ function StrikeTheater({
       }, runtimeMs + 6_000);
 
       try {
-        const volleys = groupStrikesByAttacker(strikes);
         const razedOnScreen = new Set<string>();
         for (const volley of volleys) {
           if (!alive()) break;
@@ -1508,6 +1575,7 @@ function StrikeTheater({
           </div>
         </div>
       )}
+      {(cinema || recap) && <CinemaScopeToggle className="cinema-scope--float" />}
       {cinema && (
         <StrikeMovie
           // One fresh projector per attacker: the next volley must start at its
@@ -2521,6 +2589,9 @@ function GameBoard({
   // Presence: while my orders are open, tell the table I am still here. Peers use
   // this to move on without a commander whose tab closed or connection died.
   const iAmReady = Boolean(myNationId && state.humanReady?.[myNationId]);
+  // Still on the launch films or the briefing: the idle clock waits for my ordering window
+  const holdingRef = useRef(roundBriefingActive);
+  holdingRef.current = roundBriefingActive;
   useEffect(() => {
     if (!isOnline || !myNationId || !state.onlineGameId) return;
     if (state.phase !== 'buy' && state.phase !== 'action') return;
@@ -2528,7 +2599,7 @@ function GameBoard({
     const gameId = state.onlineGameId;
     const nation = myNationId;
     const beat = () => {
-      void touchGameHeartbeat(gameId, nation).catch(() => undefined);
+      void touchGameHeartbeat(gameId, nation, holdingRef.current).catch(() => undefined);
     };
     beat();
     const timer = window.setInterval(beat, HEARTBEAT_MS);
@@ -4330,6 +4401,7 @@ export default function App() {
         state={state}
         setState={setState}
         job={strikeJob}
+        sessionUid={sessionUid}
       />
       {state.phase === 'roundSummary' && !strikeTheaterBusy && (
         <RoundSummary

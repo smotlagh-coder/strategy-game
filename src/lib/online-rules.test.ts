@@ -9,7 +9,7 @@ import {
   lobbyCodeFromId,
   pickLobbyMatchGame,
 } from './lobbyInvite';
-import { phaseRank, pickFurtherState } from './onlineSync';
+import { mergeLastActive, phaseRank, pickFurtherState } from './onlineSync';
 import { assignNations, buildOnlineGameState } from './multiplayer';
 import { isHumanDisconnected } from '../game/engine';
 import type { GameState, NationId } from '../types';
@@ -162,5 +162,23 @@ describe('phaseRank / pickFurtherState', () => {
     expect(pickFurtherState(r1Resolve, r1Summary).phase).toBe('roundSummary');
     expect(pickFurtherState(r1Summary, r2Buy).round).toBe(2);
     expect(pickFurtherState(r2Buy, r2BuyAi).aiPlanningComplete).toBe(true);
+  });
+});
+
+describe('a commander who lands late still gets their ordering window', () => {
+  it('last-activity stamps only move forward', () => {
+    const merged = mergeLastActive({ us: 5_000, china: 1_000 }, { us: 2_000, china: 9_000, russia: 3_000 });
+    expect(merged).toEqual({ us: 5_000, china: 9_000, russia: 3_000 });
+  });
+
+  it('a commander refreshed while watching the films is not idle when their window opens', () => {
+    const s = buildOnlineGameState(assignNations(['a', 'b']), { a: 'A', b: 'B' }, 'late-1');
+    const id = s.humanNations[0];
+    const opened = 1_000_000;
+    // Round start was long ago, but the heartbeat kept refreshing the stamp until ordering began
+    const late = { ...s, humanLastActive: { ...s.humanLastActive, [id]: opened } };
+    expect(isHumanDisconnected(late, id, opened + SELECTION_IDLE_MS - 1)).toBe(false);
+    const stale = { ...s, humanLastActive: { ...s.humanLastActive, [id]: opened - 100_000 } };
+    expect(isHumanDisconnected(stale, id, opened)).toBe(true);
   });
 });
