@@ -98,14 +98,42 @@ describe('AI Heliborne', () => {
     expect(bought).toBe(true);
   });
 
-  it('keeps its money when nothing is open', () => {
+  it('keeps its money when only bunkers stand', () => {
     let rich = table({ commandos: 0, money: COSTS.commando + 400 });
     rich.nations.uk.cities.forEach((_, i) => {
-      rich = patchCity(rich, 'uk', i, { hasShield: true });
+      rich = patchCity(rich, 'uk', i, { isUnderground: true });
     });
     const s = runAiNationTurn(rich, 'us');
     expect(s.pendingStrikes.some((p) => p.weapon === 'commando')).toBe(false);
     expect(s.nations.us.commandosUsed ?? 0).toBe(0);
+  });
+
+  it('pays for a swarm to hold a shield down when that is the way into a city', () => {
+    let rich = table({ commandos: 0, money: COSTS.commando + COSTS.drone + 400 });
+    rich.nations.uk.cities.forEach((_, i) => {
+      rich = patchCity(rich, 'uk', i, { hasShield: true });
+    });
+    const s = runAiNationTurn(rich, 'us');
+    const raid = s.pendingStrikes.find((p) => p.weapon === 'commando');
+    expect(raid).toBeDefined();
+    expect(
+      s.pendingStrikes.some((p) => p.weapon === 'drone' && p.cityId === raid!.cityId),
+    ).toBe(true);
+  });
+
+  it('never fires a warhead at the city its squad is about to take', () => {
+    const rich = coverAllBut(
+      table({ commandos: 0, hasNuclearTech: true, nuclearTechUnlockedRound: 0, money: 400 }),
+      1,
+    );
+    const s = runAiNationTurn(rich, 'us');
+    const raid = s.pendingStrikes.find((p) => p.weapon === 'commando');
+    expect(raid).toBeDefined();
+    expect(
+      s.pendingStrikes.some(
+        (p) => p.cityId === raid!.cityId && p.weapon !== 'commando' && p.weapon !== 'drone',
+      ),
+    ).toBe(false);
   });
 
   it('a raid adds time to the cinema', () => {

@@ -30,6 +30,9 @@ export const ROUND_BANNER_MS = 3_000;
  */
 export const ROUND_BRIEFING_MS = 15_000;
 
+/** The lab-breakthrough scene shown once a nation's scientists finish a bomb. */
+export const INVENTION_OVERLAY_MS = 12_000;
+
 /**
  * The alliance desk that opens after each round briefing, before any ordering.
  * Everyone gets this long to make, answer or end pacts; purchasing starts after.

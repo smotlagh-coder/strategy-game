@@ -30,6 +30,7 @@ import {
   formatMoney,
   markHumanReady,
   totalWarheads,
+  warheadStock,
   commandoStock,
   needsOvertime,
   nextRound,
@@ -54,6 +55,8 @@ import {
   pactSlot,
 } from './game/alliance';
 import { runAllAiAlliances } from './game/allianceAi';
+import { INVENTION_INFO, inventionOfRound, isPrototypeKind } from './game/inventions';
+import InventionOverlay from './screens/InventionOverlay';
 import { runAllAiUntilHumanOrSummary, runAiTurn, runOnlineAiPlanning } from './game/ai';
 import { buildRoundBriefing, combatLedger } from './game/briefing';
 import type {
@@ -69,6 +72,7 @@ import type {
   GameMode,
   GameState,
   GameSyncEvent,
+  InventionKind,
   NationId,
   PendingStrike,
   RoundWorldEvent,
@@ -410,7 +414,7 @@ function RoundBannerOverlay({ round, onDone }: { round: number; onDone: () => vo
 const CITY_STATUS_LABEL: Record<BriefingCityStatus, string> = {
   quiet: 'Untouched',
   rebuilt: 'Rebuilt',
-  intercepted: 'Swarm shot down',
+  intercepted: 'Attack shot down',
   swarmed: 'Drone damage',
   shieldLost: 'Shield destroyed',
   absorbed: 'Bunker held',
@@ -461,6 +465,37 @@ function CombatExchange({
       </div>
     </div>
   );
+}
+
+/** Every warhead the strike dock can aim, in picker order; the labs' bombs only appear once invented. */
+const WARHEAD_KINDS: WarheadKind[] = ['nuke', 'hydrogen', 'magnetic', 'cluster', 'biological', 'chemical'];
+const WARHEAD_ART: Record<WarheadKind, string> = {
+  nuke: ART.missile,
+  hydrogen: ART.missileHydrogen,
+  magnetic: ART.missileMagnetic,
+  cluster: ART.missileCluster,
+  biological: ART.missileBiological,
+  chemical: ART.missileChemical,
+};
+const WARHEAD_LABEL: Record<WarheadKind, string> = {
+  nuke: 'Nuclear',
+  hydrogen: 'Hydrogen',
+  magnetic: 'Magnetic',
+  cluster: 'Cluster',
+  biological: 'Biological',
+  chemical: 'Chemical',
+};
+const WARHEAD_TAG: Record<WarheadKind, string> = {
+  nuke: 'N',
+  hydrogen: 'H',
+  magnetic: 'M',
+  cluster: 'C',
+  biological: 'B',
+  chemical: 'G',
+};
+/** What is in the magazine for each kind (bought and invented together). */
+function warheadStocks(n: Parameters<typeof warheadStock>[0]): Record<WarheadKind, number> {
+  return Object.fromEntries(WARHEAD_KINDS.map((k) => [k, warheadStock(n, k)])) as Record<WarheadKind, number>;
 }
 
 function cityStatusMark(status: BriefingCityStatus): { src: string; label: string } | null {
@@ -985,6 +1020,8 @@ const RECAP_WIN: Record<RecapWinKind, { icon: string; label: string }> = {
   taken: { icon: ART.cop.commando, label: 'Took over' },
   razed: { icon: ART.explosion, label: 'Razed' },
   drone: { icon: ART.drone, label: 'Drones hit' },
+  cluster: { icon: ART.missileCluster, label: 'Cluster bomb hit' },
+  guard: { icon: ART.drone, label: 'Drones guarded' },
   laser: { icon: ART.laserIcon, label: 'Lasers held' },
   shield: { icon: ART.shield, label: 'Shield held' },
   bunker: { icon: ART.cop.bunker, label: 'Bunker held' },
@@ -1304,7 +1341,7 @@ function StrikeTheater({
       setHolding(false);
       return;
     }
-    const t = window.setTimeout(() => setHolding(true), 1_200);
+    const t = window.setTimeout(() => setHolding(true), 350);
     return () => window.clearTimeout(t);
   }, [waitingOnReport]);
 
@@ -1377,15 +1414,15 @@ function StrikeTheater({
           const targets: StrikeTarget[] = [];
           for (const strike of volley.strikes) {
             const weapon: StrikeWeapon =
-              strike.weapon === 'drone'
-                ? 'drone'
-                : strike.weapon === 'commando'
-                  ? 'commando'
-                  : strike.weapon === 'hydrogen'
-                  ? 'hydrogen'
-                  : strike.weapon === 'magnetic'
-                    ? 'magnetic'
-                    : 'nuke';
+              strike.weapon === 'drone' ||
+              strike.weapon === 'commando' ||
+              strike.weapon === 'hydrogen' ||
+              strike.weapon === 'magnetic' ||
+              strike.weapon === 'cluster' ||
+              strike.weapon === 'biological' ||
+              strike.weapon === 'chemical'
+                ? strike.weapon
+                : 'nuke';
             const open = targets.find(
               (t) => t.to === strike.targetNationId && t.cityId === strike.cityId,
             );
@@ -1415,6 +1452,11 @@ function StrikeTheater({
                 e.attackerId === volley.attackerId,
             );
             const absorbed = mine.some((e) => e.kind === 'strikeAbsorbed');
+            // Defence drones met everything aimed at this city in the sky; a laser
+            // network shot the gas or the plague down
+            const defended = mine.some((e) => e.kind === 'strikeNeutralized');
+            const warheadShot = mine.some((e) => e.kind === 'warheadIntercepted');
+            const clusterBill = mine.find((e) => e.kind === 'droneDamage' && e.weapon === 'cluster')?.amount;
             const leveled = mine.some((e) => e.kind === 'cityDestroyed');
             const cover = mine.find((e) => e.cover)?.cover;
             const hadBunker =
@@ -1466,8 +1508,11 @@ function StrikeTheater({
               cityId: strike.cityId,
               cityName: city?.name ?? 'city',
               weapons: [weapon],
-              droneBill: lasered ? 0 : city ? droneDamageFor(city) : DRONE_DAMAGE,
+              droneBill:
+                clusterBill ?? (lasered ? 0 : city ? droneDamageFor(city) : DRONE_DAMAGE),
               lasered,
+              defended: defended || undefined,
+              warheadShot: warheadShot || undefined,
               absorbed,
               hadShield,
               hadBunker,
@@ -1515,7 +1560,9 @@ function StrikeTheater({
       if (strikes.length === 0 && events.length === 0) {
         // Start the countdown so the summary is never stuck waiting on a peer
         armClock();
-        if (waitedMs >= REPORT_WAIT_MS) {
+        // Offline the whole report is already on the table: a quiet round has
+        // nothing to film or wait for, so go straight on to the summary
+        if (stateRef.current.mode !== 'online' || waitedMs >= REPORT_WAIT_MS) {
           // Peaceful round (or report never came) — don't block forever
           complete();
           return;
@@ -1558,8 +1605,17 @@ function StrikeTheater({
         <div className="strike-cinema strike-cinema--hold" role="status" aria-live="polite">
           <div className="strike-cinema__veil" />
           <div className="strike-cinema__panel strike-cinema__panel--hold enter-pop">
-            <header className="strike-cinema__title">INCOMING</header>
-            <p className="strike-cinema__hold-copy">Tracking launches…</p>
+            <div className="strike-cinema__radar" aria-hidden>
+              <i />
+              <i />
+              <i />
+            </div>
+            <header className="strike-cinema__title">
+              {launchesOnRecord ? 'INCOMING' : 'REPORTS'}
+            </header>
+            <p className="strike-cinema__hold-copy">
+              {launchesOnRecord ? 'Tracking launches…' : 'Gathering the round’s reports…'}
+            </p>
           </div>
         </div>
       )}
@@ -1879,8 +1935,14 @@ function NationPod({
               selectionWeapon !== 'drone' &&
               selectionWeapon !== 'commando' &&
               selectionWeapon !== 'hydrogen' &&
+              // A cluster bomb opens over the whole nation, bunker city or not
+              selectionWeapon !== 'cluster' &&
+              // A plague seeps into the bunkers
+              selectionWeapon !== 'biological' &&
               // Already-tagged hydrogen stays legal even if the picker moved on
-              !(selected && cityWeapons?.[c.id] === 'hydrogen'),
+              !(selected && cityWeapons?.[c.id] === 'hydrogen') &&
+              !(selected && cityWeapons?.[c.id] === 'biological') &&
+              !(selected && cityWeapons?.[c.id] === 'cluster'),
           );
           const canTarget = Boolean(
             targetable && !c.destroyed && !hitThisRound && (!bombProof || selected),
@@ -1888,18 +1950,18 @@ function NationPod({
           const className = `city-tile ${c.destroyed ? 'is-destroyed' : ''} ${c.hasShield && !c.isUnderground ? 'has-shield' : ''} ${c.hasResearch ? 'has-research' : ''} ${selected ? 'is-selected' : ''} ${canTarget ? 'is-targetable' : ''} ${hitThisRound && !c.destroyed && !bombLocked ? 'is-hit-this-round' : ''} ${bombLocked ? 'is-bomb-locked' : ''} ${droneLocked || droneSelected ? 'is-drone-locked' : ''} ${raidLocked || raidSelected ? 'is-raid-locked' : ''} ${c.originId ? 'is-held' : ''} ${c.isUnderground && !c.destroyed ? 'is-underground' : ''} ${c.hasLaser && !c.destroyed ? 'has-laser' : ''} ${c.rebuiltRound != null && !c.destroyed ? 'is-rebuilt' : ''} ${justHit ? 'is-just-hit' : ''} ${allyAimed ? 'is-ally-aimed' : ''}`;
           const unknown = !open && !c.destroyed;
           const weaponLabel =
-            assignedWeapon === 'hydrogen'
-              ? 'hydrogen'
-              : assignedWeapon === 'magnetic'
-                ? 'magnetic'
-                : assignedWeapon === 'drone'
-                  ? 'drones'
-                  : 'nuclear';
+            assignedWeapon === 'drone'
+              ? 'drones'
+              : assignedWeapon === 'nuke'
+                ? 'nuclear'
+                : WARHEAD_LABEL[assignedWeapon].toLowerCase();
           const title = unknown
             ? `${c.name} — defences unknown: spy them, or send a swarm over`
             : c.isUnderground && !c.destroyed
             ? selectionWeapon === 'hydrogen' || cityWeapons?.[c.id] === 'hydrogen'
               ? `${c.name} — underground city, hydrogen can crack it`
+              : selectionWeapon === 'biological' || cityWeapons?.[c.id] === 'biological'
+              ? `${c.name} — underground city, the plague seeps in`
               : `${c.name} — underground city, cannot be destroyed`
             : raidLocked || raidSelected
             ? `${c.name} — Heliborne ${raidLocked ? 'inbound' : 'selected'}`
@@ -2385,26 +2447,21 @@ function GameBoard({
     [setState],
   );
 
+  const arsenalKey = `${turn.bombs}/${turn.hydrogenBombs}/${turn.magneticBombs}/${(turn.inventions ?? []).join(',')}/${JSON.stringify(turn.inventionsUsed ?? {})}`;
   useEffect(() => {
     const cap = totalWarheads(turn);
     setTargets((prev) => (prev.length > cap ? prev.slice(0, cap) : prev));
-  }, [turn.bombs, turn.hydrogenBombs, turn.magneticBombs]);
+  }, [arsenalKey]);
 
   useEffect(() => {
     // Prefer a warhead type that still has free slots in the current pick list
-    const stock: Record<WarheadKind, number> = {
-      nuke: turn.bombs,
-      hydrogen: turn.hydrogenBombs ?? 0,
-      magnetic: turn.magneticBombs ?? 0,
-    };
-    const used = { nuke: 0, hydrogen: 0, magnetic: 0 };
+    const stock = warheadStocks(turn);
+    const used = Object.fromEntries(WARHEAD_KINDS.map((k) => [k, 0])) as Record<WarheadKind, number>;
     for (const t of targets) used[t.weapon] += 1;
     if (stock[strikeWeapon] > used[strikeWeapon]) return;
-    const next = (['nuke', 'hydrogen', 'magnetic'] as WarheadKind[]).find(
-      (k) => stock[k] > used[k],
-    );
+    const next = WARHEAD_KINDS.find((k) => stock[k] > used[k]);
     if (next) setStrikeWeapon(next);
-  }, [turn.bombs, turn.hydrogenBombs, turn.magneticBombs, targets, strikeWeapon]);
+  }, [arsenalKey, targets, strikeWeapon]);
 
   useEffect(() => {
     setDroneTargets((prev) => (prev.length > turn.drones ? prev.slice(0, turn.drones) : prev));
@@ -2972,11 +3029,7 @@ function GameBoard({
       return;
     }
 
-    const stock: Record<WarheadKind, number> = {
-      nuke: turn.bombs,
-      hydrogen: turn.hydrogenBombs ?? 0,
-      magnetic: turn.magneticBombs ?? 0,
-    };
+    const stock = warheadStocks(turn);
     const cap = totalWarheads(turn);
     if (cap < 1) return;
     if (turn.citiesStruckThisRound.includes(cityId)) return;
@@ -3201,14 +3254,20 @@ function GameBoard({
                 {SCORE_CAPTURE_CLEAN} more, and +{SCORE_RESEARCH} for a research lab taken whole.
               </p>
             )}
+            {!aimingDrones && !aimingForce && isPrototypeKind(strikeWeapon) && (
+              <p className="raid-hint raid-hint--lab">
+                <b>{INVENTION_INFO[strikeWeapon].name}.</b> {INVENTION_INFO[strikeWeapon].effect}
+              </p>
+            )}
             <div className="warhead-picker" role="group" aria-label="Weapon type">
-              {(
-                [
-                  ['nuke', 'Nuclear', turn.bombs, ART.missile],
-                  ['hydrogen', 'Hydrogen', turn.hydrogenBombs ?? 0, ART.missileHydrogen],
-                  ['magnetic', 'Magnetic', turn.magneticBombs ?? 0, ART.missileMagnetic],
-                ] as const
-              ).map(([kind, label, stock, art]) => {
+              {WARHEAD_KINDS.filter(
+                (kind) =>
+                  kind === 'nuke' ||
+                  kind === 'hydrogen' ||
+                  kind === 'magnetic' ||
+                  warheadStock(turn, kind) > 0,
+              ).map((kind) => {
+                const [label, stock, art] = [WARHEAD_LABEL[kind], warheadStock(turn, kind), WARHEAD_ART[kind]];
                 const used = targets.filter((t) => t.weapon === kind).length;
                 return (
                   <button
@@ -3273,9 +3332,7 @@ function GameBoard({
                     const name =
                       state.nations[t.nationId]?.cities.find((c) => c.id === t.cityId)?.name ??
                       t.cityId;
-                    const tag =
-                      t.weapon === 'hydrogen' ? 'H' : t.weapon === 'magnetic' ? 'M' : 'N';
-                    return `${name} (${tag})`;
+                    return `${name} (${WARHEAD_TAG[t.weapon]})`;
                   }),
                   ...droneTargets.map((t) => {
                     const name =
@@ -3689,6 +3746,10 @@ function RoundSummary({
                         </strong>
                         <span>
                           +${formatMoney(e.revenue)} income
+                          {(e.researchUpkeep ?? 0) > 0
+                            ? ` · −$${formatMoney(e.researchUpkeep ?? 0)} lab upkeep`
+                            : ''}
+                          {(e.labsIdle ?? 0) > 0 ? ' · lab idle, unpaid' : ''}
                           {(e.droneDamage ?? 0) > 0
                             ? ` · −$${formatMoney(e.droneDamage ?? 0)} repairs`
                             : ''}
@@ -3947,6 +4008,11 @@ export default function App() {
   } | null>(null);
   const roundIntroRef = useRef(roundIntro);
   roundIntroRef.current = roundIntro;
+  /** Lab breakthroughs waiting to be shown, one scene each, after the round briefing. */
+  const [inventionQueue, setInventionQueue] = useState<
+    { nationId: NationId; kind: InventionKind; round: number }[]
+  >([]);
+  const inventionsShownRef = useRef(new Set<string>());
   /** The last round whose briefing has been shown and closed; ordering waits for it. */
   const [introDoneRound, setIntroDoneRound] = useState(0);
   const [dropoutNotice, setDropoutNotice] = useState<{
@@ -4029,6 +4095,29 @@ export default function App() {
         : state.humanNations[0] ?? null;
     setRoundIntro({ round: state.round, briefing: buildRoundBriefing(state, myId ?? null) });
   }, [state, sessionUid]);
+
+  // A nation's labs finished a bomb this round: show the scientists once, to the seat(s) that own it
+  useEffect(() => {
+    if (state.phase !== 'buy' && state.phase !== 'action' && state.phase !== 'income') return;
+    const viewers =
+      state.mode === 'online'
+        ? sessionUid && state.uidToNation?.[sessionUid]
+          ? [state.uidToNation[sessionUid]]
+          : []
+        : state.humanNations;
+    const fresh: { nationId: NationId; kind: InventionKind; round: number }[] = [];
+    for (const id of viewers) {
+      const nation = state.nations[id];
+      const kind = nation ? inventionOfRound(nation, state.round) : null;
+      if (!kind) continue;
+      const key = `${state.onlineGameId ?? 'local'}:${state.matchSeed ?? 0}:${id}:${nation.inventions?.length ?? 0}`;
+      if (inventionsShownRef.current.has(key)) continue;
+      inventionsShownRef.current.add(key);
+      fresh.push({ nationId: id, kind, round: state.round });
+    }
+    if (fresh.length > 0) setInventionQueue((q) => [...q, ...fresh]);
+  }, [state, sessionUid]);
+  const dismissInvention = useCallback(() => setInventionQueue((q) => q.slice(1)), []);
 
   const dismissRoundStart = useCallback(() => {
     setIntroDoneRound(roundIntroRef.current?.round ?? appStateRef.current.round);
@@ -4297,6 +4386,15 @@ export default function App() {
             onDone={dismissRoundStart}
           />
         ))}
+      {!roundIntro && !strikeTheaterBusy && inventionQueue[0] && (
+        <InventionOverlay
+          key={`invention-${inventionQueue[0].nationId}-${inventionQueue[0].kind}-${inventionQueue[0].round}`}
+          nationId={inventionQueue[0].nationId}
+          kind={inventionQueue[0].kind}
+          round={inventionQueue[0].round}
+          onDone={dismissInvention}
+        />
+      )}
       {dropoutNotice && (
         <DropoutOverlay
           key={`drop-${dropoutNotice.seq}`}
@@ -4381,6 +4479,7 @@ export default function App() {
           sessionUid={sessionUid}
           roundBriefingActive={
             Boolean(roundIntro) ||
+            inventionQueue.length > 0 ||
             strikeTheaterBusy ||
             // The briefing comes first: ordering (and the alliance desk) wait for it
             ((state.phase === 'buy' || state.phase === 'action' || state.phase === 'income') &&

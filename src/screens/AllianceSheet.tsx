@@ -124,7 +124,6 @@ function TermsLine({ toMe, partner }: { toMe: number; partner: string }) {
 
 const PACT_TERMS = [
   'Allies never strike each other',
-  'Laser cover for both nations',
   'Ballistic tech, aerospace tech and the spy service are shared automatically',
   'One sanction each, enforced by both',
   'Pair drones with an ally’s bombs; the kill is shared',

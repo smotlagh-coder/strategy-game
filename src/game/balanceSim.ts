@@ -11,7 +11,7 @@ import {
   LEGACY_PROFILE,
   type BalanceProfile,
 } from '../data/balance';
-import { COSTS, MAX_SANCTIONS, NATIONS, TABLE_SIZE } from '../data/nations';
+import { COSTS, MAX_RESEARCH_PER_ROUND, MAX_SANCTIONS, NATIONS, TABLE_SIZE } from '../data/nations';
 import {
   applyQueuedStrike,
   buyAerospaceTech,
@@ -40,8 +40,9 @@ import {
   startGame,
   toggleSanction,
 } from './engine';
-import { runAiNationTurn } from './ai';
-import type { GameState, NationId, NationState } from '../types';
+import { runAiLabBombs, runAiNationTurn } from './ai';
+import { inventionTotal, isTechKind } from './inventions';
+import type { GameState, InventionKind, NationId, NationState } from '../types';
 
 export type Archetype =
   | 'economy'
@@ -234,7 +235,28 @@ function planArchetype(s: GameState, id: NationId, kind: Archetype): GameState {
   return sanctionLeader(next, id);
 }
 
+/** Which seats may buy a research lab: lets the harness price labs by taking them away. */
+export type LabPolicy = { shipped: boolean; archetypes: boolean };
+let labPolicy: LabPolicy = { shipped: true, archetypes: true };
+export function setLabPolicy(next: LabPolicy): void {
+  labPolicy = next;
+}
+
+/** One seat's lab story in a match, for the economics report. */
+export type LabRecord = {
+  archetype: Archetype;
+  /** Round the lab was bought, or 0 when the seat never built one */
+  boughtRound: number;
+  made: InventionKind[];
+  used: number;
+  won: boolean;
+  score: number;
+  /** Rounds the seat's treasury paid upkeep */
+  upkeepPaid: number;
+};
+
 export type MatchStats = {
+  labs: LabRecord[];
   winnerArchetype: Archetype | null;
   seatArchetypes: Archetype[];
   citiesDestroyed: number;
@@ -254,7 +276,7 @@ export type MatchStats = {
   winnerSurvivalShare: number;
 };
 
-function playMatch(seed: number): MatchStats {
+export function playMatch(seed: number): MatchStats {
   const rng = mulberry32(seed);
   const seats = pickSeats(rng, TABLE_SIZE);
   const kinds = pickArchetypes(rng);
@@ -270,12 +292,15 @@ function playMatch(seed: number): MatchStats {
   }
   let s = startGame({
     ...base,
+    // What the labs invent follows the match seed, so a suite replays the same way every run
+    matchSeed: (seed ^ 0x9e3779b9) >>> 1,
     mode: 'single',
     turnOrder: seatTable(seats, { size: TABLE_SIZE }),
     humanNations: [],
     nations,
   });
 
+  const boughtRound: Partial<Record<NationId, number>> = {};
   const killsByRound: number[] = [];
   let citiesDestroyed = 0;
   let quietRounds = 0;
@@ -292,7 +317,18 @@ function playMatch(seed: number): MatchStats {
           s = endTurn(s);
           continue;
         }
+        const mayLab = byNation[id] === 'shipped' ? labPolicy.shipped : labPolicy.archetypes;
+        if (!mayLab) {
+          // A spent allowance is the engine's own way of saying "no lab this round"
+          s = {
+            ...s,
+            nations: { ...s.nations, [id]: { ...s.nations[id], researchBoughtThisRound: MAX_RESEARCH_PER_ROUND } },
+          };
+        }
         s = planArchetype(s, id, byNation[id]);
+        if (boughtRound[id] === undefined && researchCount(s, id) > 0) boughtRound[id] = s.round;
+        // Any strategy fires the free bombs its labs hand it; the live AI already does
+        if (byNation[id] !== 'shipped') s = runAiLabBombs(s, id);
         s = endTurn(s);
       }
       continue;
@@ -334,7 +370,22 @@ function playMatch(seed: number): MatchStats {
   const winRow = winner ? scored.find((r) => r.nationId === winner) : null;
   const winTotal = Math.max(1, winRow?.total ?? 1);
 
+  const labs: LabRecord[] = seats.map((id) => {
+    const n = s.nations[id];
+    const made = n.inventions ?? [];
+    return {
+      archetype: byNation[id],
+      boughtRound: boughtRound[id] ?? 0,
+      made,
+      used: made.filter((k) => !isTechKind(k)).length - inventionTotal(n),
+      won: winner === id,
+      score: computeScore(s, id).total,
+      upkeepPaid: n.labRounds ?? 0,
+    };
+  });
+
   return {
+    labs,
     winnerArchetype: winner ? byNation[winner] : null,
     seatArchetypes: kinds,
     citiesDestroyed,

@@ -68,6 +68,19 @@ export const ART = {
     research: '/art/research-icon.webp',
   },
   missileMagnetic: '/art/missile-magnetic.webp',
+  /** Stickers for the bombs the research labs invent */
+  missileCluster: '/art/missile-cluster.webp',
+  missileBiological: '/art/missile-biological.webp',
+  missileChemical: '/art/missile-chemical.webp',
+  /** The lab photograph shown when a nation's scientists finish an invention (16:9) */
+  invention: {
+    cluster: '/art/invention-cluster.webp',
+    biological: '/art/invention-biological.webp',
+    chemical: '/art/invention-chemical.webp',
+    defenseDrones: '/art/invention-defense-drones.webp',
+    ballisticTech: '/art/invention-ballistic-tech.webp',
+    aerospaceTech: '/art/invention-aerospace-tech.webp',
+  },
   drone: '/art/drone.webp',
   /** Black transport helicopter, side view — the Heliborne's ride */
   heli: '/art/invisible-force-heli.webp',
@@ -97,6 +110,10 @@ export const ART = {
       nuke: '/art/mv-real-missile-nuke.webp',
       hydrogen: '/art/mv-real-missile-hydrogen.webp',
       magnetic: '/art/mv-real-missile-magnetic.webp',
+      /** The labs' bombs ride the same airframe with a warhead of their own */
+      cluster: '/art/mv-real-missile-cluster.webp',
+      biological: '/art/mv-real-missile-biological.webp',
+      chemical: '/art/mv-real-missile-chemical.webp',
     },
     fx: {
       fireball: '/art/mv-fx-fireball.webp',

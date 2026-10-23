@@ -198,6 +198,35 @@ function capPlanningUnion(
   return out;
 }
 
+/**
+ * The labs' work only ever moves forward: the rounds worked, the inventions made
+ * (a deterministic list, so the longer one holds the shorter as a prefix) and
+ * the bombs fired from it.
+ */
+function mergeLabs(
+  remote: NationState,
+  local: NationState,
+): Pick<NationState, 'labRounds' | 'inventions' | 'inventionsUsed' | 'inventionRound'> {
+  const r = remote.inventions ?? [];
+  const l = local.inventions ?? [];
+  const used: NationState['inventionsUsed'] = {};
+  for (const kind of new Set([
+    ...Object.keys(remote.inventionsUsed ?? {}),
+    ...Object.keys(local.inventionsUsed ?? {}),
+  ]) as Set<keyof NonNullable<NationState['inventionsUsed']>>) {
+    used[kind] = Math.max(
+      counter(remote.inventionsUsed?.[kind]),
+      counter(local.inventionsUsed?.[kind]),
+    );
+  }
+  return {
+    labRounds: Math.max(counter(remote.labRounds), counter(local.labRounds)),
+    inventions: l.length >= r.length ? l : r,
+    inventionsUsed: used,
+    inventionRound: Math.max(counter(remote.inventionRound), counter(local.inventionRound)) || undefined,
+  };
+}
+
 export function mergeNationPlanning(
   remote: NationState | undefined,
   local: NationState | undefined,
@@ -345,6 +374,7 @@ export function mergeNationPlanning(
     ),
     ...mergeSanctions(remote, local),
     ...mergeAlliance(remote, local),
+    ...mergeLabs(remote, local),
     eliminated,
     lockedScore: Math.max(remote.lockedScore ?? 0, local.lockedScore ?? 0),
     citySurvivalPoints: Math.max(

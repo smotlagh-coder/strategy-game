@@ -8,6 +8,9 @@ import {
   MAX_DRONES_PER_ROUND,
   MAX_COMMANDOS_PER_ROUND,
   LASER_INTERCEPTS_PER_ROUND,
+  LAB_ROUNDS_PER_INVENTION,
+  CLUSTER_DAMAGE_OPEN,
+  CLUSTER_DAMAGE_PROTECTED,
   MAX_SANCTIONS,
   MAX_RESEARCH_PER_ROUND,
   MAX_SHIELDS_PER_ROUND,
@@ -15,6 +18,7 @@ import {
   MAX_ROUNDS,
   NATIONS,
   RESEARCH_INCOME,
+  RESEARCH_UPKEEP,
   TABLE_SIZE,
   SANCTION_PENALTY,
   MAX_SANCTION_CUT,
@@ -23,6 +27,7 @@ import {
   SCORE_RESEARCH,
   SCORE_SHIELD,
   SCORE_KILL,
+  SCORE_LAB_HIT,
   SCORE_CAPTURE,
   SCORE_CAPTURE_CLEAN,
   SCORE_ELIMINATION,
@@ -35,7 +40,6 @@ import {
 import {
   alliancePairs,
   pactPayment,
-  allyOf,
   areAllies,
   effectiveSanctions,
   hasAerospaceAccess,
@@ -48,6 +52,14 @@ import {
   tributeFrom,
 } from './alliance';
 import { displayNameOnly } from '../lib/session';
+import {
+  INVENTION_INFO,
+  PROTOTYPE_KINDS,
+  inventionStock,
+  isPrototypeKind,
+  labCanFinish,
+  pickInvention,
+} from './inventions';
 import { volleyMovieMs, volleyWeapons } from './movie';
 import {
   AFTERMATH_THINK_MS,
@@ -60,6 +72,7 @@ import type {
   GameMode,
   GameState,
   IncomeLedgerEntry,
+  InventionKind,
   LogEntry,
   NationId,
   NationState,
@@ -72,27 +85,66 @@ import type {
 
 export type { StrikeWeapon, WarheadKind };
 
-/** All ballistic warheads currently in stock. */
-export function totalWarheads(n: Pick<NationState, 'bombs' | 'hydrogenBombs' | 'magneticBombs'>): number {
+/** All ballistic warheads currently in stock, bought and invented (defence drones are not one). */
+export function totalWarheads(
+  n: Pick<
+    NationState,
+    'bombs' | 'hydrogenBombs' | 'magneticBombs' | 'inventions' | 'inventionsUsed'
+  >,
+): number {
   return (
-    (n.bombs ?? 0) + (n.hydrogenBombs ?? 0) + (n.magneticBombs ?? 0)
+    (n.bombs ?? 0) +
+    (n.hydrogenBombs ?? 0) +
+    (n.magneticBombs ?? 0) +
+    PROTOTYPE_KINDS.reduce((sum, kind) => sum + inventionStock(n, kind), 0)
   );
 }
 
-export function warheadStock(n: NationState, kind: WarheadKind): number {
+/** Invented bombs of this kind in the arsenal (only the lab-only kinds ever are). */
+function labStock(n: NationState, kind: WarheadKind): number {
+  return isPrototypeKind(kind) ? inventionStock(n, kind) : 0;
+}
+
+/** Defence drones the labs have delivered and no attack has used up yet. */
+export function defenseDroneStock(n: Pick<NationState, 'inventions' | 'inventionsUsed'>): number {
+  return inventionStock(n, 'defenseDrones');
+}
+
+/** Bought warheads of this kind (the invented ones are counted by `inventionStock`). */
+export function boughtWarheadStock(n: NationState, kind: WarheadKind): number {
   if (kind === 'hydrogen') return n.hydrogenBombs ?? 0;
   if (kind === 'magnetic') return n.magneticBombs ?? 0;
-  return n.bombs ?? 0;
+  if (kind === 'nuke') return n.bombs ?? 0;
+  return 0;
+}
+
+/** Every warhead of this kind the nation can fire: bought plus invented. */
+export function warheadStock(n: NationState, kind: WarheadKind): number {
+  return boughtWarheadStock(n, kind) + labStock(n, kind);
+}
+
+/** What a warhead is called in the log: the plain nuclear one is just a warhead. */
+export function warheadName(kind: WarheadKind): string {
+  if (kind === 'nuke') return 'warhead';
+  if (kind === 'hydrogen') return 'hydrogen bomb';
+  if (kind === 'magnetic') return 'magnetic bomb';
+  return INVENTION_INFO[kind as InventionKind]?.name.toLowerCase() ?? 'warhead';
 }
 
 export function warheadCost(kind: WarheadKind): number {
   if (kind === 'hydrogen') return COSTS.bombHydrogen;
   if (kind === 'magnetic') return COSTS.bombMagnetic;
-  return COSTS.bomb;
+  if (kind === 'nuke') return COSTS.bomb;
+  return 0;
+}
+
+/** Cluster and gas bombs do not level a city; they wear a nation's defences down. */
+export function isAreaWeapon(weapon: StrikeWeapon | undefined): boolean {
+  return weapon === 'cluster' || weapon === 'chemical';
 }
 
 export function isWarhead(weapon: StrikeWeapon | undefined): weapon is WarheadKind {
-  return weapon !== 'drone';
+  return weapon !== 'drone' && weapon !== 'commando';
 }
 
 let logSeq = 0;
@@ -191,6 +243,7 @@ export function createInitialState(): GameState {
     round: 1,
     maxRounds: MAX_ROUNDS,
     nations,
+    matchSeed: Math.floor(Math.random() * 0x7fffffff),
     turnOrder: seatTable([]),
     currentTurnIndex: 0,
     selectingFor: 1,
@@ -904,6 +957,42 @@ export function startGame(state: GameState): GameState {
   return beginHumanPlanning(base);
 }
 
+/**
+ * One round of lab work. A nation with a standing research centre moves a round
+ * closer to its next invention; a lab that is razed pauses the clock instead of
+ * wiping it. Every LAB_ROUNDS_PER_INVENTION rounds of work end in a new invention, drawn from the match seed.
+ */
+function advanceLab(
+  state: GameState,
+  n: NationState,
+  paid: boolean,
+): { patch: Partial<NationState>; invented: InventionKind | null } {
+  const working = paid && n.cities.some((c) => !c.destroyed && c.hasResearch);
+  if (!working) return { patch: {}, invented: null };
+  const labRounds = (n.labRounds ?? 0) + 1;
+  if (labRounds % LAB_ROUNDS_PER_INVENTION !== 0) return { patch: { labRounds }, invented: null };
+  const made = n.inventions ?? [];
+  // Technology the nation already has (its own or an ally's) is never invented again
+  const owned: InventionKind[] = [];
+  if (hasBallisticTech(state, n.id)) owned.push('ballisticTech');
+  if (hasAerospaceAccess(state, n.id)) owned.push('aerospaceTech');
+  const kind = pickInvention(state.matchSeed ?? 0, n.id, made, owned);
+  const patch: Partial<NationState> = {
+    labRounds,
+    inventions: [...made, kind],
+    inventionRound: state.round,
+  };
+  // New technology works the moment it is announced, same as one bought that round
+  if (kind === 'ballisticTech') {
+    patch.hasNuclearTech = true;
+    patch.nuclearTechUnlockedRound = state.round;
+  } else if (kind === 'aerospaceTech') {
+    patch.hasAerospaceTech = true;
+    patch.aerospaceTechUnlockedRound = state.round;
+  }
+  return { patch, invented: kind };
+}
+
 /** Apply city + research income (sanctions cut total revenue 10% each) at round start.
  *  Income begins in round 2 (not round 1). Safe to call more than once per round. */
 export function applyIncome(state: GameState): GameState {
@@ -952,20 +1041,38 @@ export function applyIncome(state: GameState): GameState {
     }
 
     const previousBalance = n.money;
+    // Labs eat their running costs first; one the treasury cannot feed sits idle
+    const labs = n.cities.filter((c) => !c.destroyed && c.hasResearch).length;
+    const labsPaid =
+      RESEARCH_UPKEEP > 0
+        ? Math.min(labs, Math.floor(Math.max(0, previousBalance + revenue) / RESEARCH_UPKEEP))
+        : labs;
+    const labsIdle = labs - labsPaid;
+    const researchUpkeep = labsPaid * RESEARCH_UPKEEP;
     // Last round's drone swarms come due now, capped at what the treasury holds
     const droneDamage = Math.min(
       +(n.pendingDroneDamage ?? 0).toFixed(2),
-      +(previousBalance + revenue).toFixed(2),
+      +(previousBalance + revenue - researchUpkeep).toFixed(2),
     );
-    const balanceAfterIncome = +(previousBalance + revenue - droneDamage).toFixed(2);
+    const balanceAfterIncome = +(previousBalance + revenue - researchUpkeep - droneDamage).toFixed(2);
 
+    const lab = advanceLab(state, n, labsPaid > 0);
     nations[id] = {
       ...n,
+      ...lab.patch,
       money: balanceAfterIncome,
       researchCenters: n.cities.filter((c) => !c.destroyed && c.hasResearch).length,
       incomeRound: state.round,
       pendingDroneDamage: 0,
     };
+    if (lab.invented) {
+      logEntries.push(
+        log(
+          `${nationDef(id).name}'s scientists invented a ${INVENTION_INFO[lab.invented].name.toLowerCase()} — ${INVENTION_INFO[lab.invented].headline.toLowerCase()}.`,
+          'money',
+        ),
+      );
+    }
     ledger.push({
       nationId: id,
       previousBalance,
@@ -974,13 +1081,22 @@ export function applyIncome(state: GameState): GameState {
       sanctionPenalty,
       sanctioners,
       droneDamage,
+      researchUpkeep,
+      labsIdle,
     });
     const sanctionNote =
       sanctioners.length > 0 ? `, −${Math.round(sanctionPenalty * 100)}% sanctions` : '';
     const droneNote = droneDamage > 0 ? `, −$${droneDamage}M drone damage` : '';
+    const labNote =
+      researchUpkeep > 0 ? `, −$${researchUpkeep}M lab upkeep` : '';
+    if (labsIdle > 0) {
+      logEntries.push(
+        log(`${nationDef(id).name} could not pay its lab upkeep — the lab sat idle this round.`, 'money'),
+      );
+    }
     logEntries.push(
       log(
-        `${nationDef(id).name} receives $${revenue}M (${standing} cit${standing === 1 ? 'y' : 'ies'} $${cityIncome}M + research $${researchIncome}M${sanctionNote}${droneNote}).`,
+        `${nationDef(id).name} receives $${revenue}M (${standing} cit${standing === 1 ? 'y' : 'ies'} $${cityIncome}M${researchIncome > 0 ? ` + research $${researchIncome}M` : ''}${sanctionNote}${labNote}${droneNote}).`,
         'money',
       ),
     );
@@ -1433,7 +1549,7 @@ export function buyMagneticBomb(state: GameState, nationId?: NationId): GameStat
   };
 }
 
-/** One site at a time: a nation cannot break ground on two centres in a round. */
+/** One site at a time, and only while there is still time to finish a bomb. */
 export function canBuyResearch(state: GameState, nationId?: NationId): boolean {
   const id = nationId ?? currentNationId(state);
   const n = state.nations[id];
@@ -1441,6 +1557,7 @@ export function canBuyResearch(state: GameState, nationId?: NationId): boolean {
     !n.eliminated &&
     n.money >= COSTS.research &&
     n.researchBoughtThisRound < MAX_RESEARCH_PER_ROUND &&
+    labCanFinish(state.round, state.maxRounds) &&
     n.cities.some((c) => !c.destroyed && !c.hasResearch)
   );
 }
@@ -1688,8 +1805,7 @@ export function queueStrike(
   const defender = state.nations[targetNation];
   const drone = weapon === 'drone';
   const commando = weapon === 'commando';
-  const warhead: WarheadKind | null =
-    drone || commando ? null : weapon === 'hydrogen' || weapon === 'magnetic' ? weapon : 'nuke';
+  const warhead: WarheadKind | null = drone || commando ? null : (weapon as WarheadKind);
 
   if (
     attacker.eliminated ||
@@ -1705,21 +1821,26 @@ export function queueStrike(
       ? attacker.drones < 1 ||
         !hasAerospaceAccess(state, attackerId) ||
         attacker.citiesDronedThisRound.includes(cityId)
-      : warheadStock(attacker, warhead!) < 1 ||
-        !hasBallisticTech(state, attackerId) ||
-        attacker.citiesStruckThisRound.includes(cityId))
+      : // The labs' own bombs need no missile programme; bought ones do
+        !(
+          labStock(attacker, warhead!) > 0 ||
+          (boughtWarheadStock(attacker, warhead!) > 0 && hasBallisticTech(state, attackerId))
+        ) || attacker.citiesStruckThisRound.includes(cityId))
   ) {
     return state;
   }
 
   const city = defender.cities.find((c) => c.id === cityId);
   if (!city || city.destroyed) return state;
-  // Nuclear and magnetic warheads cannot crack a bunker; hydrogen can.
-  // Blind attackers still fire and learn at resolution.
+  // Nuclear, magnetic and chemical warheads cannot crack a bunker; hydrogen and the
+  // plague can. A cluster bomb is aimed at a whole nation, so any one of its cities
+  // will do as the mark. Blind attackers still fire and learn at resolution.
   if (
     city.isUnderground &&
     warhead &&
     warhead !== 'hydrogen' &&
+    warhead !== 'cluster' &&
+    warhead !== 'biological' &&
     seesCity(state, attackerId, targetNation, city.id)
   ) {
     return state;
@@ -1746,6 +1867,15 @@ export function queueStrike(
       dronesUsed: attacker.dronesUsed + 1,
       citiesDronedThisRound: [...attacker.citiesDronedThisRound, cityId],
     };
+  } else if (labStock(attacker, warhead!) > 0) {
+    // The labs' own bombs (cluster, chemical, biological) come out of their own stock
+    spend = {
+      inventionsUsed: {
+        ...(attacker.inventionsUsed ?? {}),
+        [warhead!]: (attacker.inventionsUsed?.[warhead as InventionKind] ?? 0) + 1,
+      },
+      citiesStruckThisRound: [...attacker.citiesStruckThisRound, cityId],
+    };
   } else if (warhead === 'hydrogen') {
     spend = {
       hydrogenBombs: (attacker.hydrogenBombs ?? 0) - 1,
@@ -1769,12 +1899,7 @@ export function queueStrike(
     };
   }
 
-  const warheadLabel =
-    warhead === 'hydrogen'
-      ? 'hydrogen bomb'
-      : warhead === 'magnetic'
-        ? 'magnetic bomb'
-        : 'warhead';
+  const warheadLabel = warhead == null ? 'warhead' : warheadName(warhead);
 
   return {
     ...state,
@@ -1857,29 +1982,27 @@ export function laserShotsKnownTo(
     if (!battery || !seesCity(state, viewerId, owner, battery.id)) return 0;
     return laserInterceptsLeft(state, owner);
   };
-  // An ally's network defends this nation too
-  const ally = allyOf(state, targetId);
-  return known(targetId) + (ally ? known(ally) : 0);
+  // A network defends only the nation that owns it: an ally shares the tech, not the beams
+  return known(targetId);
 }
 
-/** A magnetic bomb is locked on this very city: no laser may fire over it, whoever owns the battery. */
+/** A magnetic bomb is locked on this very city: no laser may fire over it. */
 export function magneticOnCity(state: GameState, nationId: NationId, cityId: string): boolean {
   return state.pendingStrikes.some(
     (p) => p.weapon === 'magnetic' && p.targetNationId === nationId && p.cityId === cityId,
   );
 }
 
-/** Lasers stand behind this nation, its own or its ally's, working or not. */
+/** This nation has a laser network of its own, working or not. An ally's does not count. */
 export function laserStandsBehind(state: GameState, nationId: NationId): boolean {
-  const ally = allyOf(state, nationId);
-  return laserNetwork(state, nationId) || Boolean(ally && laserNetwork(state, ally));
+  return laserNetwork(state, nationId);
 }
 
 /**
- * Whose laser network covers `targetId` right now: its own while it has shots
- * left, then its ally's — allies defend each other's cities with their lasers.
- * Over a city a magnetic bomb is aimed at, no network works at all, an ally's
- * included.
+ * Whose laser network covers `targetId` right now: its own, while it has shots
+ * left. An ally's network never covers it — allies share the aerospace tech that
+ * makes a laser cheaper to build, not the beams themselves. Over a city a
+ * magnetic bomb is aimed at, no network works at all.
  */
 export function laserCoverFor(
   state: GameState,
@@ -1887,9 +2010,7 @@ export function laserCoverFor(
   cityId?: string,
 ): NationId | null {
   if (cityId && magneticOnCity(state, targetId, cityId)) return null;
-  if (laserInterceptsLeft(state, targetId) > 0) return targetId;
-  const ally = allyOf(state, targetId);
-  return ally && laserInterceptsLeft(state, ally) > 0 ? ally : null;
+  return laserInterceptsLeft(state, targetId) > 0 ? targetId : null;
 }
 
 export function shieldIsBusy(
@@ -1898,7 +2019,11 @@ export function shieldIsBusy(
   cityId: string,
 ): boolean {
   return state.roundEvents.some(
-    (e) => e.kind === 'droneDamage' && e.nationId === targetNationId && e.cityId === cityId,
+    (e) =>
+      e.kind === 'droneDamage' &&
+      e.weapon !== 'cluster' &&
+      e.nationId === targetNationId &&
+      e.cityId === cityId,
   );
 }
 
@@ -2296,6 +2421,183 @@ function canRetake(state: GameState, n: NationState): boolean {
   return stocked || ordered;
 }
 
+/** Points for wearing rival cities down without razing anything (a cluster bomb). */
+function labPoints(attacker: NationState, points: number): NationState {
+  return points > 0 ? { ...attacker, attackPoints: (attacker.attackPoints ?? 0) + points } : attacker;
+}
+
+/**
+ * A cluster bomb opens over a nation and every city under it takes a share of
+ * the damage: an open city runs up a bigger repair bill than one under a shield,
+ * a bunker or a laser battery. Nothing is levelled and no defence is stripped, but
+ * nothing escapes the canister either, except the one city defence drones guard.
+ */
+function applyClusterStrike(state: GameState, strike: PendingStrike): GameState {
+  const defender = state.nations[strike.targetNationId];
+  const attackerName = nationDef(strike.attackerId).name;
+  const targetName = nationDef(strike.targetNationId).name;
+  const guarded = dronesGuarding(state, strike.targetNationId);
+  const events: RoundWorldEvent[] = [];
+  let open = 0;
+  let covered = 0;
+  let bill = 0;
+  let seen = state;
+  for (const c of defender.cities) {
+    if (c.destroyed || c.id === guarded) continue;
+    // The bomblets land on every roof, so the attacker sees what stood under them
+    seen = scoutCity(seen, strike.attackerId, c.id);
+    const protectedCity = c.hasShield || c.isUnderground || c.hasLaser;
+    const amount = protectedCity ? CLUSTER_DAMAGE_PROTECTED : CLUSTER_DAMAGE_OPEN;
+    if (protectedCity) covered += 1;
+    else open += 1;
+    bill += amount;
+    events.push(
+      worldEvent({
+        kind: 'droneDamage',
+        nationId: strike.targetNationId,
+        cityId: c.id,
+        cityName: c.name,
+        attackerId: strike.attackerId,
+        weapon: 'cluster',
+        amount,
+        cover: c.isUnderground ? 'bunker' : c.hasShield ? 'shield' : c.hasLaser ? 'laser' : undefined,
+      }),
+    );
+  }
+  if (events.length === 0) {
+    return {
+      ...state,
+      log: [...state.log, log(`${attackerName}'s cluster bomb found nothing to hit in ${targetName}.`, 'attack')],
+    };
+  }
+  const parts = [
+    open > 0 ? `${open} open cit${open === 1 ? 'y' : 'ies'} at $${CLUSTER_DAMAGE_OPEN}M` : '',
+    covered > 0
+      ? `${covered} protected cit${covered === 1 ? 'y' : 'ies'} at $${CLUSTER_DAMAGE_PROTECTED}M`
+      : '',
+  ].filter(Boolean);
+  return {
+    ...seen,
+    nations: {
+      ...seen.nations,
+      [strike.attackerId]: labPoints(seen.nations[strike.attackerId], events.length * SCORE_LAB_HIT),
+      [strike.targetNationId]: {
+        ...defender,
+        pendingDroneDamage: +((defender.pendingDroneDamage ?? 0) + bill).toFixed(2),
+      },
+    },
+    log: [
+      ...seen.log,
+      log(
+        `${attackerName}'s cluster bomb burst over ${targetName} — ${parts.join(' and ')}, $${bill}M of damage in all.`,
+        'attack',
+      ),
+    ],
+    roundEvents: [...seen.roundEvents, ...events],
+  };
+}
+
+/**
+ * The city of `nationId` that its defence drones are guarding this round, once
+ * they have gone up: the first city of the nation an attack was aimed at. Read
+ * from the round's own events so every client resolving the round agrees.
+ */
+export function dronesGuarding(state: GameState, nationId: NationId): string | null {
+  const up = state.roundEvents.find((e) => e.kind === 'strikeNeutralized' && e.nationId === nationId);
+  return up?.cityId ?? null;
+}
+
+/** What an incoming strike is called when the log says it was shot down. */
+function strikeLabel(weapon: StrikeWeapon): string {
+  if (weapon === 'drone') return 'drone swarm';
+  if (weapon === 'commando') return 'Heliborne squad';
+  return warheadName(weapon);
+}
+
+/**
+ * Defence drones meet an attack in the sky. A nation with a pack in stock sends it
+ * up over the first city an attack is aimed at, and from then on the pack
+ * neutralises every attack on that city for the rest of the round. The pack is
+ * only used up on a round in which a city was attacked, so a quiet round leaves it
+ * on standby for the next. Returns null when nothing stands in the way.
+ */
+function neutralizeWithDrones(state: GameState, strike: PendingStrike, city: City): GameState | null {
+  const defender = state.nations[strike.targetNationId];
+  const guarded = dronesGuarding(state, defender.id);
+  if (guarded ? guarded !== city.id : defenseDroneStock(defender) < 1) return null;
+
+  const weapon: StrikeWeapon = strike.weapon ?? 'nuke';
+  const cluster = weapon === 'cluster';
+  const patch: Partial<NationState> = guarded
+    ? {}
+    : {
+        inventionsUsed: {
+          ...(defender.inventionsUsed ?? {}),
+          defenseDrones: (defender.inventionsUsed?.defenseDrones ?? 0) + 1,
+        },
+      };
+  return {
+    ...state,
+    nations: { ...state.nations, [defender.id]: { ...defender, ...patch } },
+    log: [
+      ...state.log,
+      log(
+        `${nationDef(defender.id).name}'s defence drones met ${nationDef(strike.attackerId).name}'s ${strikeLabel(weapon)} over ${city.name} and neutralised it${
+          cluster ? ` — ${city.name} is safe, the rest of the nation still takes the bomblets` : ` — ${city.name} is safe this round`
+        }.`,
+        'attack',
+      ),
+    ],
+    roundEvents: [
+      ...state.roundEvents,
+      worldEvent({
+        kind: 'strikeNeutralized',
+        nationId: defender.id,
+        cityId: city.id,
+        cityName: city.name,
+        attackerId: strike.attackerId,
+        weapon,
+      }),
+    ],
+  };
+}
+
+/** A laser network shoots a chemical or biological bomb out of the sky. */
+function warheadShotDown(state: GameState, strike: PendingStrike, city: City, coverId: NationId): GameState {
+  const guard = state.nations[coverId];
+  const fired = guard.dronesInterceptedThisRound + 1;
+  const left = LASER_INTERCEPTS_PER_ROUND - fired;
+  // The beam shows the attacker where the battery sits
+  const battery = guard.cities.find((c) => !c.destroyed && c.hasLaser);
+  const seen = battery ? scoutCity(state, strike.attackerId, battery.id) : state;
+  const weapon: StrikeWeapon = strike.weapon ?? 'nuke';
+  return {
+    ...seen,
+    nations: { ...seen.nations, [coverId]: { ...guard, dronesInterceptedThisRound: fired } },
+    log: [
+      ...seen.log,
+      log(
+        `${nationDef(coverId).name}'s laser network shot down ${nationDef(strike.attackerId).name}'s ${strikeLabel(weapon)} over ${city.name} — no damage${
+          left > 0 ? '' : ' (the network is out of shots this round)'
+        }.`,
+        'attack',
+      ),
+    ],
+    roundEvents: [
+      ...seen.roundEvents,
+      worldEvent({
+        kind: 'warheadIntercepted',
+        nationId: strike.targetNationId,
+        cityId: city.id,
+        cityName: city.name,
+        attackerId: strike.attackerId,
+        weapon,
+        cover: 'laser',
+      }),
+    ],
+  };
+}
+
 /** Apply damage for a previously queued strike (bomb or drone pack already spent). */
 export function applyQueuedStrike(state: GameState, strike: PendingStrike): GameState {
   const attacker = state.nations[strike.attackerId];
@@ -2320,12 +2622,32 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
     strike.weapon === 'drone' ||
     strike.weapon === 'commando' ||
     strike.weapon === 'hydrogen' ||
-    strike.weapon === 'magnetic'
+    strike.weapon === 'magnetic' ||
+    strike.weapon === 'cluster' ||
+    strike.weapon === 'biological' ||
+    strike.weapon === 'chemical'
       ? strike.weapon
       : 'nuke';
   const strikeNorm = weapon === strike.weapon ? strike : { ...strike, weapon };
 
   const city = defender.cities.find((c) => c.id === strikeNorm.cityId);
+
+  // Defence drones meet whatever is aimed at the city they guard, in the sky,
+  // before any laser, shield or bunker has a say. A cluster bomb they stop over
+  // its marked city still bursts over the rest of the nation.
+  // (A canister marked on a city already in rubble still opens over the nation, and
+  // the drones go up over the first city left standing.)
+  const guardMark =
+    city && !city.destroyed
+      ? city
+      : weapon === 'cluster'
+        ? defender.cities.find((c) => !c.destroyed)
+        : undefined;
+  if (guardMark) {
+    const stopped = neutralizeWithDrones(state, strikeNorm, guardMark);
+    if (stopped) return weapon === 'cluster' ? applyClusterStrike(stopped, strikeNorm) : stopped;
+  }
+
   if (weapon === 'commando') return applyRaid(state, strikeNorm, city);
   if (city && !city.destroyed && weapon === 'drone') {
     return applyDroneStrike(state, strikeNorm, city);
@@ -2333,7 +2655,12 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
 
   const hydrogen = weapon === 'hydrogen';
   const magnetic = weapon === 'magnetic';
-  const warheadName = hydrogen ? 'hydrogen bomb' : magnetic ? 'magnetic bomb' : 'warhead';
+  const plague = weapon === 'biological';
+  const gas = weapon === 'chemical';
+  const label = warheadName(weapon as WarheadKind);
+
+  // Bomblets fall on the whole nation, wherever the order says the canister opens
+  if (weapon === 'cluster') return applyClusterStrike(state, strikeNorm);
 
   // A hydrogen bomb that leads a squad in only breaches the defences — the city is
   // meant to be taken, not levelled.
@@ -2361,9 +2688,16 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
       : blackoutForRaid(state, strikeNorm, city);
   }
 
+  // Gas and plague have to get through the laser network first; a magnetic bomb
+  // over the nation blacks it out.
+  if ((gas || plague) && city && !city.destroyed) {
+    const coverId = laserCoverFor(state, strike.targetNationId, strike.cityId);
+    if (coverId) return warheadShotDown(state, strikeNorm, city, coverId);
+  }
+
   // A player can bunker a city in the same round a warhead was aimed at it —
-  // only a hydrogen bomb cracks the rock.
-  if (city && !city.destroyed && city.isUnderground && !hydrogen) {
+  // only a hydrogen bomb cracks the rock, and a plague seeps in.
+  if (city && !city.destroyed && city.isUnderground && !hydrogen && !plague) {
     // Everyone saw the warhead break, so nobody has to buy that intel again
     const seen = revealCityToEveryone(state, city.id);
     return {
@@ -2371,7 +2705,7 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
       log: [
         ...seen.log,
         log(
-          `${nationDef(strike.attackerId).name}'s ${warheadName} broke against the bunkers under ${city.name} (${nationDef(strike.targetNationId).name}) — every capital can see the city is dug in now.`,
+          `${nationDef(strike.attackerId).name}'s ${label} broke against the bunkers under ${city.name} (${nationDef(strike.targetNationId).name}) — every capital can see the city is dug in now.`,
           'attack',
         ),
       ],
@@ -2405,17 +2739,20 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
   let message: string;
   let hitEvent: RoundWorldEvent;
   const partners = coAttackers(state, strikeNorm);
-  // Hydrogen punches through shields and bunkers alike — no escort required.
-  // Other warheads need the shield busy (drone swarm) or they only strip it.
+  // Hydrogen punches through shields and bunkers alike — no escort required. Every
+  // other warhead, plague and gas included, is stopped by a shield unless a drone
+  // swarm has it busy, and it only strips the shield.
   const shielded =
     !hydrogen &&
     city.hasShield &&
     !shieldIsBusy(state, strike.targetNationId, strike.cityId);
   if (shielded) {
     cities = cities.map((c) =>
-      c.id === strike.cityId ? { ...c, hasShield: false, isUnderground: false } : c,
+      c.id === strike.cityId
+        ? { ...c, hasShield: false, isUnderground: plague ? c.isUnderground : false }
+        : c,
     );
-    message = `${nationDef(strike.attackerId).name}'s ${warheadName} hit ${city.name} (${nationDef(strike.targetNationId).name}) — shield destroyed!`;
+    message = `${nationDef(strike.attackerId).name}'s ${label} hit ${city.name} (${nationDef(strike.targetNationId).name}) — shield destroyed!`;
     hitEvent = worldEvent({
       kind: 'shieldDestroyed',
       nationId: strike.targetNationId,
@@ -2424,7 +2761,12 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
       attackerId: strike.attackerId,
       amount: COSTS.shield,
       cover: 'shield',
-      lost: assetsOf({ ...city, hasLaser: false, hasResearch: false }),
+      lost: assetsOf({
+        ...city,
+        hasLaser: false,
+        hasResearch: false,
+        isUnderground: plague ? false : city.isUnderground,
+      }),
     });
   } else {
     cities = cities.map((c) =>
@@ -2444,9 +2786,11 @@ export function applyQueuedStrike(state: GameState, strike: PendingStrike): Game
         ? `${nationDef(strike.attackerId).name}'s hydrogen bomb cracked the bunker under ${city.name} (${nationDef(strike.targetNationId).name}) — the city is gone!`
         : city.hasShield && hydrogen
           ? `${nationDef(strike.attackerId).name}'s hydrogen bomb vaporized ${city.name} (${nationDef(strike.targetNationId).name}) — the shield did not matter!`
-          : city.hasShield
-            ? `${nationDef(strike.attackerId).name}'s ${warheadName} destroyed ${city.name} (${nationDef(strike.targetNationId).name}) — drones kept the shield busy!`
-            : `${nationDef(strike.attackerId).name}'s ${warheadName} destroyed ${city.name} (${nationDef(strike.targetNationId).name})!`;
+          : city.isUnderground && plague
+            ? `${nationDef(strike.attackerId).name}'s biological bomb seeped into the bunkers under ${city.name} (${nationDef(strike.targetNationId).name}) — the city is dead!`
+            : city.hasShield
+            ? `${nationDef(strike.attackerId).name}'s ${label} destroyed ${city.name} (${nationDef(strike.targetNationId).name}) — drones kept the shield busy!`
+            : `${nationDef(strike.attackerId).name}'s ${label} destroyed ${city.name} (${nationDef(strike.targetNationId).name})!`;
     hitEvent = worldEvent({
       kind: 'cityDestroyed',
       nationId: strike.targetNationId,

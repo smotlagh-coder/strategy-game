@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { ART } from '../data/art';
 import { cityGeo, launchSite } from '../data/geo';
 import { nationDef } from '../data/nations';
-import type { StrikeShow } from '../game/movie';
+import { isBallisticWeapon, type StrikeShow } from '../game/movie';
 import type { StrikeWeapon } from '../types';
 import type { CountryShape } from '../data/worldCountries';
 
@@ -12,6 +12,9 @@ export const TRACK_COLOUR: Record<StrikeWeapon, string> = {
   nuke: '#ff8a4c',
   hydrogen: '#cfeaff',
   magnetic: '#b58cff',
+  cluster: '#ffd24d',
+  biological: '#8dff4a',
+  chemical: '#dcee3c',
   drone: '#5fe3ff',
   commando: '#7dff9a',
 };
@@ -266,6 +269,7 @@ export default function StrikeGlobe({ strike, ms }: { strike: StrikeShow; ms: nu
         t.weapons.find((w) => w === 'hydrogen') ??
         t.weapons.find((w) => w === 'magnetic') ??
         t.weapons.find((w) => w === 'nuke') ??
+        t.weapons.find(isBallisticWeapon) ??
         t.weapons[0];
       return { cityId: t.cityId, weapon, lat, lon, path: route(o, toVec(lat, lon)) };
     });

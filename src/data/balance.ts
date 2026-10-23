@@ -33,6 +33,8 @@ export type BalanceProfile = {
   startingMoney: number;
   incomePerCity: number;
   researchIncome: number;
+  /** Paid every round for each standing lab; an unpaid lab sits idle. */
+  researchUpkeep: number;
   sanctionPenalty: number;
   /** Hard ceiling on stacked sanctions — four rivals at 10% stop at 40%, not 90%. */
   maxSanctionCut: number;
@@ -54,6 +56,8 @@ export type BalanceProfile = {
   scoreAngel: number;
   /** Infamy deducted from the round's most offensive seat (evil) */
   scoreEvil: number;
+  /** Banked by the attacker for each city a cluster or chemical bomb wears down (they level nothing) */
+  scoreLabHit: number;
 };
 
 /** Pre-rebalance snapshot — kept so the Monte Carlo harness can A/B. */
@@ -77,6 +81,7 @@ export const LEGACY_PROFILE: BalanceProfile = {
   startingMoney: 140,
   incomePerCity: 15,
   researchIncome: 15,
+  researchUpkeep: 0,
   sanctionPenalty: 0.1,
   maxSanctionCut: 0.9,
   survivalPointsPerCity: 10,
@@ -91,6 +96,7 @@ export const LEGACY_PROFILE: BalanceProfile = {
   scoreElimination: 0,
   scoreAngel: 0,
   scoreEvil: 0,
+  scoreLabHit: 0,
 };
 
 /**
@@ -117,7 +123,8 @@ export const CURRENT_PROFILE: BalanceProfile = {
   },
   startingMoney: 140,
   incomePerCity: 18,
-  researchIncome: 10,
+  researchIncome: 0,
+  researchUpkeep: 5,
   sanctionPenalty: 0.1,
   maxSanctionCut: 0.4,
   survivalPointsPerCity: 4,
@@ -132,6 +139,7 @@ export const CURRENT_PROFILE: BalanceProfile = {
   scoreElimination: 25,
   scoreAngel: 10,
   scoreEvil: 12,
+  scoreLabHit: 10,
 };
 
 /** @deprecated Alias — the validated pack is now current. */
@@ -143,6 +151,7 @@ export const COSTS: CostTable = { ...CURRENT_PROFILE.costs };
 export let STARTING_MONEY = CURRENT_PROFILE.startingMoney;
 export let INCOME_PER_CITY = CURRENT_PROFILE.incomePerCity;
 export let RESEARCH_INCOME = CURRENT_PROFILE.researchIncome;
+export let RESEARCH_UPKEEP = CURRENT_PROFILE.researchUpkeep;
 export let SANCTION_PENALTY = CURRENT_PROFILE.sanctionPenalty;
 export let MAX_SANCTION_CUT = CURRENT_PROFILE.maxSanctionCut;
 export let SURVIVAL_POINTS_PER_CITY = CURRENT_PROFILE.survivalPointsPerCity;
@@ -157,12 +166,14 @@ export let SCORE_CAPTURE_CLEAN = CURRENT_PROFILE.scoreCaptureClean;
 export let SCORE_ELIMINATION = CURRENT_PROFILE.scoreElimination;
 export let SCORE_ANGEL = CURRENT_PROFILE.scoreAngel;
 export let SCORE_EVIL = CURRENT_PROFILE.scoreEvil;
+export let SCORE_LAB_HIT = CURRENT_PROFILE.scoreLabHit;
 
 export function applyBalanceProfile(profile: BalanceProfile): void {
   Object.assign(COSTS, profile.costs);
   STARTING_MONEY = profile.startingMoney;
   INCOME_PER_CITY = profile.incomePerCity;
   RESEARCH_INCOME = profile.researchIncome;
+  RESEARCH_UPKEEP = profile.researchUpkeep;
   SANCTION_PENALTY = profile.sanctionPenalty;
   MAX_SANCTION_CUT = profile.maxSanctionCut;
   SURVIVAL_POINTS_PER_CITY = profile.survivalPointsPerCity;
@@ -177,6 +188,7 @@ export function applyBalanceProfile(profile: BalanceProfile): void {
   SCORE_ELIMINATION = profile.scoreElimination;
   SCORE_ANGEL = profile.scoreAngel;
   SCORE_EVIL = profile.scoreEvil;
+  SCORE_LAB_HIT = profile.scoreLabHit;
 }
 
 export function activeBalanceName(): BalanceProfile['name'] {

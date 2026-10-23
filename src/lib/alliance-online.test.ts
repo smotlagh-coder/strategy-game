@@ -8,6 +8,7 @@ import {
   incomingInvites,
   leaveAlliance,
   outgoingInvite,
+  pactPayment,
   proposeAlliance,
   tributeFrom,
 } from '../game/alliance';
@@ -257,8 +258,11 @@ describe('alliances online: pact money', () => {
     expect(r3.round).toBe(3);
 
     const entry = (s: GameState, id: NationId) => s.lastIncomeLedger.find((e) => e.nationId === id);
-    expect(entry(r3, na)?.pactTransfer).toBe(-10);
-    expect(entry(r3, nb)?.pactTransfer).toBe(10);
+    // the payment is held to a share of what the payer earned this round
+    const paid = pactPayment(10, entry(r3, na)?.revenue ?? 0);
+    expect(paid).toBeGreaterThan(0);
+    expect(entry(r3, na)?.pactTransfer).toBe(-paid);
+    expect(entry(r3, nb)?.pactTransfer).toBe(paid);
 
     // against the same round with no pact: the payer is $10M down, the payee $10M up
     // (only this pact is removed — other pacts at the table change who is sanctioned)
@@ -271,8 +275,8 @@ describe('alliances online: pact money', () => {
       },
     });
     const without = nextRound(free(beforePay));
-    expect(r3.nations[na].money).toBeCloseTo(without.nations[na].money - 10, 6);
-    expect(r3.nations[nb].money).toBeCloseTo(without.nations[nb].money + 10, 6);
+    expect(r3.nations[na].money).toBeCloseTo(without.nations[na].money - paid, 6);
+    expect(r3.nations[nb].money).toBeCloseTo(without.nations[nb].money + paid, 6);
 
     // every client lands on the same treasuries and a second pass changes nothing
     for (const uid of room.uids) {
@@ -305,7 +309,7 @@ describe('alliances online: pact money', () => {
 });
 
 // VITE_FUZZ_SEEDS=300 npx vitest run src/lib/alliance-online.test.ts for a long soak
-const seeds = Number(import.meta.env.VITE_FUZZ_SEEDS ?? 12);
+const seeds = Number(import.meta.env.VITE_FUZZ_SEEDS ?? 20);
 const fuzzStats = { runs: 0, formed: 0, left: 0, switched: 0, aiPacts: 0, transfers: 0 };
 
 describe('alliances online: random play never breaks the table', () => {

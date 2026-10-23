@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { INCOME_PER_CITY, RESEARCH_INCOME, SANCTION_PENALTY } from '../data/nations';
+import { INCOME_PER_CITY, RESEARCH_INCOME, RESEARCH_UPKEEP, SANCTION_PENALTY } from '../data/nations';
 import {
   applyIncome,
   createInitialState,
@@ -12,9 +12,10 @@ import { mergeNationPlanning } from '../lib/onlineSync';
 import type { NationId } from '../types';
 
 describe('economy constants', () => {
-  it('pays $18M per city, $10M research, 10% sanctions capped at 40%', () => {
+  it('pays $18M per city, charges $5M per lab, 10% sanctions capped at 40%', () => {
     expect(INCOME_PER_CITY).toBe(18);
-    expect(RESEARCH_INCOME).toBe(10);
+    expect(RESEARCH_INCOME).toBe(0);
+    expect(RESEARCH_UPKEEP).toBe(5);
     expect(SANCTION_PENALTY).toBe(0.1);
   });
 });
@@ -64,7 +65,7 @@ describe('applyIncome', () => {
     expect(s.nations.us.money).toBe(INCOME_PER_CITY);
   });
 
-  it('adds research income and applies 10% sanctions', () => {
+  it('bills lab upkeep out of the treasury and applies 10% sanctions', () => {
     const base = createInitialState();
     const us = {
       ...base.nations.us,
@@ -84,8 +85,9 @@ describe('applyIncome', () => {
       turnOrder: seatTable(['us', 'uk']),
       nations: { ...base.nations, us, uk },
     });
-    // gross 54 + 10 = 64, −10% → 57.6 → 58, + previous 10 → 68
-    expect(s.nations.us.money).toBe(68);
+    // gross 54, −10% → 48.6 → 49, + previous 10, − 5 lab upkeep → 54
+    expect(s.nations.us.money).toBe(54);
+    expect(s.lastIncomeLedger.find((e) => e.nationId === 'us')?.researchUpkeep).toBe(RESEARCH_UPKEEP);
   });
 
   it('caps stacked sanctions so four rivals cannot wipe the treasury', () => {

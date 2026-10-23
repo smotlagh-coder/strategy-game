@@ -28,8 +28,32 @@ export type Phase =
   | 'gameOver'
   | 'leaderboard';
 
-/** Ballistic warhead kinds — all require Ballistic Missile Tech */
-export type WarheadKind = 'nuke' | 'hydrogen' | 'magnetic';
+/**
+ * Ballistic warhead kinds. The first three are bought and need Ballistic Missile
+ * Tech; the last three are bombs that exist only as research inventions (see
+ * game/inventions.ts) and are fired from the lab's own stock.
+ */
+export type WarheadKind =
+  | 'nuke'
+  | 'hydrogen'
+  | 'magnetic'
+  | 'cluster'
+  | 'biological'
+  | 'chemical';
+
+/**
+ * What a research lab can invent: the three bombs that cannot be bought, and the
+ * defence drones that guard a city (an invention, but not a weapon).
+ */
+export type InventionKind =
+  | 'cluster'
+  | 'biological'
+  | 'chemical'
+  | 'defenseDrones'
+  /** Not a weapon: the lab hands the nation Ballistic Missile Tech outright */
+  | 'ballisticTech'
+  /** Not a weapon: the lab hands the nation Aerospace Tech outright */
+  | 'aerospaceTech';
 
 /**
  * Everything a nation can send at an enemy city. 'commando' is the
@@ -129,6 +153,17 @@ export interface NationState {
   /** City ids this nation sent commandos to this round */
   citiesRaidedThisRound?: string[];
   researchCenters: number;
+  /** Rounds this nation has run a working research lab (every third one ends in an invention) */
+  labRounds?: number;
+  /**
+   * Bombs the labs have invented, in order. Append-only and picked from a fixed
+   * seed, so every client derives the same list and an online merge keeps the longer one.
+   */
+  inventions?: InventionKind[];
+  /** Invented bombs already launched, per kind (online merge keeps the larger count) */
+  inventionsUsed?: Partial<Record<InventionKind, number>>;
+  /** Round the latest invention was announced (drives the lab overlay) */
+  inventionRound?: number;
   /** Spy service bought — reveals enemy city defences for the rest of the game */
   hasSpyNetwork: boolean;
   /** Enemy city ids this nation has seen the defences of, by spying or by swarm */
@@ -223,7 +258,11 @@ export interface RoundWorldEvent {
     | 'strikeAbsorbed'
     | 'cityRebuilt'
     | 'cityCaptured'
-    | 'raidRepelled';
+    | 'raidRepelled'
+    /** A laser network shot a chemical or biological bomb out of the sky */
+    | 'warheadIntercepted'
+    /** Defence drones met an incoming attack in the sky and neutralised it */
+    | 'strikeNeutralized';
   nationId: NationId;
   cityId?: string;
   cityName?: string;
@@ -236,6 +275,8 @@ export interface RoundWorldEvent {
   automatic?: boolean;
   /** What was covering the city when this strike landed */
   cover?: 'shield' | 'bunker' | 'laser';
+  /** The weapon behind a hit that is not a plain warhead or swarm (cluster, gas) */
+  weapon?: StrikeWeapon;
   /** A magnetic bomb had already darkened a laser network for this hit */
   laserDown?: boolean;
   /** An ally's laser network covered the city (its own network was spent or absent) */
@@ -260,6 +301,10 @@ export interface IncomeLedgerEntry {
   pactTransfer?: number;
   /** Repair bill for drone damage taken last round */
   droneDamage?: number;
+  /** Lab running costs paid this round */
+  researchUpkeep?: number;
+  /** Labs left idle because the treasury could not cover their upkeep */
+  labsIdle?: number;
 }
 
 export interface GameState {
@@ -268,6 +313,8 @@ export interface GameState {
   round: number;
   maxRounds: number;
   nations: Record<NationId, NationState>;
+  /** Per-match number that decides what the research labs invent (same on every client) */
+  matchSeed?: number;
   turnOrder: NationId[];
   currentTurnIndex: number;
   selectingFor: number;

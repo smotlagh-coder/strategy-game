@@ -912,9 +912,14 @@
 }
 
 .mv-rocket__body {
+  position: absolute;
+  left: 50%;
+  top: 0;
   display: block;
-  width: 100%;
+  width: auto;
+  max-width: none;
   height: 100%;
+  translate: -50% 0;
   filter: drop-shadow(0 1vmin 1.4vmin rgba(0, 0, 0, 0.6));
 }
 
@@ -1124,10 +1129,63 @@
 }
 
 .mv-missile__body img:not(.mv-missile__flame) {
+  position: absolute;
+  left: 50%;
+  top: 0;
   display: block;
-  width: 100%;
+  width: auto;
+  max-width: none;
   height: 100%;
+  translate: -50% 0;
   filter: drop-shadow(0 0 1.4vmin rgba(255, 150, 60, 0.8));
+}
+
+/* Each bomb's re-entry glows its own colour */
+.mv-missile.is-biological .mv-missile__body img:not(.mv-missile__flame) { filter: drop-shadow(0 0 1.6vmin rgba(120, 255, 70, 0.9)); }
+.mv-missile.is-chemical .mv-missile__body img:not(.mv-missile__flame) { filter: drop-shadow(0 0 1.6vmin rgba(255, 225, 60, 0.9)); }
+.mv-missile.is-biological .mv-missile__trail { background: linear-gradient(to top, rgba(210, 255, 170, 0.8), rgba(90, 220, 50, 0.35) 30%, transparent); }
+.mv-missile.is-chemical .mv-missile__trail { background: linear-gradient(to top, rgba(255, 245, 160, 0.8), rgba(235, 200, 30, 0.35) 30%, transparent); }
+.mv-missile.is-biological .mv-missile__flame { filter: hue-rotate(60deg) saturate(1.3); }
+.mv-missile.is-chemical .mv-missile__flame { filter: hue-rotate(10deg) saturate(1.2); }
+
+/* Cluster: the dispenser opens and the bomblets fan out over the city */
+.mv-bomblet {
+  position: absolute;
+  left: 50%;
+  top: 20%;
+  width: 2.4vmin;
+  height: 5.6vmin;
+  margin-left: -1.2vmin;
+  border-radius: 45% 45% 30% 30%;
+  background: linear-gradient(#59615a, #20241f 70%, #e8820c 72%, #e8820c 82%, #20241f 84%);
+  box-shadow: 0 0 2.4vmin 0.4vmin rgba(255, 150, 60, 0.95), 0 -3vmin 2vmin rgba(255, 200, 120, 0.5);
+  opacity: 0;
+  z-index: 4;
+  pointer-events: none;
+  animation: mvBomblet 320ms cubic-bezier(0.4, 0, 0.9, 0.7) var(--at) forwards;
+}
+
+@keyframes mvBomblet {
+  0% { opacity: 1; left: 50%; top: 20%; transform: rotate(0deg) scale(1.2); }
+  88% { opacity: 1; }
+  100% { opacity: 0; left: var(--x); top: var(--y); transform: rotate(var(--spin)) scale(0.8); }
+}
+
+/* Cluster flash where the casing splits */
+.mv-split {
+  position: absolute;
+  left: 50%;
+  top: 20%;
+  width: 22vmin;
+  aspect-ratio: 1;
+  translate: -50% -50%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 245, 210, 0.95), rgba(255, 160, 50, 0.55) 35%, transparent 65%);
+  mix-blend-mode: screen;
+  opacity: 0;
+  z-index: 4;
+  pointer-events: none;
+  animation: mvPop 500ms ease-out var(--at) both;
 }
 
 .mv-missile__flame {
@@ -1302,6 +1360,14 @@
 .mv-dustcloud.is-late { left: 42%; width: 120%; scale: -1 1; }
 .mv-dustcloud.is-low { bottom: -2%; width: 95%; animation-duration: 2600ms; }
 .mv-dustcloud.is-crash { left: calc(50% + var(--city) * 0.16); width: 60%; }
+/* Nerve gas: the same drifting cloud, sickly green */
+.mv-dustcloud.is-gas { filter: sepia(1) hue-rotate(15deg) saturate(3.4) brightness(1.1); mix-blend-mode: screen; }
+/* Plague: the same cloud, a deeper living green that lingers over the dead streets */
+.mv-dustcloud.is-toxic { filter: sepia(1) hue-rotate(78deg) saturate(3.6) brightness(1); mix-blend-mode: screen; animation-duration: 4600ms; }
+.mv-flash.is-toxic { background: radial-gradient(circle, rgba(235, 255, 200, 0.95), rgba(110, 230, 60, 0.6) 32%, transparent 62%); }
+.mv-flash--screen.is-toxic { background: rgba(120, 255, 70, 0.28); }
+.mv-shock.is-biological { border-color: rgba(140, 255, 90, 0.85); box-shadow: 0 0 5vmin rgba(100, 230, 60, 0.7); }
+.mv-embers.is-spores i { background: #9dff5a; box-shadow: 0 0 1.2vmin #6fe03a; }
 
 @keyframes mvDustCloud {
   0% { opacity: 0; transform: scale(0.3); }
@@ -1656,6 +1722,8 @@
   pointer-events: none;
 }
 
+.mv-hurt.is-gas { background: radial-gradient(ellipse at 50% 60%, rgba(150, 230, 40, 0.5), transparent 70%); }
+
 @keyframes mvHurtPulse {
   0%, 100% { opacity: 0; }
   25% { opacity: 1; }
@@ -1950,3 +2018,120 @@
   18% { opacity: 0.5; }
   100% { opacity: 0; transform: translate(-60%, -30%) scale(2.6, 1.5); }
 }
+
+/* Defence drones: they climb out of the city, meet the attack in the sky and neutralise it */
+.mv-defdrone {
+  position: absolute;
+  left: var(--x0);
+  top: var(--y0);
+  width: 10%;
+  translate: -50% -50%;
+  rotate: var(--rot);
+  z-index: 5;
+  opacity: 0;
+  pointer-events: none;
+  animation:
+    mvDefFly var(--fly) cubic-bezier(0.25, 0.6, 0.35, 1) var(--launch) both,
+    mvDefBreak 900ms ease-in var(--meet) forwards;
+}
+
+.mv-defdrone img {
+  display: block;
+  width: 100%;
+  filter: brightness(1.35) drop-shadow(0 0 1.1vmin rgba(100, 210, 255, 0.95));
+}
+
+/* A bright exhaust streak behind each drone, so the climb reads as a flight path */
+.mv-defdrone::after {
+  content: '';
+  position: absolute;
+  right: 72%;
+  top: 44%;
+  width: 260%;
+  height: 12%;
+  border-radius: 999px;
+  background: linear-gradient(to left, rgba(170, 232, 255, 0.95), rgba(90, 190, 255, 0.35) 45%, transparent);
+  filter: blur(0.35vmin);
+}
+
+@keyframes mvDefFly {
+  0% { left: var(--x0); top: var(--y0); opacity: 0; transform: scale(0.4); }
+  12% { opacity: 1; }
+  100% { left: var(--x1); top: var(--y1); opacity: 1; transform: scale(0.95); }
+}
+
+@keyframes mvDefBreak {
+  0% { opacity: 1; transform: scale(0.95); }
+  100% { opacity: 0; transform: translate(calc((var(--n) - 2) * 3vmin), -3vmin) scale(0.8); }
+}
+
+/* The missile or squad in the defence drones' sights: cut it off where it dies */
+.mv-missile.is-shot {
+  animation: mvFallShot 750ms cubic-bezier(0.5, 0, 0.9, 0.6) var(--lead) both;
+}
+
+@keyframes mvFallShot {
+  0% { opacity: 1; transform: translateY(-120vh); }
+  96% { opacity: 1; transform: translateY(-92%); }
+  100% { opacity: 0; transform: translateY(-92%); }
+}
+
+.mv-airburst.is-intercept {
+  width: 46%;
+  z-index: 6;
+}
+
+/* Ring of cold light where an attack is neutralised */
+.mv-intercept-ring {
+  position: absolute;
+  width: 32%;
+  aspect-ratio: 1;
+  translate: -50% -50%;
+  border-radius: 50%;
+  border: 0.5vmin solid rgba(150, 228, 255, 0.95);
+  box-shadow: 0 0 2.2vmin rgba(90, 205, 255, 0.85), inset 0 0 2.2vmin rgba(90, 205, 255, 0.6);
+  opacity: 0;
+  z-index: 6;
+  pointer-events: none;
+  animation: mvRing 950ms ease-out var(--at) both;
+}
+
+@keyframes mvRing {
+  0% { opacity: 0; transform: scale(0.1); }
+  15% { opacity: 1; }
+  100% { opacity: 0; transform: scale(1.5); }
+}
+
+/* Burning fragments of the neutralised attack, falling clear of the city */
+.mv-debris {
+  position: absolute;
+  width: 0;
+  height: 0;
+  z-index: 6;
+  pointer-events: none;
+}
+
+.mv-debris i {
+  position: absolute;
+  width: 1.4vmin;
+  height: 0.5vmin;
+  border-radius: 1px;
+  background: #ffc16a;
+  box-shadow: 0 0 1vmin #ff8a30;
+  opacity: 0;
+  animation: mvDebris 1200ms cubic-bezier(0.3, 0.1, 0.7, 1) var(--at) both;
+}
+
+@keyframes mvDebris {
+  0% { opacity: 0; transform: translate(0, 0) rotate(0deg); }
+  10% { opacity: 1; }
+  100% { opacity: 0; transform: translate(calc((var(--n) - 2.5) * 4.5vmin), 17vmin) rotate(calc(var(--n) * 130deg)); }
+}
+
+.mv-cover-tag {
+  border-color: rgba(120, 215, 255, 0.8);
+  color: #9fe3ff;
+}
+
+.mv-caption.is-defended,
+.mv-caption.is-shotDown { border-color: #7fd8ff; color: #d8f4ff; }

@@ -1,8 +1,11 @@
 import {
+  CLUSTER_DAMAGE_OPEN,
+  CLUSTER_DAMAGE_PROTECTED,
   COSTS,
+  LAB_ROUNDS_PER_INVENTION,
   MAX_BOMBS_PER_ROUND,
   MONEY_SCALE,
-  RESEARCH_INCOME,
+  RESEARCH_UPKEEP,
   SCORE_CITY,
   SCORE_RESEARCH,
   SURVIVAL_POINTS_PER_CITY,
@@ -129,7 +132,10 @@ export function threatScore(state: GameState, id: NationId): number {
   return (
     computeScore(state, id).total +
     cities * SURVIVAL_POINTS_PER_CITY * roundsLeft +
-    researchCount(state, id) * (SCORE_RESEARCH + (RESEARCH_INCOME / MONEY_SCALE) * roundsLeft) +
+    researchCount(state, id) *
+      (SCORE_RESEARCH +
+        (roundsLeft >= LAB_ROUNDS_PER_INVENTION ? SCORE_CITY / 2 : 0) -
+        (RESEARCH_UPKEEP / MONEY_SCALE) * roundsLeft) +
     arsenal
   );
 }
@@ -189,14 +195,17 @@ export function rankedRivals(state: GameState, attackerId: NationId): NationId[]
 export function pickBombTarget(
   state: GameState,
   attackerId: NationId,
+  /** A city the squad is about to take: a warhead would only leave rubble. */
+  avoid?: string,
 ): { nationId: NationId; cityId: string } | null {
   const alreadyHit = new Set(state.nations[attackerId].citiesStruckThisRound);
+  if (avoid) alreadyHit.add(avoid);
   const escorts = freeDrones(state, attackerId);
   const weighed = weighRivals(state, attackerId);
   const blind = !state.nations[attackerId].hasSpyNetwork;
 
   const eligible = (c: City) => !c.destroyed && !c.isUnderground && !alreadyHit.has(c.id);
-  // Research is recurring income + end score; a bare city is still the clean kill
+  // A lab is a bomb factory + end score; a bare city is still the clean kill
   const worth = (c: City) => (c.hasResearch ? 2 : 0) + (c.hasShield ? 0 : 1);
 
   const killableOn = (rival: NationId) => {
@@ -241,6 +250,103 @@ export function pickBombTarget(
   return null;
 }
 
+/**
+ * The labs' bombs each have a job, so the AI hands each to the target it suits:
+ * gas at a city with no shield and no laser network to stop it (a bunker holds it
+ * out), a cluster bomb at the rival with the most cities to bill, a plague at a
+ * city nothing else can kill, as long as no laser or shield is there to stop it.
+ */
+function pickLabTarget(
+  state: GameState,
+  attackerId: NationId,
+  weapon: 'chemical' | 'cluster' | 'biological',
+  avoid?: string,
+): { nationId: NationId; cityId: string } | null {
+  const struck = new Set(state.nations[attackerId].citiesStruckThisRound);
+  const weighed = weighRivals(state, attackerId);
+  // A beam shoots gas and plague down; a magnetic bomb of ours over the nation blacks it out
+  const beamsUp = (rivalId: NationId) => laserShotsKnownTo(state, attackerId, rivalId) > 0;
+  // A swarm of ours over the city ties its shield up for the bomb behind it
+  const swarmed = (rivalId: NationId, c: City) =>
+    state.pendingStrikes.some(
+      (p) =>
+        p.attackerId === attackerId &&
+        p.weapon === 'drone' &&
+        p.targetNationId === rivalId &&
+        p.cityId === c.id,
+    );
+  const open = (rivalId: NationId, c: City) =>
+    !c.destroyed && !struck.has(c.id) && c.id !== avoid && (!c.hasShield || swarmed(rivalId, c));
+
+  if (weapon === 'cluster') {
+    // One canister reaches every city: open ones bill double, so aim at the biggest bill
+    const bill = (id: NationId) =>
+      seenCities(state, attackerId, id)
+        .filter((c) => !c.destroyed)
+        .reduce(
+          (sum, c) =>
+            sum + (c.hasShield || c.isUnderground || c.hasLaser ? CLUSTER_DAMAGE_PROTECTED : CLUSTER_DAMAGE_OPEN),
+          0,
+        );
+    const rival = [...weighed].sort((a, b) => bill(b.id) - bill(a.id))[0];
+    if (!rival) return null;
+    const cities = state.nations[rival.id].cities.filter((c) => !c.destroyed && !struck.has(c.id));
+    const pick = pickBest(cities, (c) => (c.hasResearch ? 2 : 1), `${attackerId}:${state.round}:cluster:${rival.id}`);
+    return pick ? { nationId: rival.id, cityId: pick.id } : null;
+  }
+
+  if (weapon === 'chemical') {
+    // A city we cannot read is a gamble worth taking: gas costs nothing to keep
+    const value = (rivalId: NationId, c: City) =>
+      seesCity(state, attackerId, rivalId, c.id) ? 1 + (c.hasResearch ? 2 : 0) + (c.hasLaser ? 2 : 0) : 1;
+    for (const rival of weighed) {
+      if (beamsUp(rival.id)) continue;
+      const pick = pickBest(
+        seenCities(state, attackerId, rival.id).filter((c) => open(rival.id, c) && !c.isUnderground),
+        (c) => value(rival.id, c),
+        `${attackerId}:${state.round}:gas:${rival.id}`,
+      );
+      if (pick) return { nationId: rival.id, cityId: pick.id };
+    }
+    return null;
+  }
+
+  // Plague: seeps into a bunker, so a dug-in city is what it is for
+  const worth = (c: City) => (c.isUnderground ? 3 : 0) + (c.hasResearch ? 2 : 0) + (c.hasLaser ? 1 : 0) + 1;
+  for (const rival of weighed) {
+    if (beamsUp(rival.id)) continue;
+    const pick = pickBest(
+      seenCities(state, attackerId, rival.id).filter((c) => open(rival.id, c)),
+      worth,
+      `${attackerId}:${state.round}:plague:${rival.id}`,
+    );
+    if (pick) return { nationId: rival.id, cityId: pick.id };
+  }
+  return null;
+}
+
+/**
+ * Queue every bomb the labs invented. Exported so the balance harness can give
+ * its scripted archetypes the same free bombs the live AI gets.
+ */
+export function runAiLabBombs(
+  state: GameState,
+  nationId: NationId,
+  avoid?: string,
+): GameState {
+  let s = state;
+  for (const lab of ['chemical', 'cluster', 'biological'] as const) {
+    while (warheadStock(s.nations[nationId], lab) > 0) {
+      const pick = pickLabTarget(s, nationId, lab, avoid);
+      if (!pick) break;
+      const before = s;
+      s = queueStrike(s, pick.nationId, pick.cityId, nationId, lab);
+      if (s === before) break;
+    }
+  }
+  return s;
+}
+
 /** Drones cannot level a city, so send them where the repair bill bites hardest. */
 export function pickDroneTarget(
   state: GameState,
@@ -258,8 +364,12 @@ export function pickDroneTarget(
       .filter(
         (s) =>
           s.attackerId === attackerId &&
-          s.weapon !== 'drone' &&
-          s.weapon !== 'hydrogen',
+          // Only a plain warhead, a magnetic bomb, gas or plague needs the shield kept busy
+          (s.weapon === 'nuke' ||
+            s.weapon === 'magnetic' ||
+            s.weapon === 'chemical' ||
+            s.weapon === 'biological' ||
+            !s.weapon),
       )
       .map((s) => `${s.targetNationId}:${s.cityId}`),
   );
@@ -312,10 +422,11 @@ export function pickDroneTarget(
 export function pickRaidTarget(
   state: GameState,
   attackerId: NationId,
-): { nationId: NationId; cityId: string } | null {
+  opts: { escorts?: number } = {},
+): { nationId: NationId; cityId: string; escort?: boolean } | null {
   const raided = new Set(state.nations[attackerId].citiesRaidedThisRound ?? []);
   const weighed = weighRivals(state, attackerId);
-  const picks: { nationId: NationId; cityId: string; score: number }[] = [];
+  const picks: { nationId: NationId; cityId: string; score: number; escort: boolean }[] = [];
   for (const rival of weighed) {
     const covered = laserShotsKnownTo(state, attackerId, rival.id) > 0;
     for (const raw of state.nations[rival.id].cities) {
@@ -324,20 +435,34 @@ export function pickRaidTarget(
       const view = cityAsSeenBy(state, attackerId, rival.id, raw);
       const stripped = raw.capturedRound != null && raw.capturedRound >= state.round - 1;
       const ours = raw.originId === attackerId;
+      // A swarm already ordered onto the city holds its shield down for the squad
+      const held = state.pendingStrikes.some(
+        (p) => p.attackerId === attackerId && p.weapon === 'drone' && p.cityId === raw.id,
+      );
+      const canEscort = (opts.escorts ?? 0) > 0 && !covered;
+      const needsEscort = known && view.hasShield && !held;
       const open = known
-        ? !view.isUnderground && !view.hasShield && !covered
+        ? !view.isUnderground && !covered && (!view.hasShield || held || canEscort)
         : (ours || stripped) && !covered;
       if (!open) continue;
       picks.push({
         nationId: rival.id,
         cityId: raw.id,
-        score: rival.weight + (ours ? 60 : 0) + (stripped ? 15 : 0) + (view.hasResearch ? 8 : 0),
+        escort: needsEscort,
+        score:
+          rival.weight +
+          (ours ? 60 : 0) +
+          (stripped ? 15 : 0) +
+          (view.hasResearch ? 8 : 0) -
+          (needsEscort ? 10 : 0),
       });
     }
   }
   picks.sort((a, b) => b.score - a.score);
   const best = picks[0];
-  return best ? { nationId: best.nationId, cityId: best.cityId } : null;
+  return best
+    ? { nationId: best.nationId, cityId: best.cityId, ...(best.escort ? { escort: true } : {}) }
+    : null;
 }
 
 /** Enemy cities a warhead could actually take off the board this round. */
@@ -359,7 +484,7 @@ function openTargets(state: GameState, id: NationId): City[] {
  * AI purchases only — leaves phase on 'action'.
  *
  * Shape of the plan, in the order that won the strategy simulation: rubble
- * back on the board first, then two research centres for the income, then a
+ * back on the board first, then one research centre, if a bomb can still finish, then a
  * shield on the most valuable exposed city (the rules allow one a round), then
  * as many warheads as there are cities they can actually level. From round 2
  * a strike package is reserved ahead of all of that, because a warhead bought
@@ -403,10 +528,15 @@ export function runAiBuyPhase(state: GameState): GameState {
     s = buyNuclearTech(s, id);
   }
 
-  // One centre pays for itself in two rounds at the live research income; a
-  // second is still good value, a third paints a bullseye. One site a round.
-  // City is hashed so every AI does not plant labs on the same seat index.
-  if (researchCount(s, id) < 2 && canBuyResearch(s, id) && budget() >= COSTS.research) {
+  // A lab costs its upkeep every round and only repays that with a bomb every
+  // few rounds, so it needs time to finish one and cash to keep it running.
+  // One is all the clock can use. City is hashed so every AI does not plant
+  // labs on the same seat index.
+  if (
+    researchCount(s, id) < 1 &&
+    canBuyResearch(s, id) &&
+    budget() >= COSTS.research + RESEARCH_UPKEEP * 2
+  ) {
     const spot = pickCity(
       me().cities.filter((c) => !c.destroyed && !c.hasResearch),
       `${id}:${s.round}:research`,
@@ -457,9 +587,31 @@ export function runAiBuyPhase(state: GameState): GameState {
     if (pick) s = buyLaser(s, pick.id, id);
   }
 
+  // Conquest. A squad that lands turns a rival's city into our own: its score,
+  // its income and its lab swing to us, and the rival loses all of it. A warhead
+  // on the same city only removes it. So when a city the squad can actually walk
+  // into is known, the squad outranks warheads for the money — one pack of drones
+  // too if a shield stands in the way. The city is then kept off the warhead list.
+  let conquest: { nationId: NationId; cityId: string; escort?: boolean } | null = null;
+  if (commandoStock(me()) < 1 && maxCommandosPurchasable(s, id) > 0) {
+    const plan = pickRaidTarget(s, id, { escorts: 1 });
+    const price = COSTS.commando + (plan?.escort && me().drones < 1 ? COSTS.drone : 0);
+    if (plan && spare() >= price) {
+      if (plan.escort && me().drones < 1) {
+        if (maxDronesPurchasable(s, id) > 0) s = buyDrone(s, id);
+      }
+      if (!plan.escort || me().drones > 0) {
+        s = buyCommando(s, id);
+        conquest = plan;
+      }
+    }
+  } else if (commandoStock(me()) > 0) {
+    conquest = pickRaidTarget(s, id, { escorts: me().drones });
+  }
+
   // Size the arsenal to what it can kill: open cities, plus shielded ones we
   // can suppress with a swarm in the same volley.
-  const targets = openTargets(s, id);
+  const targets = openTargets(s, id).filter((c) => c.id !== conquest?.cityId);
   const undefended = targets.filter((c) => !c.hasShield).length;
   // Without a spy service the shielded city cannot be picked out, but the
   // count is public on the scoreboard: a nation that knows three shields are
@@ -562,18 +714,6 @@ export function runAiBuyPhase(state: GameState): GameState {
     if (keep) s = buyUnderground(s, keep.id, id);
   }
 
-  // Out of spare cash, a squad is the best way to turn a city nothing covers into
-  // our own: only bought with the tech already in hand and a city to take
-  if (
-    s.round < s.maxRounds &&
-    commandoStock(me()) < 1 &&
-    maxCommandosPurchasable(s, id) > 0 &&
-    spare() >= COSTS.commando &&
-    pickRaidTarget(s, id)
-  ) {
-    s = buyCommando(s, id);
-  }
-
   return finishBuyPhase(s);
 }
 
@@ -627,6 +767,22 @@ export function runAiNationTurn(state: GameState, nationId: NationId): GameState
   s = runAiBuyPhase(s);
   s = runAiDiplomacy(s);
 
+  // The squad's city comes first: a swarm over its shield now, and no warhead
+  // aimed at the city it is about to take
+  let raid: { nationId: NationId; cityId: string; escort?: boolean } | null = null;
+  if (commandoStock(s.nations[nationId]) > 0) {
+    raid = pickRaidTarget(s, nationId, { escorts: freeDrones(s, nationId) });
+    if (raid?.escort) {
+      const before = s;
+      s = queueStrike(s, raid.nationId, raid.cityId, nationId, 'drone');
+      if (s === before) raid = null;
+    }
+  }
+  const avoid = raid?.cityId;
+
+  // The labs' own bombs are free, so they go first, each at the job it suits
+  s = runAiLabBombs(s, nationId, avoid);
+
   while (totalWarheads(s.nations[nationId]) > 0) {
     const stock = s.nations[nationId];
     let weapon: WarheadKind = 'nuke';
@@ -660,6 +816,7 @@ export function runAiNationTurn(state: GameState, nationId: NationId): GameState
           (c) =>
             !c.destroyed &&
             !c.isUnderground &&
+            c.id !== avoid &&
             !s.nations[nationId].citiesStruckThisRound.includes(c.id),
         );
         const pick =
@@ -675,7 +832,7 @@ export function runAiNationTurn(state: GameState, nationId: NationId): GameState
 
     // 3) Ordinary nuclear (or leftover specialty with nowhere special to go)
     if (!target) {
-      target = pickBombTarget(s, nationId);
+      target = pickBombTarget(s, nationId, avoid);
       if (!target) {
         // Specialty left but no legal city this round — stop rather than loop
         break;
@@ -698,7 +855,7 @@ export function runAiNationTurn(state: GameState, nationId: NationId): GameState
     const city = seenCities(s, nationId, target.nationId).find((c) => c.id === target.cityId);
     const shots = weapon === 'magnetic' ? 0 : laserShotsKnownTo(s, nationId, target.nationId);
     if (
-      weapon !== 'hydrogen' &&
+      (weapon === 'nuke' || weapon === 'magnetic') &&
       city?.hasShield &&
       s.nations[nationId].drones > shots
     ) {
@@ -724,7 +881,7 @@ export function runAiNationTurn(state: GameState, nationId: NationId): GameState
 
   // The squad goes last, after the drones that may have tied up a shield
   while (commandoStock(s.nations[nationId]) > 0) {
-    const target = pickRaidTarget(s, nationId);
+    const target = pickRaidTarget(s, nationId, { escorts: 0 });
     if (!target) break;
     const before = s;
     s = queueStrike(s, target.nationId, target.cityId, nationId, 'commando');

@@ -31,6 +31,7 @@ import {
   buyLaser,
   buyShield,
   canBuyBombs,
+  canBuyLaser,
   canBuySpyNetwork,
   createInitialState,
   laserCoverFor,
@@ -213,49 +214,44 @@ describe('laser cover', () => {
     return buyLaser(s, s.nations.us.cities[0].id, 'us');
   };
 
-  it('lets a laser network defend the ally too', () => {
+  it('does not let an ally’s laser defend the other ally’s cities', () => {
     const s = allied(lasered());
-    expect(laserCoverFor(s, 'uk')).toBe('us');
-    let strike = queueStrike(s, 'uk', s.nations.uk.cities[0].id, 'russia', 'drone');
-    strike = resolveAll(strike);
-    expect(strike.nations.uk.pendingDroneDamage ?? 0).toBe(0);
-    expect(strike.nations.us.dronesInterceptedThisRound).toBe(1);
-    const event = strike.roundEvents.find((e) => e.kind === 'dronesIntercepted');
-    expect(event?.nationId).toBe('uk');
-    expect(event?.coveredBy).toBe('us');
-  });
-
-  it('gives no cover without a pact', () => {
-    const s = lasered();
     expect(laserCoverFor(s, 'uk')).toBeNull();
     const hit = resolveAll(queueStrike(s, 'uk', s.nations.uk.cities[0].id, 'russia', 'drone'));
     expect(hit.nations.uk.pendingDroneDamage ?? 0).toBeGreaterThan(0);
+    expect(hit.nations.us.dronesInterceptedThisRound).toBe(0);
+    expect(hit.roundEvents.map((e) => e.kind)).not.toContain('dronesIntercepted');
   });
 
-  it('uses the nation’s own network first, then the ally’s', () => {
-    let s = allied(lasered());
-    s = buyLaser(
-      { ...s, nations: { ...s.nations, uk: { ...s.nations.uk, hasAerospaceTech: true, aerospaceTechUnlockedRound: 0 } } },
-      s.nations.uk.cities[0].id,
-      'uk',
-    );
-    expect(laserCoverFor(s, 'uk')).toBe('uk');
-    s = { ...s, nations: { ...s.nations, uk: { ...s.nations.uk, dronesInterceptedThisRound: 2 } } };
-    expect(laserCoverFor(s, 'uk')).toBe('us');
+  it('still covers every city of the nation that owns it', () => {
+    const s = allied(lasered());
+    expect(laserCoverFor(s, 'us')).toBe('us');
+    const shot = resolveAll(queueStrike(s, 'us', s.nations.us.cities[1].id, 'russia', 'drone'));
+    expect(shot.nations.us.dronesInterceptedThisRound).toBe(1);
   });
 
-  it('counts the ally’s shots in what an attacker can plan on', () => {
+  it('shares the aerospace tech, so the ally builds its own laser for the laser price alone', () => {
+    const s = allied(lasered());
+    const before = s.nations.uk.money;
+    expect(canBuyLaser(s, 'uk')).toBe(true);
+    const built = buyLaser(s, s.nations.uk.cities[0].id, 'uk');
+    expect(built.nations.uk.cities[0].hasLaser).toBe(true);
+    expect(before - built.nations.uk.money).toBe(COSTS.laser);
+    expect(laserCoverFor(built, 'uk')).toBe('uk');
+  });
+
+  it('gives an attacker no ally shots to plan around', () => {
     const s = allied({ ...lasered() });
     const spied = { ...s, nations: { ...s.nations, russia: { ...s.nations.russia, hasSpyNetwork: true } } };
-    expect(laserShotsKnownTo(spied, 'russia', 'uk')).toBeGreaterThan(0);
-    expect(laserShotsKnownTo(spied, 'russia', 'france')).toBe(0);
+    expect(laserShotsKnownTo(spied, 'russia', 'us')).toBeGreaterThan(0);
+    expect(laserShotsKnownTo(spied, 'russia', 'uk')).toBe(0);
   });
 });
 
-describe('a magnetic bomb over an ally’s laser', () => {
+describe('a magnetic bomb over a laser', () => {
   const combo = (weapons: ('drone' | 'commando' | 'magnetic')[]) => {
     let s = table({
-      us: { hasAerospaceTech: true, aerospaceTechUnlockedRound: 0 },
+      uk: { hasAerospaceTech: true, aerospaceTechUnlockedRound: 0 },
       russia: {
         money: 0,
         bombs: 0,
@@ -269,19 +265,17 @@ describe('a magnetic bomb over an ally’s laser', () => {
         hasSpyNetwork: true,
       },
     });
-    s = buyLaser(s, s.nations.us.cities[0].id, 'us');
+    s = buyLaser(s, s.nations.uk.cities[0].id, 'uk');
     const target = s.nations.uk.cities[0];
     s = buyShield(s, target.id, 'uk');
-    s = allied(s);
     for (const w of weapons) s = queueStrike(s, 'uk', target.id, 'russia', w);
     return { s, target };
   };
 
-  it('puts no laser over the city, not even the ally’s', () => {
+  it('puts no laser over the city it is aimed at', () => {
     const { s, target } = combo(['magnetic', 'commando']);
     expect(laserCoverFor(s, 'uk', target.id)).toBeNull();
-    // The ally's laser still covers the ally's other cities
-    expect(laserCoverFor(s, 'uk', s.nations.uk.cities[1].id)).toBe('us');
+    expect(laserCoverFor(s, 'uk', s.nations.uk.cities[1].id)).toBeNull();
   });
 
   it('scatters the shield and lets the squad take the city', () => {
@@ -292,7 +286,6 @@ describe('a magnetic bomb over an ally’s laser', () => {
     expect(kinds).toContain('cityCaptured');
     expect(kinds).not.toContain('raidRepelled');
     expect(s.nations.russia.cities.some((c) => c.id === target.id)).toBe(true);
-    // The film is told the lasers went dark
     expect(s.roundEvents.find((e) => e.kind === 'shieldDestroyed')?.laserDown).toBe(true);
   });
 
@@ -300,12 +293,11 @@ describe('a magnetic bomb over an ally’s laser', () => {
     const s = resolveAll(combo(['magnetic', 'drone']).s);
     const kinds = s.roundEvents.map((e) => e.kind);
     expect(kinds).not.toContain('dronesIntercepted');
-    expect(s.nations.us.dronesInterceptedThisRound).toBe(0);
-    // Nothing shot the swarm down, so it reached the city
+    expect(s.nations.uk.dronesInterceptedThisRound).toBe(0);
     expect(s.nations.uk.cities[0].destroyed || (s.nations.uk.pendingDroneDamage ?? 0) > 0).toBe(true);
   });
 
-  it('leaves the ally’s laser working on a city with no magnetic bomb over it', () => {
+  it('leaves the laser working on a city with no magnetic bomb over it', () => {
     const { s } = combo(['commando']);
     const done = resolveAll(s);
     expect(done.roundEvents.map((e) => e.kind)).toContain('raidRepelled');

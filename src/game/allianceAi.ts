@@ -71,13 +71,14 @@ export function allianceAppeal(state: GameState, viewer: NationId, partner: Nati
   const p = state.nations[partner];
   let appeal = 0;
   if (p.hasSpyNetwork && !hasSpyService(state, viewer)) appeal += 2;
-  if (laserNetwork(state, partner) && !laserNetwork(state, viewer)) appeal += 2;
   if (p.hasAerospaceTech && !hasAerospaceAccess(state, viewer)) appeal += 1.5;
   if (p.hasNuclearTech && !hasBallisticTech(state, viewer)) appeal += 1.5;
   appeal += Math.min(2, (totalWarheads(p) + p.drones) * 0.4);
   const standingCities = p.cities.filter((c) => !c.destroyed);
-  const defences = standingCities.filter((c) => c.hasShield || c.isUnderground || c.hasResearch).length;
+  const defences = standingCities.filter((c) => c.hasShield || c.hasLaser || c.isUnderground || c.hasResearch).length;
   appeal += Math.min(1.5, defences * 0.4);
+  // A partner behind lasers is a harder target to knock out (the beams cover only them)
+  if (laserNetwork(state, partner)) appeal += 1;
   // A strong partner is a better shield than a weak one
   appeal += (1 - standing(state, partner)) * 1.5;
   if (p.isHuman) appeal += HUMAN_LIKING;

@@ -65,13 +65,13 @@ describe('research centres', () => {
     expect(canBuyResearch(full, 'us')).toBe(false);
   });
 
-  it('holds the AI to a single centre per round too', () => {
+  it('holds the AI to a single centre: a second would only double the upkeep', () => {
     let s = table({ uk: { money: 300 } });
     s = runAiNationTurn(s, 'uk');
     expect(researchCount(s, 'uk')).toBe(1);
 
     s = runAiNationTurn(nextRound(s), 'uk');
-    expect(researchCount(s, 'uk')).toBe(2);
+    expect(researchCount(s, 'uk')).toBe(1);
   });
 
   it('keeps the cap when two online clients report the same round', () => {

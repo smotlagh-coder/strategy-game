@@ -2,8 +2,9 @@ import {
   COSTS,
   DRONE_DAMAGE,
   MAX_ROUNDS,
+  LAB_ROUNDS_PER_INVENTION,
   MAX_SANCTIONS,
-  RESEARCH_INCOME,
+  RESEARCH_UPKEEP,
   SANCTION_PENALTY,
   SCORE_CAPTURE,
   SCORE_CAPTURE_CLEAN,
@@ -24,7 +25,6 @@ import {
   canBuyUnderground,
   cityAsSeenBy,
   commandoStock,
-  laserNetwork,
   seesCity,
   formatMoney,
   totalWarheads,
@@ -38,7 +38,6 @@ import {
   maxMagneticBundled,
 } from './bundles';
 import {
-  allyOf,
   areAllies,
   hasAerospaceAccess,
   hasBallisticTech,
@@ -75,6 +74,8 @@ const STATUS_ORDER: BriefingCityStatus[] = [
 const EVENT_STATUS: Partial<Record<RoundWorldEvent['kind'], BriefingCityStatus>> = {
   cityRebuilt: 'rebuilt',
   dronesIntercepted: 'intercepted',
+  warheadIntercepted: 'intercepted',
+  strikeNeutralized: 'intercepted',
   droneDamage: 'swarmed',
   shieldDestroyed: 'shieldLost',
   strikeAbsorbed: 'absorbed',
@@ -483,9 +484,9 @@ function findWeakness(
         COSTS.bomb,
       )}) or a rebuild (${cash(COSTS.rebuild)}).`,
       advice:
-        assets.labs < assets.standing && money >= COSTS.research
-          ? `A research centre is ${cash(COSTS.research)} and pays ${cash(RESEARCH_INCOME)} every round after — the only buy that fixes this.`
-          : `Spend nothing and let the income stack; you cannot defend or attack from here.`,
+        `Spend nothing and let the income stack; you cannot defend or attack from here${
+          assets.labs > 0 ? ` — and a lab only works while you can pay its ${cash(RESEARCH_UPKEEP)} a round` : ''
+        }.`,
     };
   }
 
@@ -534,9 +535,7 @@ function findWeakness(
         .join(' and ')} are both sanctioning you — ${Math.round(
         sanctionPenalty * 100,
       )}% off everything you earn, ${cash(gross - income)} gone this round.`,
-      advice: `A sanction list is a target list: they are squeezing you because they mean to shoot at you. Cover your cities, and a research centre still nets ${cash(
-        RESEARCH_INCOME * (1 - sanctionPenalty),
-      )} a round through the squeeze.`,
+      advice: `A sanction list is a target list: they are squeezing you because they mean to shoot at you. Cover your cities, and bank what you can.`,
     };
   }
 
@@ -628,8 +627,6 @@ export function findDefenceOrders(state: GameState, myId: NationId): BriefingOrd
   if (
     swarmThreat &&
     !alive.some((c) => c.hasLaser) &&
-    // An ally's laser network already covers this nation
-    !(allyOf(state, myId) && laserNetwork(state, allyOf(state, myId)!)) &&
     budget >= laserPrice &&
     alive.length > 0
   ) {
@@ -702,17 +699,16 @@ export function findIntelAdvice(
     });
   }
 
-  // A centre repays its price in a couple of rounds and adds score meanwhile
+  // A lab only pays off if it can finish a bomb before the game ends
   if (
-    roundsLeft >= 2 &&
-    researchCount(state, myId) < 2 &&
+    researchCount(state, myId) < 1 &&
     canBuyResearch(state, myId) &&
-    spare >= COSTS.research
+    spare >= COSTS.research + RESEARCH_UPKEEP * LAB_ROUNDS_PER_INVENTION
   ) {
     advice.push({
       kind: 'research',
       action: 'Research',
-      reason: `${cash(COSTS.research)} for +${cash(RESEARCH_INCOME)} every round it stands, with ${roundsLeft} rounds to go.`,
+      reason: `${cash(COSTS.research)} plus ${cash(RESEARCH_UPKEEP)} a round: ${LAB_ROUNDS_PER_INVENTION} paid rounds invent a bomb, with ${roundsLeft} rounds to go.`,
     });
   }
 

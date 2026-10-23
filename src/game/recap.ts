@@ -5,7 +5,7 @@
 import type { CityAsset, NationId, RoundWorldEvent } from '../types';
 
 /** A gain: a city taken or razed, a swarm that hit, or a defence that held. */
-export type RecapWinKind = 'taken' | 'razed' | 'drone' | 'laser' | 'shield' | 'bunker' | 'rebuilt';
+export type RecapWinKind = 'taken' | 'razed' | 'drone' | 'cluster' | 'guard' | 'laser' | 'shield' | 'bunker' | 'rebuilt';
 
 export interface RecapWin {
   kind: RecapWinKind;
@@ -69,11 +69,17 @@ export function buildRecapTable(events: RoundWorldEvent[], order: NationId[]): R
         victim?.lost.push({ kind: 'taken', city: e.cityName });
         break;
       case 'droneDamage':
-        win(e.attackerId, 'drone', e.cityName);
+        win(e.attackerId, e.weapon === 'cluster' ? 'cluster' : 'drone', e.cityName);
         if (victim) victim.repairs += e.amount ?? 0;
         break;
       case 'dronesIntercepted':
         win(e.coveredBy ?? e.nationId, 'laser', e.cityName);
+        break;
+      case 'warheadIntercepted':
+        win(e.nationId, 'laser', e.cityName);
+        break;
+      case 'strikeNeutralized':
+        win(e.nationId, 'guard', e.cityName);
         break;
       case 'raidRepelled':
         win(e.nationId, e.cover === 'laser' ? 'laser' : e.cover === 'bunker' ? 'bunker' : 'shield', e.cityName);

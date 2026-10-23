@@ -36,6 +36,9 @@ const WEAPON_LABEL: Record<StrikeWeapon, string> = {
   nuke: 'Nuclear',
   hydrogen: 'Hydrogen',
   magnetic: 'Magnetic',
+  cluster: 'Cluster',
+  biological: 'Biological',
+  chemical: 'Chemical',
   drone: 'Drone swarm',
   commando: 'Heliborne',
 };
@@ -110,6 +113,15 @@ function HeliSprite({ className }: { className?: string }) {
     </span>
   );
 }
+
+/** Where a cluster's bomblets come down over the skyline, left to right */
+const CLUSTER_SPOTS: [number, number][] = [
+  [30, 50],
+  [48, 36],
+  [62, 58],
+  [74, 42],
+  [40, 66],
+];
 
 function LaunchShot({ strike, ms, sfx }: { strike: StrikeShow; ms: number; sfx: Sfx }) {
   const arsenal = arsenalOf(strike);
@@ -275,6 +287,71 @@ function Beam({ x0, y0, x1, y1, at, n }: { x0: number; y0: number; x1: number; y
 const droneX = (n: number) => 50 + (n - 2) * 17;
 const droneY = (n: number) => 3.2 + (n - 2) * (n - 2) * 0.96;
 
+/**
+ * One defence drone climbing out of the city to meet an attack in the sky. It
+ * leaves the rooftops at `launch`, reaches (x1, y1) at `meet`, then breaks off.
+ * Positions are percentages of the city shot, measured from the top left.
+ */
+function DefenceDrone({
+  n,
+  x1,
+  y1,
+  launch,
+  meet,
+}: {
+  n: number;
+  x1: number;
+  y1: number;
+  launch: number;
+  meet: number;
+}) {
+  const x0 = 50 + (n - 2) * 13;
+  const y0 = 88;
+  // The sprite's nose points right; turn it toward where it is going
+  const rot = (Math.atan2((y1 - y0) * 0.56, x1 - x0) * 180) / Math.PI;
+  return (
+    <span
+      className="mv-defdrone"
+      aria-hidden
+      style={vars({
+        '--x0': `${x0}%`,
+        '--y0': `${y0}%`,
+        '--x1': `${x1}%`,
+        '--y1': `${y1}%`,
+        '--rot': `${rot}deg`,
+        '--n': n,
+        '--launch': Math.max(0, launch),
+        '--fly': Math.max(300, meet - Math.max(0, launch)),
+        '--meet': meet,
+      })}
+    >
+      <img src={ART.mv.drone} alt="" draggable={false} />
+    </span>
+  );
+}
+
+/** The flash, ring and falling debris where defence drones (or a beam) kill an attack in the sky. */
+function SkyKill({ x, y, at }: { x: number; y: number; at: number }) {
+  const pos = { left: `${x}%`, top: `${y}%` };
+  return (
+    <>
+      <img
+        className="mv-airburst is-intercept"
+        style={{ ...pos, ...vars({ '--at': at }) }}
+        src={ART.mv.fx.airburst}
+        alt=""
+        draggable={false}
+      />
+      <span className="mv-intercept-ring" style={{ ...pos, ...vars({ '--at': at }) }} aria-hidden />
+      <span className="mv-debris" style={{ ...pos, ...vars({ '--at': at }) }} aria-hidden>
+        {[0, 1, 2, 3, 4, 5].map((n) => (
+          <i key={n} style={vars({ '--n': n })} />
+        ))}
+      </span>
+    </>
+  );
+}
+
 function TargetShot({
   strike,
   target,
@@ -298,10 +375,16 @@ function TargetShot({
       ? 'magnetic'
       : target.weapons.includes('nuke')
         ? 'nuke'
-        : null;
+        : (target.weapons.find(isBallisticWeapon) ?? null);
   const defender = nationDef(target.to);
   const attacker = nationDef(strike.from);
 
+  // Defence drones (or a laser network) kill the attack in the sky before it arrives
+  const defended = outcome === 'defended';
+  const shotDown = outcome === 'shotDown';
+  const stopped = defended || shotDown;
+  const meetAt = line.warheadAt + 450;
+  const WARHEAD_AIM: [number, number] = [50, 3];
   // The swarm's own moments
   const droneHitAt = line.droneAt + 700;
   // The squad's moments: arrive, ropes, team down, flag, leave
@@ -311,20 +394,25 @@ function TargetShot({
   const hitAt = arrive + 420;
   const crashAt = hitAt + 900;
   const laserSquad = outcome === 'repelled' && target.raidCover === 'laser';
+  const downedSquad = laserSquad || (defended && squad);
   const shieldSquad = outcome === 'repelled' && target.raidCover === 'shield';
   const bunkerSquad = outcome === 'repelled' && target.raidCover === 'bunker';
 
   // Which moment breaks the dome, if any does
-  const domeBreaksAt = !target.hadShield
+  const domeBreaksAt = !target.hadShield || stopped
     ? null
-    : warhead && outcome !== 'repelled'
+    : warhead && outcome !== 'repelled' && warhead !== 'cluster'
       ? line.warheadAt
       : squad && outcome === 'captured'
         ? swarm
           ? droneHitAt
           : arrive
         : null;
-  const domeFlashAt = shieldSquad ? arrive + 350 : swarm && target.hadShield && !warhead && !squad ? droneHitAt : null;
+  const domeFlashAt = shieldSquad
+    ? arrive + 350
+    : swarm && target.hadShield && !warhead && !squad && !stopped
+      ? droneHitAt
+      : null;
 
   const razed = outcome === 'razed';
   // A city someone else already razed is shown as rubble from the first frame
@@ -332,22 +420,49 @@ function TargetShot({
   const rubbleHit = Boolean(warhead) && Boolean(target.rubble) && outcome === 'empty';
   const razedAt = line.warheadAt + 160;
   const boomAt = line.warheadAt;
-  const captionAt = squad
-    ? outcome === 'captured'
-      ? flagAt + 100
-      : arrive + 700
-    : warhead
-      ? line.warheadAt + 650
-      : droneHitAt + 500;
+  const captionAt = stopped
+    ? warhead
+      ? meetAt + 600
+      : squad
+        ? hitAt + 700
+        : droneHitAt + 600
+    : squad
+      ? outcome === 'captured'
+        ? flagAt + 100
+        : arrive + 700
+      : warhead
+        ? line.warheadAt + 650
+        : droneHitAt + 500;
   const caption = cinemaCaption(target, true) ?? outcomeLine(target);
 
-  const shakeAt = warhead ? line.warheadAt : null;
-  const shakeStrong = warhead === 'hydrogen' || (warhead != null && (razed || rubbleHit));
+  const shakeAt = stopped && warhead ? meetAt : warhead ? line.warheadAt : null;
+  const shakeStrong = !stopped && (warhead === 'hydrogen' || (warhead != null && (razed || rubbleHit)));
   const takenFlag = outcome === 'captured';
   const fireWarhead = warhead === 'nuke' || warhead === 'hydrogen';
+  // Plague and gas raze the city without a flame: a cloud rolls over the dead streets
+  const toxic = warhead === 'biological';
+  const gas = warhead === 'chemical';
 
   useCues([
-    ...(warhead
+    ...(stopped
+      ? [
+          ...(warhead
+            ? [
+                ...(defended ? [{ at: meetAt - 900, run: () => sfx(SFX.launch, 0.3, 1.9) }] : []),
+                { at: meetAt, run: () => sfx(SFX.explosion, 0.6, 1.7) },
+              ]
+            : []),
+          ...(defended && swarm ? [{ at: droneHitAt, run: () => sfx(SFX.explosion, 0.4, 2.1) }] : []),
+          ...(defended && squad
+            ? [
+                { at: line.raidAt + 150, run: () => sfx(SFX.launch, 0.4, 0.55) },
+                { at: hitAt, run: () => sfx(SFX.explosion, 0.55, 1.7) },
+                { at: crashAt, run: () => sfx(SFX.explosion, 0.7, 0.9) },
+              ]
+            : []),
+        ]
+      : []),
+    ...(warhead && !stopped
       ? [
           {
             at: line.warheadAt,
@@ -358,6 +473,10 @@ function TargetShot({
                   ? sfx(SFX.explosion, 0.65, 1.35)
                   : warhead === 'hydrogen'
                     ? sfx(SFX.explosion, 1, 0.78)
+                    : warhead === 'cluster'
+                      ? sfx(SFX.explosion, 0.6, 1.8)
+                      : warhead === 'chemical' || warhead === 'biological'
+                        ? sfx(SFX.explosion, 0.5, 0.7)
                     : warhead === 'magnetic'
                       ? sfx(SFX.explosion, 0.85, 1.55)
                       : sfx(SFX.explosion, 0.95),
@@ -365,10 +484,10 @@ function TargetShot({
           ...(razed ? [{ at: razedAt + 250, run: () => sfx(SFX.explosion, 0.55, 0.55) }] : []),
         ]
       : []),
-    ...(swarm && !squad
+    ...(swarm && !squad && !defended
       ? [{ at: droneHitAt, run: () => sfx(SFX.explosion, target.lasered ? 0.35 : 0.3, 2.1) }]
       : []),
-    ...(squad
+    ...(squad && !defended
       ? [
           { at: line.raidAt + 150, run: () => sfx(SFX.launch, 0.4, 0.55) },
           ...(laserSquad
@@ -431,9 +550,17 @@ function TargetShot({
             )}
           </div>
           {outcome === 'swarmed' && <div className="mv-hurt" style={vars({ '--hurt-at': droneHitAt })} aria-hidden />}
+          {outcome === 'damaged' && (
+            <div
+              className="mv-hurt"
+              style={vars({ '--hurt-at': line.warheadAt + 150 })}
+              aria-hidden
+            />
+          )}
           <div className="mv-citybox">
 
             {target.hadBunker && <span className="mv-bunker-tag">Bunker</span>}
+            {defended && <span className="mv-bunker-tag mv-cover-tag">Drone cover</span>}
 
             {/* Shield */}
             {target.hadShield && (
@@ -467,7 +594,10 @@ function TargetShot({
 
             {/* Warhead falling */}
             {warhead && (
-              <div className="mv-missile" style={vars({ '--lead': line.warheadAt - 750 })}>
+              <div
+                className={`mv-missile is-${warhead}${stopped ? ' is-shot' : ''}`}
+                style={vars({ '--lead': (stopped ? meetAt : line.warheadAt) - 750 })}
+              >
                 <span className="mv-missile__trail" aria-hidden />
                 <span className="mv-missile__body">
                   <img className="mv-missile__flame" src={ART.mv.fx.fireball} alt="" draggable={false} />
@@ -479,7 +609,7 @@ function TargetShot({
             {/* Impact: the ground burst, the cloud, the dust */}
             {warhead && (razed || rubbleHit) && (
               <>
-                <span className="mv-flash" style={vars({ '--at': boomAt })} aria-hidden />
+                <span className={`mv-flash${toxic || gas ? ' is-toxic' : ''}`} style={vars({ '--at': boomAt })} aria-hidden />
                 <span className={`mv-shock is-${warhead}`} style={vars({ '--at': boomAt })} aria-hidden />
                 {fireWarhead && (
                   <>
@@ -493,10 +623,13 @@ function TargetShot({
                     <img className="mv-fireball is-small" style={vars({ '--at': boomAt + 120 })} src={ART.mv.fx.fireball} alt="" draggable={false} />
                   </>
                 )}
-                <img className="mv-dustcloud" style={vars({ '--at': razedAt })} src={ART.mv.fx.dust} alt="" draggable={false} />
-                <img className="mv-dustcloud is-late" style={vars({ '--at': razedAt + 350 })} src={ART.mv.fx.dust} alt="" draggable={false} />
-                <span className="mv-fire" style={vars({ '--at': razedAt + 300 })} aria-hidden />
-                <span className="mv-embers" style={vars({ '--at': razedAt + 150 })} aria-hidden>
+                <img className={`mv-dustcloud${toxic ? ' is-toxic' : gas ? ' is-gas' : ''}`} style={vars({ '--at': razedAt })} src={ART.mv.fx.dust} alt="" draggable={false} />
+                <img className={`mv-dustcloud is-late${toxic ? ' is-toxic' : gas ? ' is-gas' : ''}`} style={vars({ '--at': razedAt + 350 })} src={ART.mv.fx.dust} alt="" draggable={false} />
+                {(toxic || gas) && (
+                  <img className={`mv-dustcloud is-low ${toxic ? 'is-toxic' : 'is-gas'}`} style={vars({ '--at': razedAt + 700 })} src={ART.mv.fx.dust} alt="" draggable={false} />
+                )}
+                {!toxic && !gas && <span className="mv-fire" style={vars({ '--at': razedAt + 300 })} aria-hidden />}
+                <span className={`mv-embers${toxic || gas ? ' is-spores' : ''}`} style={vars({ '--at': razedAt + 150 })} aria-hidden>
                   {[0, 1, 2, 3, 4, 5, 6, 7].map((n) => (
                     <i key={n} style={vars({ '--n': n })} />
                   ))}
@@ -512,6 +645,90 @@ function TargetShot({
             {warhead && (outcome === 'shield' || outcome === 'captured') && !target.hadShield && (
               <span className="mv-flash" style={vars({ '--at': boomAt })} aria-hidden />
             )}
+            {/* Cluster bomblets pepper the skyline */}
+            {warhead && outcome === 'damaged' && (
+              <>
+                <span className="mv-flash is-soft" style={vars({ '--at': boomAt })} aria-hidden />
+                {warhead === 'cluster' && (
+                  <>
+                    <span className="mv-split" style={vars({ '--at': boomAt - 120 })} aria-hidden />
+                    {CLUSTER_SPOTS.map(([x, y], n) => (
+                      <i
+                        key={n}
+                        className="mv-bomblet"
+                        style={vars({
+                          '--x': `${x}%`,
+                          '--y': `${y}%`,
+                          '--spin': `${(n - 2) * 38}deg`,
+                          '--at': boomAt - 80 + n * 170,
+                        })}
+                        aria-hidden
+                      />
+                    ))}
+                  </>
+                )}
+                {CLUSTER_SPOTS.map(([x, y], n) => (
+                  <img
+                    key={n}
+                    className="mv-hit"
+                    style={{ left: `${x}%`, top: `${y}%`, ...vars({ '--at': boomAt + 240 + n * 170 }) }}
+                    src={ART.mv.fx.airburst}
+                    alt=""
+                    draggable={false}
+                  />
+                ))}
+              </>
+            )}
+
+            {/* The kill in the sky: the missile meets defence drones or a laser beam */}
+            {stopped && warhead && (
+              <>
+                <SkyKill x={WARHEAD_AIM[0]} y={WARHEAD_AIM[1]} at={meetAt} />
+                {defended
+                  ? [0, 1, 2, 3, 4].map((n) => (
+                      <DefenceDrone
+                        key={n}
+                        n={n}
+                        x1={WARHEAD_AIM[0] + (n - 2) * 3.4}
+                        y1={WARHEAD_AIM[1] + Math.abs(n - 2) * 1.5}
+                        launch={meetAt - 900 + n * 40}
+                        meet={meetAt - 60 + n * 25}
+                      />
+                    ))
+                  : [38, 50, 62].map((x, n) => (
+                      <Beam key={x} n={n} x0={x} y0={70} x1={50 + (x - 50) * 0.2} y1={WARHEAD_AIM[1]} at={meetAt - 520 + n * 70} />
+                    ))}
+              </>
+            )}
+            {defended && swarm && (
+              <>
+                {[0, 1, 2, 3, 4].map((n) => (
+                  <DefenceDrone
+                    key={n}
+                    n={n}
+                    x1={droneX(n)}
+                    y1={droneY(n) + 5}
+                    launch={droneHitAt + n * 90 - 650}
+                    meet={droneHitAt + n * 90 - 100}
+                  />
+                ))}
+                <SkyKill x={50} y={9} at={droneHitAt + 120} />
+              </>
+            )}
+            {defended && squad && (
+              <>
+                {[0, 1, 2, 3, 4].map((n) => (
+                  <DefenceDrone
+                    key={n}
+                    n={n}
+                    x1={40 + n * 4}
+                    y1={9 + Math.abs(n - 2) * 1.5}
+                    launch={hitAt - 780 + n * 40}
+                    meet={hitAt - 60 + n * 25}
+                  />
+                ))}
+              </>
+            )}
 
             {/* Drone swarm */}
             {swarm && (
@@ -519,22 +736,22 @@ function TargetShot({
                 {[0, 1, 2, 3, 4].map((n) => (
                   <span
                     key={n}
-                    className={`mv-drone${target.lasered ? ' is-shot' : ''}`}
+                    className={`mv-drone${target.lasered || defended ? ' is-shot' : ''}`}
                     style={vars({ '--n': n, '--shot-at': droneHitAt + n * 90 })}
                   >
                     <img className="mv-drone__body" src={ART.mv.drone} alt="" draggable={false} />
-                    {target.lasered && (
+                    {(target.lasered || defended) && (
                       <img className="mv-drone__burst" src={ART.mv.fx.airburst} alt="" draggable={false} />
                     )}
                   </span>
                 ))}
               </div>
             )}
-            {swarm && target.lasered &&
+            {swarm && target.lasered && !defended &&
               [0, 1, 2, 3, 4].map((n) => (
                 <Beam key={n} n={n} x0={50 + (n - 2) * 7} y0={70} x1={droneX(n)} y1={droneY(n)} at={droneHitAt - 120 + n * 90} />
               ))}
-            {swarm && !target.lasered && !warhead && !squad && !target.rubble &&
+            {swarm && !target.lasered && !defended && !warhead && !squad && !target.rubble &&
               [
                 [32, 46],
                 [58, 34],
@@ -553,14 +770,14 @@ function TargetShot({
             {/* The squad */}
             {squad && (
               <div
-                className={`mv-heli${laserSquad ? ' is-hit' : ''}${outcome === 'captured' || outcome === 'empty' || outcome === 'razed' ? '' : ' is-turned'}`}
+                className={`mv-heli${downedSquad ? ' is-hit' : ''}${outcome === 'captured' || outcome === 'empty' || outcome === 'razed' ? '' : ' is-turned'}`}
                 style={vars({ '--arrive': line.raidAt, '--leave': leaveAt, '--hit': hitAt })}
               >
                 <HeliSprite />
                 {(outcome === 'captured' || outcome === 'empty' || outcome === 'razed') && (
                   <span className="mv-spot" style={vars({ '--at': arrive })} aria-hidden />
                 )}
-                {laserSquad && (
+                {downedSquad && (
                   <img className="mv-heli__burn" style={vars({ '--at': hitAt })} src={ART.mv.fx.airburst} alt="" draggable={false} />
                 )}
               </div>
@@ -578,11 +795,12 @@ function TargetShot({
                 <span className="mv-wash" />
               </div>
             )}
-            {squad && laserSquad && (
+            {squad && downedSquad && (
               <>
-                {[36, 50, 64].map((x, n) => (
-                  <Beam key={x} n={n} x0={x} y0={70} x1={50 + (x - 50) * 0.25} y1={9} at={arrive + 60 + n * 70} />
-                ))}
+                {laserSquad &&
+                  [36, 50, 64].map((x, n) => (
+                    <Beam key={x} n={n} x0={x} y0={70} x1={50 + (x - 50) * 0.25} y1={9} at={arrive + 60 + n * 70} />
+                  ))}
                 <img className="mv-airburst" style={vars({ '--at': hitAt })} src={ART.mv.fx.airburst} alt="" draggable={false} />
                 <img className="mv-crash" style={vars({ '--at': crashAt })} src={ART.mv.fx.fireball} alt="" draggable={false} />
                 <img className="mv-dustcloud is-low is-crash" style={vars({ '--at': crashAt })} src={ART.mv.fx.dust} alt="" draggable={false} />
@@ -595,7 +813,9 @@ function TargetShot({
             )}
           </div>
           {squad && outcome === 'captured' && <div className="mv-taken-glow" style={vars({ '--at': flagAt })} aria-hidden />}
-          {warhead && (razed || rubbleHit) && <span className="mv-flash mv-flash--screen" style={vars({ '--at': boomAt })} aria-hidden />}
+          {warhead && (razed || rubbleHit) && (
+            <span className={`mv-flash mv-flash--screen${toxic || gas ? ' is-toxic' : ''}`} style={vars({ '--at': boomAt })} aria-hidden />
+          )}
         </div>
         <span className="mv-haze" aria-hidden />
       </div>
@@ -786,3 +1006,4 @@ export default function StrikeMovie({ strike, leaderSrc, sfx, onComplete, onSkip
     </div>
   );
 }
+

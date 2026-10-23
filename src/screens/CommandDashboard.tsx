@@ -12,7 +12,7 @@ import {
   MAX_MAGNETIC_PER_GAME,
   MAX_SANCTIONS,
   MAX_SHIELDS_PER_ROUND,
-  RESEARCH_INCOME,
+  RESEARCH_UPKEEP,
   nationDef,
 } from '../data/nations';
 import {
@@ -72,6 +72,13 @@ import {
   maxMagneticBundled,
 } from '../game/bundles';
 import type { BriefingOrderIcon } from '../game/briefing';
+import {
+  INVENTION_INFO,
+  PROTOTYPE_KINDS,
+  inventionStock,
+  labCanFinish,
+  researchProgress,
+} from '../game/inventions';
 import { PURCHASE_WINDOW_MS } from '../lib/onlineConstants';
 import type { City, GameState, NationId } from '../types';
 
@@ -844,9 +851,6 @@ export function CommandDashboard({
     const t = window.setTimeout(() => setWorldNotice(null), 4500);
     return () => window.clearTimeout(t);
   }, [pactsKey]);
-  const allyHasLaser = Boolean(
-    myAlly && state.nations[myAlly].cities.some((c) => c.hasLaser && !c.destroyed),
-  );
   const mySanctions = ownSanctionPicks(state, actorId);
   const pactSanctions = effectiveSanctions(state, actorId);
   const spyShared = !me.hasSpyNetwork && hasSpyService(state, actorId);
@@ -913,6 +917,9 @@ export function CommandDashboard({
     (c) => c.hasShield && !c.isUnderground && !c.destroyed,
   ).length;
   const labs = me.cities.filter((c) => c.hasResearch && !c.destroyed).length;
+  const labProgress = researchProgress(me);
+  const labBombs = PROTOTYPE_KINDS.filter((k) => inventionStock(me, k) > 0);
+  const guardDrones = inventionStock(me, 'defenseDrones');
   const rebuiltStanding = me.cities.filter((c) => c.rebuiltRound != null && !c.destroyed).length;
 
   const nukeCost = COSTS.bomb + ballisticExtra;
@@ -1029,7 +1036,7 @@ export function CommandDashboard({
           art: ART.cop.commando,
           short: 'Heliborne',
           label: 'Heliborne',
-          info: 'Helicopter squad takes a city over. Shields, lasers and bunkers turn it back.',
+          info: 'Helicopter squad takes a city over — its income and score become yours. Shields, lasers and bunkers turn it back.',
           lit: squads > 0,
           count: squads,
           mag: magazine(squads, commandoMax, squadsLeft),
@@ -1041,6 +1048,26 @@ export function CommandDashboard({
           locked: commandoMax < 1,
           onPress: () => onOrder((s) => buyCommandosBundled(s, 1, actorId), '+1 Heliborne'),
         },
+        // Bombs the labs invented: nothing to buy, but they are in the magazine
+        ...(labBombs.length > 0
+          ? [
+              {
+                key: 'labBombs',
+                art: ART.invention[labBombs[0]],
+                short: 'Lab bombs',
+                label: 'Invented by your labs',
+                info: labBombs
+                  .map((k) => `${inventionStock(me, k)}× ${INVENTION_INFO[k].name}`)
+                  .join(' · '),
+                lit: true,
+                count: labBombs.reduce((sum, k) => sum + inventionStock(me, k), 0),
+                tone: 'owned' as const,
+                note: 'Free · no tech needed',
+                locked: true,
+                onPress: () => undefined,
+              },
+            ]
+          : []),
       ],
     },
     {
@@ -1079,9 +1106,7 @@ export function CommandDashboard({
           art: ART.cop.laser,
           short: 'Laser',
           label: 'Laser network',
-          info: `Covers every city · stops ${LASER_INTERCEPTS_PER_ROUND} swarms a round${
-            allyHasLaser ? ' · your ally’s network covers you too' : ''
-          }.`,
+          info: `Covers every one of your cities · stops ${LASER_INTERCEPTS_PER_ROUND} swarms, chemical or biological bombs a round.`,
           lit: hasLaserNet,
           price: cash(pickCost('laser')),
           priceNote: withTech(aerospaceExtra),
@@ -1090,6 +1115,24 @@ export function CommandDashboard({
             ? { locked: true, tone: 'owned' as const, note: '✓ Online', onPress: () => undefined }
             : cityTap('laser', 'Tap to place')),
         },
+        // Invented by your labs: nothing to buy, they stand guard on their own
+        ...(guardDrones > 0
+          ? [
+              {
+                key: 'defenseDrones',
+                art: ART.drone,
+                short: 'Guard',
+                label: 'Defence drones',
+                info: `${guardDrones} on standby · neutralise every attack on the first city of yours that is attacked, in the sky. Used up only on a round you are attacked.`,
+                lit: true,
+                count: guardDrones,
+                tone: 'owned' as const,
+                note: 'Standby',
+                locked: true,
+                onPress: () => undefined,
+              },
+            ]
+          : []),
         {
           key: 'rebuild',
           art: ART.cop.rebuild,
@@ -1116,12 +1159,17 @@ export function CommandDashboard({
           art: ART.cop.research,
           short: 'Research',
           label: 'Research Center',
-          info: `That city earns +${cash(RESEARCH_INCOME)} a round. Burns with it.`,
+          info:
+            labs > 0
+              ? `Costs ${cash(RESEARCH_UPKEEP)} a round to run, and after ${labProgress.of} paid rounds it invents a new weapon or tech you lack (${labProgress.done}/${labProgress.of}). Idle if you cannot pay. Burns with it.`
+              : `Costs ${cash(RESEARCH_UPKEEP)} a round to run; every ${labProgress.of} paid rounds it invents a new weapon or tech you lack. Idle if you cannot pay. Burns with it.`,
           lit: labs > 0,
           count: labs,
           price: cash(COSTS.research),
           advised: advisedIntel.has('research'),
           ...cityTap('research', 'Tap to build'),
+          ...(!labCanFinish(state.round, state.maxRounds) &&
+            labs === 0 && { note: 'Too late for an invention' }),
         },
         {
           key: 'sanctions',
@@ -1173,9 +1221,9 @@ export function CommandDashboard({
           short: 'Alliance',
           label: 'Alliance',
           info: myAlly
-            ? `Allied with ${nationDef(myAlly).name} · lasers, spies and sanctions work for you both.`
+            ? `Allied with ${nationDef(myAlly).name} · tech, spies and sanctions work for you both.`
             : windowOpen
-              ? 'Team up with another player: lasers, spies, tech and sanctions shared.'
+              ? 'Team up with another player: tech, spies and sanctions shared.'
               : state.round < ALLIANCE_FIRST_ROUND
                 ? 'Alliances open after round 1.'
                 : 'Alliances close for the final round.',

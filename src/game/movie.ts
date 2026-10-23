@@ -11,7 +11,8 @@ import type { NationId, PendingStrike, StrikeWeapon } from '../types';
 export function movieCraft(weapon: StrikeWeapon): string {
   if (weapon === 'commando') return ART.mv.heli;
   if (weapon === 'drone') return ART.mv.drone;
-  return ART.mv.missile[weapon === 'hydrogen' ? 'hydrogen' : weapon === 'magnetic' ? 'magnetic' : 'nuke'];
+  // Every warhead has its own nose; only the nuclear weapon is the plain olive missile
+  return ART.mv.missile[weapon in ART.mv.missile ? (weapon as keyof typeof ART.mv.missile) : 'nuke'];
 }
 
 export function craftArt(weapon: StrikeWeapon): string {
@@ -19,6 +20,9 @@ export function craftArt(weapon: StrikeWeapon): string {
   if (weapon === 'drone') return ART.drone;
   if (weapon === 'hydrogen') return ART.missileHydrogen;
   if (weapon === 'magnetic') return ART.missileMagnetic;
+  if (weapon === 'cluster') return ART.missileCluster;
+  if (weapon === 'biological') return ART.missileBiological;
+  if (weapon === 'chemical') return ART.missileChemical;
   return ART.missile;
 }
 
@@ -34,6 +38,10 @@ export interface StrikeTarget {
   lasered?: boolean;
   /** The warhead broke against the bunker: the ground shakes, nothing burns */
   absorbed?: boolean;
+  /** Defence drones met everything aimed at this city in the sky and neutralised it */
+  defended?: boolean;
+  /** A laser network shot the gas or the plague down before it reached the city */
+  warheadShot?: boolean;
   /** A shield was up when this volley left the pad */
   hadShield?: boolean;
   /** The city was dug in when this volley left the pad */
@@ -74,6 +82,13 @@ export function cinemaCaption(target: StrikeTarget, impacted: boolean): string |
   const warhead = target.weapons.some(isBallisticWeapon);
   const swarm = target.weapons.includes('drone');
   const escorted = swarm && warhead;
+  if (target.defended) {
+    if (!impacted) return 'Defence drones scrambling';
+    if (target.weapons.includes('cluster')) return 'Drones shot the canister down — other cities still hit';
+    if (warhead) return 'Defence drones neutralised the missile in the sky';
+    if (swarm) return 'Defence drones shot the swarm down';
+    return 'Defence drones brought the helicopters down';
+  }
   if (target.weapons.includes('commando')) {
     const opened = swarm || warhead;
     if (!impacted) {
@@ -113,7 +128,10 @@ export function cinemaCaption(target: StrikeTarget, impacted: boolean): string |
     return target.razedBy ? `${target.razedBy} razed it first` : 'Already in rubble';
   }
   if (!impacted) {
+    if (target.weapons.includes('biological')) return 'Biological bomb';
+    if (target.weapons.includes('cluster')) return 'Cluster bomb';
     if (target.hadBunker) return 'Underground bunker';
+    if (target.weapons.includes('chemical')) return 'Chemical bomb';
     if (target.hadShield && escorted && target.laserDown) {
       return 'Shield and laser — magnetic bomb inbound';
     }
@@ -126,6 +144,18 @@ export function cinemaCaption(target: StrikeTarget, impacted: boolean): string |
     return null;
   }
   if (target.absorbed) return 'Bunker held — no damage';
+  if (target.warheadShot && !target.leveled) {
+    return target.weapons.includes('biological')
+      ? 'Lasers shot the biological bomb down'
+      : 'Lasers shot the chemical bomb down';
+  }
+  if (target.leveled && target.weapons.includes('biological')) {
+    return target.hadBunker ? 'Plague seeps into the bunker — city in rubble' : 'Plague — city in rubble';
+  }
+  if (target.leveled && target.weapons.includes('chemical')) return 'Gas — city in rubble';
+  if (target.weapons.includes('cluster') && !target.leveled) {
+    return `Cluster bomblets — every city hit, −$${target.droneBill ?? 0}M here`;
+  }
   if (target.leveled && target.hadBunker) return 'Bunker cracked — city in rubble';
   if (target.leveled && escorted && target.laserDown) {
     return 'Laser down, swarm through — city in rubble';
@@ -146,9 +176,12 @@ export function strikeTitle(flightPlan: { weapon: StrikeWeapon }[], targetCount:
   const nukes = flightPlan.filter((f) => f.weapon === 'nuke' || !f.weapon).length;
   const hydro = flightPlan.filter((f) => f.weapon === 'hydrogen').length;
   const mag = flightPlan.filter((f) => f.weapon === 'magnetic').length;
+  const cluster = flightPlan.filter((f) => f.weapon === 'cluster').length;
+  const plague = flightPlan.filter((f) => f.weapon === 'biological').length;
+  const gas = flightPlan.filter((f) => f.weapon === 'chemical').length;
   const drones = flightPlan.filter((f) => f.weapon === 'drone').length;
   const squads = flightPlan.filter((f) => f.weapon === 'commando').length;
-  const warheads = nukes + hydro + mag;
+  const warheads = nukes + hydro + mag + cluster + plague + gas;
   if (squads > 0 && warheads === 0 && drones === 0) {
     return squads > 1 ? `HELIBORNE — ${squads} SQUADS` : 'HELIBORNE';
   }
@@ -160,6 +193,9 @@ export function strikeTitle(flightPlan: { weapon: StrikeWeapon }[], targetCount:
   if (hydro) kinds.push(hydro > 1 ? `${hydro} HYDROGEN` : 'HYDROGEN');
   if (mag) kinds.push(mag > 1 ? `${mag} MAGNETIC` : 'MAGNETIC');
   if (nukes) kinds.push(nukes > 1 ? `${nukes} NUCLEAR` : 'NUCLEAR');
+  if (cluster) kinds.push(cluster > 1 ? `${cluster} CLUSTER` : 'CLUSTER');
+  if (plague) kinds.push(plague > 1 ? `${plague} BIOLOGICAL` : 'BIOLOGICAL');
+  if (gas) kinds.push(gas > 1 ? `${gas} CHEMICAL` : 'CHEMICAL');
   const head =
     kinds.length === 1
       ? `${kinds[0].replace(/^\d+\s/, '')} LAUNCH`
@@ -246,6 +282,8 @@ export function volleyMovieMs(targets: readonly { weapons: readonly string[] }[]
 }
 
 export type TargetOutcome =
+  | 'defended'
+  | 'shotDown'
   | 'captured'
   | 'repelled'
   | 'razed'
@@ -253,10 +291,13 @@ export type TargetOutcome =
   | 'bunker'
   | 'swarmed'
   | 'swarmShot'
+  | 'damaged'
   | 'empty';
 
 /** What happened to one city, in the one word the shot and the toll card both use. */
 export function targetOutcome(t: StrikeTarget): TargetOutcome {
+  // Defence drones got there first: whatever else was in the volley never arrived
+  if (t.defended) return 'defended';
   if (t.weapons.includes('commando')) {
     if (t.raid === 'captured') return 'captured';
     if (t.raid === 'repelled') return 'repelled';
@@ -266,7 +307,10 @@ export function targetOutcome(t: StrikeTarget): TargetOutcome {
   if (t.rubble && !t.leveled) return 'empty';
   if (t.absorbed) return 'bunker';
   if (t.leveled) return 'razed';
+  if (t.warheadShot) return 'shotDown';
   if (t.lasered && !t.weapons.some(isBallisticWeapon)) return 'swarmShot';
+  // A cluster bomb bills the city whatever covers it; it breaks nothing
+  if (t.weapons.includes('cluster')) return 'damaged';
   if (t.hadShield && t.weapons.some(isBallisticWeapon)) return 'shield';
   if (t.weapons.includes('drone')) return t.lasered ? 'swarmShot' : 'swarmed';
   return 'empty';
@@ -275,6 +319,10 @@ export function targetOutcome(t: StrikeTarget): TargetOutcome {
 /** One line of the toll card for a city. */
 export function outcomeLine(t: StrikeTarget): string {
   switch (targetOutcome(t)) {
+    case 'defended':
+      return `${t.cityName}: drones neutralised the attack`;
+    case 'shotDown':
+      return `${t.cityName}: bomb shot down`;
     case 'captured':
       return `${t.cityName} taken over`;
     case 'repelled':
@@ -289,6 +337,8 @@ export function outcomeLine(t: StrikeTarget): string {
       return `${t.cityName}: swarm damage`;
     case 'swarmShot':
       return `${t.cityName}: swarm shot down`;
+    case 'damaged':
+      return `${t.cityName}: cluster damage`;
     default:
       if (t.rubble) return `${t.cityName}: already rubble`;
       return t.heldBy ? `${t.cityName}: ${t.heldBy} took it first` : `${t.cityName}: already gone`;
@@ -329,7 +379,16 @@ export function arsenalOf(strike: StrikeShow): { weapon: StrikeWeapon; count: nu
   for (const t of strike.targets) {
     for (const w of t.weapons) counts.set(w, (counts.get(w) ?? 0) + 1);
   }
-  const order: StrikeWeapon[] = ['hydrogen', 'magnetic', 'nuke', 'drone', 'commando'];
+  const order: StrikeWeapon[] = [
+    'hydrogen',
+    'biological',
+    'chemical',
+    'cluster',
+    'magnetic',
+    'nuke',
+    'drone',
+    'commando',
+  ];
   return order.filter((w) => counts.has(w)).map((weapon) => ({ weapon, count: counts.get(weapon)! }));
 }
 
@@ -403,6 +462,7 @@ export function reconcileWithFilm(targets: StrikeTarget[], razed: Set<string>): 
   }
   for (const t of targets) {
     if (t.weapons.includes('commando') || t.rubble || t.absorbed || t.lasered) continue;
+    if (t.defended || t.warheadShot) continue;
     const escort = t.weapons.includes('drone') && t.weapons.some(isBallisticWeapon);
     if (t.weapons.includes('hydrogen') || (escort && (t.hadShield || t.laserDown))) t.leveled = true;
   }

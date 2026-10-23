@@ -3335,6 +3335,49 @@ img { max-width: 100%; display: block; }
   text-align: center;
 }
 
+/* Radar pulse: the table is working on the round, not frozen */
+.strike-cinema__radar {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 0.7rem;
+}
+
+.strike-cinema__radar i {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 140, 90, 0.75);
+  opacity: 0;
+  animation: radarPing 1.8s ease-out infinite;
+}
+
+.strike-cinema__radar i:nth-child(2) {
+  animation-delay: 0.6s;
+}
+
+.strike-cinema__radar i:nth-child(3) {
+  animation-delay: 1.2s;
+}
+
+@keyframes radarPing {
+  0% {
+    transform: scale(0.15);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .strike-cinema__radar i {
+    animation: none;
+    opacity: 0.5;
+  }
+}
+
 .strike-cinema__hold-copy {
   margin: 0.35rem 0 0;
   color: var(--muted);

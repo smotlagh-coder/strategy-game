@@ -14,7 +14,7 @@ import type {
  * by the nation's own client. Two nations are allies exactly when each one
  * points at the other — so there is never a shared record to fight over online,
  * and everything an alliance does (shared spy service, shared tech, shared
- * laser cover, shared sanctions) is worked out from the pair when it is read.
+ * shared sanctions) is worked out from the pair when it is read.
  *
  * This file never imports the engine; the engine imports it.
  */

@@ -1,0 +1,151 @@
+/* The lab breakthrough: the scientists' photograph, full screen, with the find written over it */
+.invention {
+  position: fixed;
+  inset: 0;
+  z-index: 85;
+  overflow: hidden;
+  background: #02060e;
+  color: #eef6ff;
+  animation: inventionIn 420ms ease-out both;
+}
+
+@keyframes inventionIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.invention__photo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 50% 35%;
+  /* A slow push-in, like the camera is walking up to the bench */
+  animation: inventionPush 14s ease-out both;
+}
+
+@keyframes inventionPush {
+  from { transform: scale(1); }
+  to { transform: scale(1.12); }
+}
+
+/* Darkens the bottom for the text and the corners for focus */
+.invention__shade {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(2, 6, 14, 0.55) 0%, rgba(2, 6, 14, 0) 22%, rgba(2, 6, 14, 0) 42%, rgba(2, 6, 14, 0.9) 100%),
+    radial-gradient(ellipse at 50% 40%, rgba(0, 0, 0, 0) 55%, rgba(0, 0, 0, 0.6) 100%);
+  pointer-events: none;
+}
+
+/* The moment of discovery: one hard white flash that falls away */
+.invention__flash {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+  animation: inventionFlash 900ms ease-out 350ms both;
+}
+
+@keyframes inventionFlash {
+  0% { opacity: 0; }
+  12% { opacity: 0.85; }
+  100% { opacity: 0; }
+}
+
+.invention__skip {
+  position: absolute;
+  top: max(0.9rem, env(safe-area-inset-top));
+  right: max(0.9rem, env(safe-area-inset-right));
+  z-index: 2;
+}
+
+.invention__card {
+  position: absolute;
+  left: 50%;
+  bottom: max(1.1rem, env(safe-area-inset-bottom));
+  translate: -50% 0;
+  width: min(880px, 94vw);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 1.1rem;
+  padding: 1rem 1.3rem;
+  border-radius: 18px;
+  border: 1px solid rgba(160, 205, 255, 0.35);
+  background: linear-gradient(180deg, rgba(10, 22, 42, 0.82), rgba(4, 9, 20, 0.92));
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(6px);
+}
+
+.invention__sticker {
+  width: clamp(72px, 14vw, 128px);
+  aspect-ratio: 1;
+  object-fit: contain;
+  filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.6));
+  animation: inventionBob 2.6s ease-in-out infinite;
+}
+
+@keyframes inventionBob {
+  0%, 100% { transform: translateY(0) rotate(-3deg); }
+  50% { transform: translateY(-5px) rotate(2deg); }
+}
+
+.invention__copy { min-width: 0; }
+
+.invention__eyebrow {
+  margin: 0 0 0.2rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #ffd76b;
+}
+
+.invention__title {
+  margin: 0;
+  font-family: var(--stencil);
+  font-size: clamp(1.7rem, 5.5vw, 2.8rem);
+  line-height: 1.02;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-shadow: 0 0 22px rgba(120, 190, 255, 0.45);
+}
+
+.invention__headline {
+  margin: 0.3rem 0 0;
+  font-size: clamp(0.95rem, 2.4vw, 1.15rem);
+  color: #cfe6ff;
+}
+
+.invention__effect {
+  margin: 0.35rem 0 0;
+  font-size: clamp(0.82rem, 2vw, 0.98rem);
+  line-height: 1.35;
+  color: #eef6ff;
+}
+
+.invention__note {
+  margin: 0.4rem 0 0;
+  font-size: 0.78rem;
+  color: rgba(207, 230, 255, 0.7);
+}
+
+.invention__go { white-space: nowrap; }
+
+/* Narrow screens: sticker above the words, button underneath */
+@media (max-width: 640px) {
+  .invention__card {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.7rem 0.9rem;
+    padding: 0.85rem 0.9rem;
+  }
+  .invention__go { grid-column: 1 / -1; }
+  .invention__note { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .invention__photo, .invention__sticker, .invention__flash { animation: none; }
+}

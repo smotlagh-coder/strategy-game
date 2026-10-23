@@ -185,7 +185,7 @@ describe('AI and intel', () => {
     const s = aiTable(1);
     const broke = {
       ...s,
-      nations: { ...s.nations, us: { ...s.nations.us, money: COSTS.bomb + COSTS.spy } },
+      nations: { ...s.nations, us: { ...s.nations.us, money: COSTS.bomb + COSTS.spy - 1 } },
     };
     const after = runAiBuyPhase(broke);
     expect(after.nations.us.hasSpyNetwork).toBe(false);
