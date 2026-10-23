@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   COSTS,
   CLUSTER_DAMAGE_OPEN,
-  CLUSTER_DAMAGE_PROTECTED,
   LAB_ROUNDS_PER_INVENTION,
   RESEARCH_UPKEEP,
   SCORE_LAB_HIT,
@@ -296,81 +295,85 @@ describe('firing a lab bomb', () => {
   });
 });
 
-/** Total bill of a cluster bomb over a nation: $20M a open city, $10M a protected one. */
-const clusterBill = (s: GameState, id: NationId): number =>
-  s.nations[id].cities
-    .filter((c) => !c.destroyed)
-    .reduce(
-      (sum, c) =>
-        sum + (c.hasShield || c.isUnderground || c.hasLaser ? CLUSTER_DAMAGE_PROTECTED : CLUSTER_DAMAGE_OPEN),
-      0,
-    );
-
 describe('cluster bomb', () => {
+  /** Russia: a shielded city, a bunker city and an open one, the open one marked. */
   const setup = () => {
     let s = arm(table(), 'us', ['cluster']);
     s = withCity(s, 'russia', 0, { hasShield: true });
     s = withCity(s, 'russia', 1, { isUnderground: true });
     return queueStrike(s, 'russia', s.nations.russia.cities[2].id, 'us', 'cluster');
   };
+  const kindsOf = (s: GameState, kind: string) => s.roundEvents.filter((e) => e.kind === kind);
 
-  it('does $20M on every open city and $10M on every protected one', () => {
+  it('splits into a bomblet for every city: shields down, open cities damaged, bunkers hold', () => {
     expect(CLUSTER_DAMAGE_OPEN).toBe(20);
-    expect(CLUSTER_DAMAGE_PROTECTED).toBe(10);
-    const start = setup();
-    const done = resolveAll(start);
+    const done = resolveAll(setup());
     const cities = done.nations.russia.cities;
-    // The shielded city and the bunker city at $10M each; the open city at $20M
-    expect(done.nations.russia.pendingDroneDamage).toBe(10 + 10 + 20);
-    expect(done.nations.russia.pendingDroneDamage).toBe(clusterBill(start, 'russia'));
-    const bills = new Map(done.roundEvents.filter((e) => e.kind === 'droneDamage').map((e) => [e.cityId, e.amount]));
-    expect(bills.get(cities[0].id)).toBe(10);
-    expect(bills.get(cities[1].id)).toBe(10);
-    expect(bills.get(cities[2].id)).toBe(20);
-    expect(bills.size).toBe(cities.length);
+    // The shield is gone; the open city is billed; the bunker city is untouched
+    expect(cities[0].hasShield).toBe(false);
+    expect(cities[1].isUnderground).toBe(true);
+    expect(done.nations.russia.pendingDroneDamage).toBe(CLUSTER_DAMAGE_OPEN);
+    const events = done.roundEvents.filter((e) => e.weapon === 'cluster');
+    expect(events.map((e) => [e.cityId, e.kind])).toEqual([
+      [cities[0].id, 'shieldDestroyed'],
+      [cities[1].id, 'strikeAbsorbed'],
+      [cities[2].id, 'droneDamage'],
+    ]);
   });
 
-  it('counts a laser battery as protection too', () => {
+  it('destroys every shield of the nation, wherever the canister was aimed', () => {
+    let s = arm(table(), 'us', ['cluster']);
+    for (const i of [0, 1, 2]) s = withCity(s, 'russia', i, { hasShield: true });
+    s = queueStrike(s, 'russia', s.nations.russia.cities[1].id, 'us', 'cluster');
+    const done = resolveAll(s);
+    expect(done.nations.russia.cities.every((c) => !c.hasShield && !c.destroyed)).toBe(true);
+    expect(kindsOf(done, 'shieldDestroyed')).toHaveLength(3);
+    // A shield took the bomblet, so there is no repair bill
+    expect(done.nations.russia.pendingDroneDamage ?? 0).toBe(0);
+  });
+
+  it('damages every open city and levels nothing', () => {
+    let s = arm(table(), 'us', ['cluster']);
+    s = queueStrike(s, 'russia', s.nations.russia.cities[0].id, 'us', 'cluster');
+    const done = resolveAll(s);
+    const n = done.nations.russia.cities.length;
+    expect(done.nations.russia.pendingDroneDamage).toBe(n * CLUSTER_DAMAGE_OPEN);
+    expect(done.nations.russia.cities.every((c) => !c.destroyed)).toBe(true);
+    expect(kindsOf(done, 'droneDamage')).toHaveLength(n);
+  });
+
+  it('does not care about a laser battery: the bomblets are too many to shoot down', () => {
     let s = arm(table(), 'us', ['cluster']);
     s = withCity(s, 'russia', 0, { hasLaser: true });
     s = queueStrike(s, 'russia', s.nations.russia.cities[1].id, 'us', 'cluster');
     const done = resolveAll(s);
-    expect(done.nations.russia.pendingDroneDamage).toBe(10 + 20 + 20);
+    expect(done.nations.russia.pendingDroneDamage).toBe(s.nations.russia.cities.length * CLUSTER_DAMAGE_OPEN);
   });
 
-  it('levels nothing and strips nothing', () => {
-    const done = resolveAll(setup());
-    const cities = done.nations.russia.cities;
-    expect(cities.every((c) => !c.destroyed)).toBe(true);
-    expect(cities[0].hasShield).toBe(true);
-    expect(cities[1].isUnderground).toBe(true);
-    expect(done.roundEvents.map((e) => e.kind)).not.toContain('shieldDestroyed');
-  });
-
-  it('does not tie up a shield for the warhead behind it', () => {
+  it('goes in ahead of the warheads, so a nuke behind it finds the shield already gone', () => {
     let s = setup();
     s = { ...s, nations: { ...s.nations, uk: { ...s.nations.uk, bombs: 1, hasNuclearTech: true, nuclearTechUnlockedRound: 0 } } };
+    // The nuke is queued after the canister, but would be first without the ordering rule
     s = queueStrike(s, 'russia', s.nations.russia.cities[0].id, 'uk', 'nuke');
+    const order = orderStrikesForResolution([...s.pendingStrikes].reverse());
+    expect(order[0].weapon).toBe('cluster');
     const done = resolveAll(s);
-    // The shield still takes the nuke: the bomblets were not a swarm
-    expect(done.nations.russia.cities[0].destroyed).toBe(false);
-    expect(done.nations.russia.cities[0].hasShield).toBe(false);
+    expect(done.nations.russia.cities[0].destroyed).toBe(true);
   });
 
-  it('banks points for each city it wears down, since it levels nothing', () => {
+  it('banks points for each shield torn down and each city damaged, not for a bunker that held', () => {
     const start = setup();
     const before = start.nations.us.attackPoints ?? 0;
     const done = resolveAll(start);
-    expect((done.nations.us.attackPoints ?? 0) - before).toBe(
-      start.nations.russia.cities.length * SCORE_LAB_HIT,
-    );
+    expect((done.nations.us.attackPoints ?? 0) - before).toBe(2 * SCORE_LAB_HIT);
   });
 
   it('opens over the nation even when the marked city is already rubble', () => {
     let s = setup();
     s = withCity(s, 'russia', 2, { destroyed: true });
     const done = resolveAll(s);
-    expect(done.nations.russia.pendingDroneDamage).toBe(clusterBill(s, 'russia'));
+    expect(done.nations.russia.cities[0].hasShield).toBe(false);
+    expect(kindsOf(done, 'shieldDestroyed')).toHaveLength(1);
   });
 
   it('can be aimed through any city, including one in a bunker', () => {
@@ -595,7 +598,9 @@ describe('defence drones', () => {
     s = queueStrike(s, 'russia', mark.id, 'us', 'cluster');
     const done = resolveAll(s);
     const rest = done.nations.russia.cities.length - 1;
-    expect(done.nations.russia.pendingDroneDamage).toBe(rest * CLUSTER_DAMAGE_OPEN);
+    // Every other city is still hit: here the open ones are billed
+    expect(done.nations.russia.pendingDroneDamage ?? 0).toBeGreaterThan(0);
+    expect(done.nations.russia.pendingDroneDamage ?? 0).toBeLessThanOrEqual(rest * CLUSTER_DAMAGE_OPEN);
     expect(done.roundEvents.some((e) => e.kind === 'droneDamage' && e.cityId === mark.id)).toBe(false);
     expect(done.roundEvents.some((e) => e.kind === 'strikeNeutralized' && e.cityId === mark.id)).toBe(true);
   });

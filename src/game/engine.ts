@@ -10,7 +10,6 @@ import {
   LASER_INTERCEPTS_PER_ROUND,
   LAB_ROUNDS_PER_INVENTION,
   CLUSTER_DAMAGE_OPEN,
-  CLUSTER_DAMAGE_PROTECTED,
   MAX_SANCTIONS,
   MAX_RESEARCH_PER_ROUND,
   MAX_SHIELDS_PER_ROUND,
@@ -2427,10 +2426,11 @@ function labPoints(attacker: NationState, points: number): NationState {
 }
 
 /**
- * A cluster bomb opens over a nation and every city under it takes a share of
- * the damage: an open city runs up a bigger repair bill than one under a shield,
- * a bunker or a laser battery. Nothing is levelled and no defence is stripped, but
- * nothing escapes the canister either, except the one city defence drones guard.
+ * A cluster canister splits over a nation into a bomblet for every city under it.
+ * Each bomblet does the job that suits the city: it tears down a shield (all of
+ * them go), runs up a repair bill on an open city, and breaks against a bunker.
+ * Nothing is levelled, and the only city that escapes is the one defence drones
+ * are guarding.
  */
 function applyClusterStrike(state: GameState, strike: PendingStrike): GameState {
   const defender = state.nations[strike.targetNationId];
@@ -2438,31 +2438,60 @@ function applyClusterStrike(state: GameState, strike: PendingStrike): GameState 
   const targetName = nationDef(strike.targetNationId).name;
   const guarded = dronesGuarding(state, strike.targetNationId);
   const events: RoundWorldEvent[] = [];
+  let shields = 0;
   let open = 0;
-  let covered = 0;
+  let bunkers = 0;
   let bill = 0;
   let seen = state;
+  const stripped = new Set<string>();
   for (const c of defender.cities) {
     if (c.destroyed || c.id === guarded) continue;
     // The bomblets land on every roof, so the attacker sees what stood under them
     seen = scoutCity(seen, strike.attackerId, c.id);
-    const protectedCity = c.hasShield || c.isUnderground || c.hasLaser;
-    const amount = protectedCity ? CLUSTER_DAMAGE_PROTECTED : CLUSTER_DAMAGE_OPEN;
-    if (protectedCity) covered += 1;
-    else open += 1;
-    bill += amount;
-    events.push(
-      worldEvent({
-        kind: 'droneDamage',
-        nationId: strike.targetNationId,
-        cityId: c.id,
-        cityName: c.name,
-        attackerId: strike.attackerId,
-        weapon: 'cluster',
-        amount,
-        cover: c.isUnderground ? 'bunker' : c.hasShield ? 'shield' : c.hasLaser ? 'laser' : undefined,
-      }),
-    );
+    if (c.hasShield) {
+      shields += 1;
+      stripped.add(c.id);
+      events.push(
+        worldEvent({
+          kind: 'shieldDestroyed',
+          nationId: strike.targetNationId,
+          cityId: c.id,
+          cityName: c.name,
+          attackerId: strike.attackerId,
+          weapon: 'cluster',
+          amount: COSTS.shield,
+          cover: 'shield',
+          lost: ['shield'],
+        }),
+      );
+    } else if (c.isUnderground) {
+      bunkers += 1;
+      events.push(
+        worldEvent({
+          kind: 'strikeAbsorbed',
+          nationId: strike.targetNationId,
+          cityId: c.id,
+          cityName: c.name,
+          attackerId: strike.attackerId,
+          weapon: 'cluster',
+          cover: 'bunker',
+        }),
+      );
+    } else {
+      open += 1;
+      bill += CLUSTER_DAMAGE_OPEN;
+      events.push(
+        worldEvent({
+          kind: 'droneDamage',
+          nationId: strike.targetNationId,
+          cityId: c.id,
+          cityName: c.name,
+          attackerId: strike.attackerId,
+          weapon: 'cluster',
+          amount: CLUSTER_DAMAGE_OPEN,
+        }),
+      );
+    }
   }
   if (events.length === 0) {
     return {
@@ -2471,27 +2500,27 @@ function applyClusterStrike(state: GameState, strike: PendingStrike): GameState 
     };
   }
   const parts = [
-    open > 0 ? `${open} open cit${open === 1 ? 'y' : 'ies'} at $${CLUSTER_DAMAGE_OPEN}M` : '',
-    covered > 0
-      ? `${covered} protected cit${covered === 1 ? 'y' : 'ies'} at $${CLUSTER_DAMAGE_PROTECTED}M`
-      : '',
+    shields > 0 ? `${shields} shield${shields === 1 ? '' : 's'} destroyed` : '',
+    open > 0 ? `${open} open cit${open === 1 ? 'y' : 'ies'} damaged ($${bill}M)` : '',
+    bunkers > 0 ? `${bunkers} bunker${bunkers === 1 ? '' : 's'} held` : '',
   ].filter(Boolean);
+  // A bomblet that tears down a shield or damages a city counts as a hit; one that
+  // breaks against a bunker does not
+  const hits = shields + open;
   return {
     ...seen,
     nations: {
       ...seen.nations,
-      [strike.attackerId]: labPoints(seen.nations[strike.attackerId], events.length * SCORE_LAB_HIT),
+      [strike.attackerId]: labPoints(seen.nations[strike.attackerId], hits * SCORE_LAB_HIT),
       [strike.targetNationId]: {
         ...defender,
+        cities: defender.cities.map((c) => (stripped.has(c.id) ? { ...c, hasShield: false } : c)),
         pendingDroneDamage: +((defender.pendingDroneDamage ?? 0) + bill).toFixed(2),
       },
     },
     log: [
       ...seen.log,
-      log(
-        `${attackerName}'s cluster bomb burst over ${targetName} — ${parts.join(' and ')}, $${bill}M of damage in all.`,
-        'attack',
-      ),
+      log(`${attackerName}'s cluster bomb split over ${targetName} — ${parts.join(', ')}.`, 'attack'),
     ],
     roundEvents: [...seen.roundEvents, ...events],
   };
@@ -2928,11 +2957,13 @@ export function orderStrikesForResolution(strikes: PendingStrike[]): PendingStri
         c.targetNationId === s.targetNationId &&
         c.cityId === s.cityId,
     );
+  // Drones and a cluster canister (which tears every shield down) go in before the warheads
+  const clearsTheWay = (s: PendingStrike) => s.weapon === 'drone' || s.weapon === 'cluster';
   // Otherwise drones and warheads clear the way first; the squads land on whatever is left
   return [
     ...strikes.filter(leadsRaid),
-    ...strikes.filter((s) => s.weapon === 'drone'),
-    ...strikes.filter((s) => s.weapon !== 'drone' && s.weapon !== 'commando' && !leadsRaid(s)),
+    ...strikes.filter(clearsTheWay),
+    ...strikes.filter((s) => !clearsTheWay(s) && s.weapon !== 'commando' && !leadsRaid(s)),
     ...strikes.filter((s) => s.weapon === 'commando'),
   ];
 }

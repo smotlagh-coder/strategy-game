@@ -72,6 +72,10 @@ export function buildRecapTable(events: RoundWorldEvent[], order: NationId[]): R
         win(e.attackerId, e.weapon === 'cluster' ? 'cluster' : 'drone', e.cityName);
         if (victim) victim.repairs += e.amount ?? 0;
         break;
+      case 'shieldDestroyed':
+        // A cluster bomblet that tore a shield down is a hit for the attacker
+        if (e.weapon === 'cluster') win(e.attackerId, 'cluster', e.cityName);
+        break;
       case 'dronesIntercepted':
         win(e.coveredBy ?? e.nationId, 'laser', e.cityName);
         break;

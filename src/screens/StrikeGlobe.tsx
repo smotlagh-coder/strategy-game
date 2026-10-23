@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef } from 'react';
 import { ART } from '../data/art';
 import { cityGeo, launchSite } from '../data/geo';
 import { nationDef } from '../data/nations';
-import { isBallisticWeapon, type StrikeShow } from '../game/movie';
-import type { StrikeWeapon } from '../types';
+import { isBallisticWeapon, type ClusterHit, type StrikeShow } from '../game/movie';
+import type { NationId, StrikeWeapon } from '../types';
 import type { CountryShape } from '../data/worldCountries';
 
 const D2R = Math.PI / 180;
@@ -205,6 +205,13 @@ function prepare(shapes: CountryShape[]): Prepared[] {
 
 interface Leg {
   cityId: string;
+  /** Legs of one launch share a group: a cluster bomb's bomblets all leave together */
+  group: number;
+  /** What the strike card says about this city */
+  label: { cityName: string; to: NationId; note?: string };
+  /** A cluster bomb's canister splits at this fraction of the flight, over `splitPoint` */
+  splitAt?: number;
+  splitPoint?: { lat: number; lon: number; r: number };
   weapon: StrikeWeapon;
   lat: number;
   lon: number;
@@ -213,6 +220,22 @@ interface Leg {
 }
 
 const STEPS = 120;
+/** How far along its flight a cluster canister bursts into bomblets */
+const SPLIT = 0.6;
+
+/** The one line a bomblet's card carries: what it did to its city */
+function bombletNote(hit: ClusterHit): string {
+  switch (hit.effect) {
+    case 'shield':
+      return 'Shield down';
+    case 'damaged':
+      return `−$${hit.amount ?? 0}M`;
+    case 'bunker':
+      return 'Bunker held';
+    default:
+      return 'Guarded';
+  }
+}
 
 function route(from: V3, to: V3): Leg['path'] {
   const span = angle(from, to);
@@ -263,7 +286,8 @@ export default function StrikeGlobe({ strike, ms }: { strike: StrikeShow; ms: nu
   const plan = useMemo(() => {
     const origin = launchSite(strike.from);
     const o = toVec(origin[0], origin[1]);
-    const legs: Leg[] = strike.targets.map((t) => {
+    const legs: Leg[] = [];
+    strike.targets.forEach((t, group) => {
       const [lat, lon] = cityGeo(t.cityId);
       const weapon =
         t.weapons.find((w) => w === 'hydrogen') ??
@@ -271,7 +295,36 @@ export default function StrikeGlobe({ strike, ms }: { strike: StrikeShow; ms: nu
         t.weapons.find((w) => w === 'nuke') ??
         t.weapons.find(isBallisticWeapon) ??
         t.weapons[0];
-      return { cityId: t.cityId, weapon, lat, lon, path: route(o, toVec(lat, lon)) };
+      const label = { cityName: t.cityName, to: t.to };
+      if (weapon === 'cluster' && t.bomblets && t.bomblets.length > 0) {
+        // One canister flies out, bursts, and a bomblet falls on every city of the nation
+        const mother = route(o, toVec(lat, lon));
+        const cut = Math.round(STEPS * SPLIT);
+        const burst = mother[cut];
+        const bv = toVec(burst.lat, burst.lon);
+        for (const hit of t.bomblets) {
+          const [blat, blon] = cityGeo(hit.cityId);
+          const dest = toVec(blat, blon);
+          const tail = Array.from({ length: STEPS - cut }, (_, j) => {
+            const u = (j + 1) / (STEPS - cut);
+            const [la, lo] = fromVec(slerp(bv, dest, u));
+            return { lat: la, lon: lo, r: burst.r * (1 - u) + u + 0.03 * Math.sin(Math.PI * u) };
+          });
+          legs.push({
+            cityId: hit.cityId,
+            group,
+            label: { cityName: hit.cityName, to: t.to, note: bombletNote(hit) },
+            splitAt: SPLIT,
+            splitPoint: burst,
+            weapon,
+            lat: blat,
+            lon: blon,
+            path: [...mother.slice(0, cut + 1), ...tail],
+          });
+        }
+        return;
+      }
+      legs.push({ cityId: t.cityId, group, label, weapon, lat, lon, path: route(o, toVec(lat, lon)) });
     });
     const all = [o, ...legs.map((l) => toVec(l.lat, l.lon))];
     const tv = legs.map((l) => toVec(l.lat, l.lon));
@@ -301,15 +354,16 @@ export default function StrikeGlobe({ strike, ms }: { strike: StrikeShow; ms: nu
     if (!canvas || !ctx) return;
 
     const n = plan.legs.length;
+    const launches = strike.targets.length;
     const attacker = nationDef(strike.from);
     const flagOf = (id: string) => loadImage(ART.flags[id as keyof typeof ART.flags]);
-    const cityImgs = strike.targets.map((t) => loadImage(ART.moviePlate.city(t.cityId)));
+    const cityImgs = plan.legs.map((l) => loadImage(ART.moviePlate.city(l.cityId)));
     const attackerFlag = flagOf(strike.from);
-    strike.targets.forEach((t) => flagOf(t.to));
+    plan.legs.forEach((l) => flagOf(l.label.to));
 
     // When each route leaves and lands, as fractions of the shot
-    const stagger = n > 1 ? Math.min(0.08, 0.3 / (n - 1)) : 0;
-    const leave = (i: number) => (0.14 + i * stagger) * ms;
+    const stagger = launches > 1 ? Math.min(0.08, 0.3 / (launches - 1)) : 0;
+    const leave = (i: number) => (0.14 + plan.legs[i].group * stagger) * ms;
     const flight = 0.4 * ms;
     const land = (i: number) => leave(i) + flight;
 
@@ -493,6 +547,9 @@ export default function StrikeGlobe({ strike, ms }: { strike: StrikeShow; ms: nu
         const upto = Math.floor(prog * STEPS);
         if (prog <= 0) return;
         const pts = leg.path.slice(0, upto + 1).map((q) => ({ q, p: project(q.lat, q.lon, cam, q.r) }));
+        // Bomblets share the canister's flight up to the burst: draw that part once
+        const firstOfGroup = i === 0 || plan.legs[i - 1].group !== leg.group;
+        const cut = leg.splitAt != null && !firstOfGroup ? Math.round(STEPS * leg.splitAt) : 0;
 
         // The whole flown path, dim, then the hot tail behind the head
         ctx.lineCap = 'round';
@@ -520,12 +577,35 @@ export default function StrikeGlobe({ strike, ms }: { strike: StrikeShow; ms: nu
           ctx.globalAlpha = 1;
           ctx.shadowBlur = 0;
         };
-        stroke(0, 0.45, Math.max(1.2, u * 0.2), 0);
-        stroke(Math.max(0, pts.length - 22), 0.95, Math.max(2, u * 0.4), u * 1.6);
+        stroke(cut, 0.45, Math.max(1.2, u * 0.2), 0);
+        stroke(Math.max(cut, pts.length - 22), 0.95, Math.max(2, u * 0.4), u * 1.6);
+
+        // The canister bursts: a ring of light where it opens into bomblets
+        if (leg.splitAt != null && leg.splitPoint && firstOfGroup) {
+          const over = prog - leg.splitAt;
+          if (over > 0 && over < 0.18) {
+            const sp = project(leg.splitPoint.lat, leg.splitPoint.lon, cam, leg.splitPoint.r);
+            if (sp.seen) {
+              const [sx, sy] = px(sp);
+              const k = over / 0.18;
+              ctx.globalAlpha = (1 - k) * 0.95;
+              ctx.strokeStyle = '#fff3c4';
+              ctx.lineWidth = Math.max(1.5, u * 0.35);
+              ctx.beginPath();
+              ctx.arc(sx, sy, u * (0.8 + k * 5.5), 0, Math.PI * 2);
+              ctx.stroke();
+              ctx.fillStyle = colour;
+              ctx.beginPath();
+              ctx.arc(sx, sy, u * (1.6 - k), 0, Math.PI * 2);
+              ctx.fill();
+              ctx.globalAlpha = 1;
+            }
+          }
+        }
 
         // The warhead itself
         const head = pts[pts.length - 1];
-        if (prog < 1 && head.p.seen) {
+        if (prog < 1 && head.p.seen && (cut === 0 || pts.length > cut + 1)) {
           const [hx, hy] = px(head.p);
           const g = ctx.createRadialGradient(hx, hy, 0, hx, hy, u * 2.4);
           g.addColorStop(0, '#ffffff');
@@ -595,7 +675,7 @@ export default function StrikeGlobe({ strike, ms }: { strike: StrikeShow; ms: nu
 
       order.forEach((i, slot) => {
         const leg = plan.legs[i];
-        const target = strike.targets[i];
+        const target = leg.label;
         const arrive = land(i);
         const show = smooth((t - arrive) / 520);
         if (show <= 0) return;
@@ -665,7 +745,7 @@ export default function StrikeGlobe({ strike, ms }: { strike: StrikeShow; ms: nu
         const flh = sub * 1.0;
         const baseY = y + ch * 0.8;
         if (flag.complete && flag.naturalWidth) ctx.drawImage(flag, tx0, baseY - flh * 0.85, flw, flh);
-        let nation = nationDef(target.to).name;
+        let nation = target.note ?? nationDef(target.to).name;
         while (ctx.measureText(nation).width > room - flw - 6 && nation.length > 3) nation = nation.slice(0, -1);
         ctx.fillText(nation, tx0 + flw + 6, baseY);
         ctx.globalAlpha = 1;

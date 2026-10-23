@@ -401,7 +401,7 @@ function TargetShot({
   // Which moment breaks the dome, if any does
   const domeBreaksAt = !target.hadShield || stopped
     ? null
-    : warhead && outcome !== 'repelled' && warhead !== 'cluster'
+    : warhead && outcome !== 'repelled'
       ? line.warheadAt
       : squad && outcome === 'captured'
         ? swarm
@@ -879,7 +879,7 @@ function TollShot({ strike, ms }: { strike: StrikeShow; ms: number }) {
         <ul className="mv-toll__rows">
           {strike.targets.map((t, i) => {
             const o = targetOutcome(t);
-            const good = o === 'captured' || o === 'razed' || o === 'shield' || o === 'swarmed';
+            const good = o === 'captured' || o === 'razed' || o === 'shield' || o === 'swarmed' || o === 'damaged';
             return (
               <li
                 key={`${t.cityId}-${i}`}

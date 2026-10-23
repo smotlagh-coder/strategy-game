@@ -3,7 +3,7 @@
  * long each shot runs. Pure, so the engine can budget the same running time the
  * screen plays and every client in an online match waits for the same length.
  */
-import { DRONE_DAMAGE } from '../data/nations';
+import { DRONE_DAMAGE, nationDef } from '../data/nations';
 import { ART } from '../data/art';
 import type { NationId, PendingStrike, StrikeWeapon } from '../types';
 
@@ -26,12 +26,24 @@ export function craftArt(weapon: StrikeWeapon): string {
   return ART.missile;
 }
 
+/** What one bomblet of a cluster bomb did to one city of the nation it split over. */
+export interface ClusterHit {
+  cityId: string;
+  cityName: string;
+  /** Tore the shield down, billed an open city, broke against a bunker, or never arrived */
+  effect: 'shield' | 'damaged' | 'bunker' | 'defended';
+  /** Repair bill, for a city that was damaged */
+  amount?: number;
+}
+
 export interface StrikeTarget {
   to: NationId;
   cityId: string;
   cityName: string;
   /** A city can catch a warhead and a drone swarm in the same volley */
   weapons: StrikeWeapon[];
+  /** A cluster bomb splits into a bomblet for every city of the nation: where each one fell */
+  bomblets?: ClusterHit[];
   /** Repair bill per drone pack — halved when the city has a shield or bunker */
   droneBill?: number;
   /** The city's lasers downed the swarm, so it never reaches the skyline */
@@ -77,6 +89,22 @@ export function isBallisticWeapon(weapon: StrikeWeapon | undefined): boolean {
   return weapon !== 'drone' && weapon !== 'commando';
 }
 
+
+/** The cluster bomb's whole result in one line: shields down, cities billed, bunkers that held. */
+export function clusterSummary(t: StrikeTarget): string {
+  const hits = t.bomblets ?? [];
+  const count = (effect: ClusterHit['effect']) => hits.filter((h) => h.effect === effect).length;
+  const shields = count('shield');
+  const damaged = count('damaged');
+  const bunkers = count('bunker');
+  const bill = hits.reduce((sum, h) => sum + (h.effect === 'damaged' ? (h.amount ?? 0) : 0), 0);
+  const parts = [
+    shields > 0 ? `${shields} shield${shields === 1 ? '' : 's'} destroyed` : '',
+    damaged > 0 ? `${damaged} ${damaged === 1 ? 'city' : 'cities'} damaged −$${bill}M` : '',
+    bunkers > 0 ? `${bunkers} bunker${bunkers === 1 ? '' : 's'} held` : '',
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join(' · ') : 'nothing left to hit';
+}
 
 export function cinemaCaption(target: StrikeTarget, impacted: boolean): string | null {
   const warhead = target.weapons.some(isBallisticWeapon);
@@ -154,7 +182,7 @@ export function cinemaCaption(target: StrikeTarget, impacted: boolean): string |
   }
   if (target.leveled && target.weapons.includes('chemical')) return 'Gas — city in rubble';
   if (target.weapons.includes('cluster') && !target.leveled) {
-    return `Cluster bomblets — every city hit, −$${target.droneBill ?? 0}M here`;
+    return `Cluster bomblets over ${nationDef(target.to).name} — ${clusterSummary(target)}`;
   }
   if (target.leveled && target.hadBunker) return 'Bunker cracked — city in rubble';
   if (target.leveled && escorted && target.laserDown) {
@@ -305,11 +333,11 @@ export function targetOutcome(t: StrikeTarget): TargetOutcome {
     return t.leveled && !t.rubble ? 'razed' : 'empty';
   }
   if (t.rubble && !t.leveled) return 'empty';
-  if (t.absorbed) return 'bunker';
+  // A cluster bomb splits over the whole nation: the film is always the bomblets
+  if (t.absorbed && !t.weapons.includes('cluster')) return 'bunker';
   if (t.leveled) return 'razed';
   if (t.warheadShot) return 'shotDown';
   if (t.lasered && !t.weapons.some(isBallisticWeapon)) return 'swarmShot';
-  // A cluster bomb bills the city whatever covers it; it breaks nothing
   if (t.weapons.includes('cluster')) return 'damaged';
   if (t.hadShield && t.weapons.some(isBallisticWeapon)) return 'shield';
   if (t.weapons.includes('drone')) return t.lasered ? 'swarmShot' : 'swarmed';
@@ -338,7 +366,9 @@ export function outcomeLine(t: StrikeTarget): string {
     case 'swarmShot':
       return `${t.cityName}: swarm shot down`;
     case 'damaged':
-      return `${t.cityName}: cluster damage`;
+      return t.bomblets
+        ? `Cluster over ${nationDef(t.to).name}: ${clusterSummary(t)}`
+        : `${t.cityName}: cluster damage`;
     default:
       if (t.rubble) return `${t.cityName}: already rubble`;
       return t.heldBy ? `${t.cityName}: ${t.heldBy} took it first` : `${t.cityName}: already gone`;

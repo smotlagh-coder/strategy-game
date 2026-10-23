@@ -135,6 +135,7 @@ import {
   volleyWeapons,
   type StrikeShow,
   type StrikeTarget,
+  type ClusterHit,
 } from './game/movie';
 import { ASSET_ORDER, buildRecapTable, type RecapRow, type RecapWinKind } from './game/recap';
 import { CommandDashboard } from './screens/CommandDashboard';
@@ -465,6 +466,40 @@ function CombatExchange({
       </div>
     </div>
   );
+}
+
+/**
+ * Where each bomblet of a cluster bomb fell, read from the round's own events: a
+ * shield torn down, a city billed, a bunker that held, and the city defence drones
+ * guarded.
+ */
+function clusterBomblets(
+  events: RoundWorldEvent[],
+  attackerId: NationId,
+  nationId: NationId,
+  state: GameState,
+): ClusterHit[] {
+  const hits: ClusterHit[] = [];
+  const add = (hit: ClusterHit) => {
+    if (!hits.some((h) => h.cityId === hit.cityId)) hits.push(hit);
+  };
+  for (const e of events) {
+    if (e.weapon !== 'cluster' || e.attackerId !== attackerId || e.nationId !== nationId || !e.cityId) continue;
+    const cityName = e.cityName ?? 'city';
+    if (e.kind === 'shieldDestroyed') add({ cityId: e.cityId, cityName, effect: 'shield' });
+    else if (e.kind === 'strikeAbsorbed') add({ cityId: e.cityId, cityName, effect: 'bunker' });
+    else if (e.kind === 'droneDamage') add({ cityId: e.cityId, cityName, effect: 'damaged', amount: e.amount });
+  }
+  // Defence drones guard one city of the nation: the canister never reached it
+  for (const e of events) {
+    if (e.kind === 'strikeNeutralized' && e.nationId === nationId && e.cityId) {
+      const name = state.nations[nationId]?.cities.find((c) => c.id === e.cityId)?.name ?? e.cityName ?? 'city';
+      add({ cityId: e.cityId, cityName: name, effect: 'defended' });
+    }
+  }
+  // Keep the nation's own city order, so the bomblets fan out the same way every time
+  const order = state.nations[nationId]?.cities.map((c) => c.id) ?? [];
+  return hits.sort((a, b) => order.indexOf(a.cityId) - order.indexOf(b.cityId));
 }
 
 /** Every warhead the strike dock can aim, in picker order; the labs' bombs only appear once invented. */
@@ -1428,6 +1463,9 @@ function StrikeTheater({
             );
             if (open) {
               open.weapons.push(weapon);
+              if (weapon === 'cluster') {
+                open.bomblets = clusterBomblets(events, volley.attackerId, strike.targetNationId, stateRef.current);
+              }
               continue;
             }
             // A taken city already sits in the attacker's list, so look it up anywhere
@@ -1508,6 +1546,10 @@ function StrikeTheater({
               cityId: strike.cityId,
               cityName: city?.name ?? 'city',
               weapons: [weapon],
+              bomblets:
+                weapon === 'cluster'
+                  ? clusterBomblets(events, volley.attackerId, strike.targetNationId, stateRef.current)
+                  : undefined,
               droneBill:
                 clusterBill ?? (lasered ? 0 : city ? droneDamageFor(city) : DRONE_DAMAGE),
               lasered,

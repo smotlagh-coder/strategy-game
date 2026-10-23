@@ -12,7 +12,6 @@
  */
 import {
   CLUSTER_DAMAGE_OPEN,
-  CLUSTER_DAMAGE_PROTECTED,
   LAB_ROUNDS_PER_INVENTION,
 } from '../data/nations';
 import type { InventionKind, NationId, NationState, WarheadKind } from '../types';
@@ -33,8 +32,8 @@ const TECH_WEIGHT = 2;
 export const INVENTION_INFO: Record<InventionKind, InventionInfo> = {
   cluster: {
     name: 'Cluster bomb',
-    headline: 'A canister that scatters bomblets over an entire nation',
-    effect: `Hits every city of one rival at once: $${CLUSTER_DAMAGE_OPEN}M of damage on each open city, $${CLUSTER_DAMAGE_PROTECTED}M on each protected one (shield, bunker or laser). Nothing is levelled.`,
+    headline: 'A canister that splits into a bomblet for every city of a nation',
+    effect: `Splits over one rival into a bomblet for every city: all its shields are destroyed, each open city takes $${CLUSTER_DAMAGE_OPEN}M of damage, and bunkers hold. Nothing is levelled, and it goes in ahead of your warheads.`,
     weight: 3,
   },
   chemical: {

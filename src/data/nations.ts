@@ -217,10 +217,11 @@ export const MAX_SHIELDS_PER_ROUND = 1;
 export const MAX_RESEARCH_PER_ROUND = 1;
 /** Rounds a nation's lab must keep running before it invents a bomb. */
 export const LAB_ROUNDS_PER_INVENTION = 2;
-/** Repair bill (in $M) a cluster bomb runs up on every open city of the nation it opens over. */
+/**
+ * Repair bill (in $M) a cluster bomblet runs up on an open city: one with neither a
+ * shield (which the bomblet tears down instead) nor a bunker (which holds it out).
+ */
 export const CLUSTER_DAMAGE_OPEN = 20;
-/** The same bill for a city under a shield, a bunker or a laser battery. */
-export const CLUSTER_DAMAGE_PROTECTED = 10;
 /**
  * Swarms one laser battery can shoot down per round. The battery defends the
  * whole nation, so this budget — not the city it sits on — is what a swarming

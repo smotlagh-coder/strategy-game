@@ -1,6 +1,5 @@
 import {
   CLUSTER_DAMAGE_OPEN,
-  CLUSTER_DAMAGE_PROTECTED,
   COSTS,
   LAB_ROUNDS_PER_INVENTION,
   MAX_BOMBS_PER_ROUND,
@@ -279,13 +278,14 @@ function pickLabTarget(
     !c.destroyed && !struck.has(c.id) && c.id !== avoid && (!c.hasShield || swarmed(rivalId, c));
 
   if (weapon === 'cluster') {
-    // One canister reaches every city: open ones bill double, so aim at the biggest bill
+    // One canister reaches every city: it tears down every shield and bills every open
+    // city, a bunker shrugs it off, so aim where the shields and open cities are
     const bill = (id: NationId) =>
       seenCities(state, attackerId, id)
         .filter((c) => !c.destroyed)
         .reduce(
           (sum, c) =>
-            sum + (c.hasShield || c.isUnderground || c.hasLaser ? CLUSTER_DAMAGE_PROTECTED : CLUSTER_DAMAGE_OPEN),
+            sum + (c.hasShield ? COSTS.shield : c.isUnderground ? 0 : CLUSTER_DAMAGE_OPEN),
           0,
         );
     const rival = [...weighed].sort((a, b) => bill(b.id) - bill(a.id))[0];

@@ -75,6 +75,7 @@ import type { BriefingOrderIcon } from '../game/briefing';
 import {
   INVENTION_INFO,
   PROTOTYPE_KINDS,
+  type PrototypeKind,
   inventionStock,
   labCanFinish,
   researchProgress,
@@ -605,6 +606,13 @@ function CopPie({
 const talksSeen = new Set<string>();
 let talksPrimed = false;
 
+/** The bomb itself, not the scientists: what each lab bomb looks like in the magazine. */
+const LAB_BOMB_ART: Record<PrototypeKind, string> = {
+  cluster: ART.missileCluster,
+  biological: ART.missileBiological,
+  chemical: ART.missileChemical,
+};
+
 export function CommandDashboard({
   state,
   actorId,
@@ -1048,26 +1056,20 @@ export function CommandDashboard({
           locked: commandoMax < 1,
           onPress: () => onOrder((s) => buyCommandosBundled(s, 1, actorId), '+1 Heliborne'),
         },
-        // Bombs the labs invented: nothing to buy, but they are in the magazine
-        ...(labBombs.length > 0
-          ? [
-              {
-                key: 'labBombs',
-                art: ART.invention[labBombs[0]],
-                short: 'Lab bombs',
-                label: 'Invented by your labs',
-                info: labBombs
-                  .map((k) => `${inventionStock(me, k)}× ${INVENTION_INFO[k].name}`)
-                  .join(' · '),
-                lit: true,
-                count: labBombs.reduce((sum, k) => sum + inventionStock(me, k), 0),
-                tone: 'owned' as const,
-                note: 'Free · no tech needed',
-                locked: true,
-                onPress: () => undefined,
-              },
-            ]
-          : []),
+        // Bombs the labs invented: nothing to buy, but they are in the magazine, one tile per kind
+        ...labBombs.map((kind) => ({
+          key: `labBomb-${kind}`,
+          art: LAB_BOMB_ART[kind],
+          short: INVENTION_INFO[kind].name,
+          label: `${INVENTION_INFO[kind].name} (invented)`,
+          info: INVENTION_INFO[kind].effect,
+          lit: true,
+          count: inventionStock(me, kind),
+          tone: 'owned' as const,
+          note: 'Free · no tech needed',
+          locked: true,
+          onPress: () => undefined,
+        })),
       ],
     },
     {
